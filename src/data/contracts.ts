@@ -1,0 +1,219 @@
+/**
+ * Data-layer contracts: persistence (Repository), authentication (AuthService) and the
+ * public shape of the client stores. UI code depends on these types and on the hooks in
+ * `./hooks.ts`; it never talks to Supabase or localStorage directly.
+ */
+import type {
+  AppError,
+  BackupData,
+  BackupFile,
+  Dependency,
+  ImportSummary,
+  Milestone,
+  MilestonePatch,
+  MoveTaskInput,
+  NewMilestoneInput,
+  NewPhaseInput,
+  NewProjectInput,
+  NewTaskInput,
+  Phase,
+  PhasePatch,
+  Preferences,
+  Project,
+  ProjectPatch,
+  Result,
+  ScheduleChange,
+  Task,
+  TaskPatch,
+  WorkspaceData,
+  WorkspaceSnapshot,
+} from '@/domain/types'
+
+/** 'supabase' = cloud (Auth + Postgres + RLS); 'local' = this browser only (no keys configured). */
+export type DataMode = 'supabase' | 'local'
+
+// ---------------------------------------------------------------------------
+// Repository (persistence)
+// ---------------------------------------------------------------------------
+
+/**
+ * Persistence port. Implementations: SupabaseRepository (cloud) and LocalRepository
+ * (localStorage; used when Supabase is not configured and in E2E tests).
+ *
+ * - Entities are created client-side with ids from `crypto.randomUUID()` so optimistic UI
+ *   can use stable ids; the repository returns the stored row (server timestamps).
+ * - Every method rejects with a `RepositoryError` (see ./errors.ts) on failure — never
+ *   resolves on a failed write.
+ * - Cascades mirror the database: deleting a project removes its phases/tasks/milestones/
+ *   dependencies; deleting a phase ungroups its tasks/milestones; deleting a task removes its
+ *   subtasks (unless promoted) and dependencies.
+ */
+export interface Repository {
+  readonly mode: DataMode
+  loadWorkspace(): Promise<WorkspaceSnapshot>
+
+  insertProject(project: Project): Promise<Project>
+  updateProject(id: string, patch: ProjectPatch): Promise<Project>
+  deleteProject(id: string): Promise<void>
+
+  insertPhase(phase: Phase): Promise<Phase>
+  updatePhase(id: string, patch: PhasePatch): Promise<Phase>
+  deletePhase(id: string): Promise<void>
+
+  insertTask(task: Task): Promise<Task>
+  /** When `phaseId` changes on a parent, the server also updates its subtasks' phaseId. */
+  updateTask(id: string, patch: TaskPatch): Promise<Task>
+  /**
+   * Atomic. keepSubtasks=false: subtasks are deleted too. keepSubtasks=true: each subtask
+   * becomes top-level with the sortOrder given in `promotedSortOrders` (taskId → key).
+   */
+  deleteTask(
+    id: string,
+    options: { keepSubtasks: boolean; promotedSortOrders?: Record<string, string> },
+  ): Promise<void>
+
+  insertMilestone(milestone: Milestone): Promise<Milestone>
+  updateMilestone(id: string, patch: MilestonePatch): Promise<Milestone>
+  deleteMilestone(id: string): Promise<void>
+
+  insertDependency(dependency: Dependency): Promise<Dependency>
+  deleteDependency(id: string): Promise<void>
+
+  /** Atomic multi-task date update (all-or-nothing). Returns the updated tasks. */
+  applySchedule(changes: readonly ScheduleChange[]): Promise<Task[]>
+
+  upsertPreferences(preferences: Preferences): Promise<Preferences>
+
+  /** Atomic insert of an already id-remapped backup (all-or-nothing). */
+  importWorkspace(data: BackupData): Promise<ImportSummary>
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+export interface AuthUser {
+  id: string
+  email: string | null
+}
+
+export type AuthStatus = 'loading' | 'signed_out' | 'signed_in'
+
+export interface AuthService {
+  readonly mode: DataMode
+  getUser(): Promise<AuthUser | null>
+  /** Subscribe to sign-in/out/token events. Returns an unsubscribe function. */
+  onChange(callback: (user: AuthUser | null) => void): () => void
+  signIn(email: string, password: string): Promise<void>
+  /** needsConfirmation = true when the project requires email confirmation before sign-in. */
+  signUp(email: string, password: string): Promise<{ needsConfirmation: boolean }>
+  signOut(): Promise<void>
+  sendPasswordReset(email: string): Promise<void>
+}
+
+export interface AuthState {
+  mode: DataMode
+  status: AuthStatus
+  user: AuthUser | null
+  actions: {
+    /** Reads the current session and subscribes to changes. Idempotent. */
+    init(): Promise<void>
+    signIn(email: string, password: string): Promise<Result>
+    signUp(email: string, password: string): Promise<Result<{ needsConfirmation: boolean }>>
+    signOut(): Promise<Result>
+    sendPasswordReset(email: string): Promise<Result>
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Workspace store
+// ---------------------------------------------------------------------------
+
+export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+export interface SyncState {
+  /** Remote writes currently in flight. > 0 → UI shows "Saving…". */
+  pending: number
+  /** Most recent failed write/load that has not been followed by a successful write. */
+  lastError: AppError | null
+  /** epoch ms of the last successful write */
+  lastSavedAt: number | null
+  /** epoch ms of the last successful load/refresh */
+  lastLoadedAt: number | null
+  /** navigator.onLine, kept up to date */
+  online: boolean
+  /** true when a failed write can be retried with actions.retryLastFailed() */
+  canRetry: boolean
+}
+
+/**
+ * Store actions. Rules every implementation follows:
+ * 1. Validate first (domain validators). Validation failures return
+ *    `{ ok: false, error: { kind: 'validation' } }` WITHOUT changing state and WITHOUT a toast —
+ *    the caller shows inline feedback.
+ * 2. Apply the change optimistically to `data` (every view updates instantly).
+ * 3. Persist through the Repository. On success, reconcile with the returned rows.
+ *    On failure: roll back exactly this change (Immer inverse patches), set sync.lastError,
+ *    and show an error toast with a "Retry" action. Never report success for a failed write.
+ * 4. The returned promise resolves after the server answered.
+ */
+export interface WorkspaceActions {
+  /** Initial load after sign-in (status: loading → ready | error). */
+  load(): Promise<Result>
+  /** Re-fetch everything; skipped while writes are pending. silent = no loading state. */
+  refresh(options?: { silent?: boolean }): Promise<Result>
+  /** Clears all data (sign-out). */
+  reset(): void
+
+  createProject(input: NewProjectInput): Promise<Result<Project>>
+  updateProject(id: string, patch: ProjectPatch): Promise<Result>
+  /** Cascades to phases, tasks, milestones and dependencies. Callers confirm first. */
+  deleteProject(id: string): Promise<Result>
+  /** Reorder in the projects list: place after `afterProjectId` (null = first). */
+  moveProject(id: string, afterProjectId: string | null): Promise<Result>
+
+  createPhase(input: NewPhaseInput): Promise<Result<Phase>>
+  updatePhase(id: string, patch: PhasePatch): Promise<Result>
+  /** Its tasks and milestones become ungrouped (phaseId = null). */
+  deletePhase(id: string): Promise<Result>
+  /** Place after `afterPhaseId` (null = first). */
+  movePhase(id: string, afterPhaseId: string | null): Promise<Result>
+
+  createTask(input: NewTaskInput): Promise<Result<Task>>
+  /** Validates title/dates/hierarchy. A parent's phase change also moves its subtasks. */
+  updateTask(id: string, patch: TaskPatch): Promise<Result>
+  /** Drag-and-drop reorder / regroup / restatus (see MoveTaskInput). */
+  moveTask(input: MoveTaskInput): Promise<Result>
+  /** keepSubtasks=true promotes subtasks to top level at the parent's position. */
+  deleteTask(id: string, options: { keepSubtasks: boolean }): Promise<Result>
+
+  createMilestone(input: NewMilestoneInput): Promise<Result<Milestone>>
+  updateMilestone(id: string, patch: MilestonePatch): Promise<Result>
+  deleteMilestone(id: string): Promise<Result>
+
+  /** Validates with `validateNewDependency` (self, duplicate, cycle, cross-project, hierarchy). */
+  addDependency(predecessorId: string, successorId: string): Promise<Result<Dependency>>
+  removeDependency(id: string): Promise<Result>
+
+  /** Several tasks' dates in ONE atomic write (Gantt drag, auto-schedule apply). */
+  applySchedule(changes: readonly ScheduleChange[]): Promise<Result>
+
+  updatePreferences(patch: Partial<Preferences>): Promise<Result>
+
+  exportBackup(): BackupFile
+  /** Imports as NEW copies (fresh ids); never modifies or deletes existing data. */
+  importBackup(file: BackupFile): Promise<Result<ImportSummary>>
+
+  /** Re-runs the most recent failed write. */
+  retryLastFailed(): Promise<Result>
+}
+
+export interface WorkspaceState {
+  mode: DataMode
+  status: LoadStatus
+  loadError: AppError | null
+  data: WorkspaceData
+  preferences: Preferences
+  sync: SyncState
+  actions: WorkspaceActions
+}
