@@ -2,7 +2,11 @@
  * One 36px task row of the List view: drag handle (hover/focus), subtask chevron, status menu,
  * title (opens the Task Modal) with the "2/5" subtask summary, priority menu, start date (when
  * set) and due date, plus the ⋯ menu — the same actions are on right-click.
+ *
+ * Rows are memoised and every prop is a primitive or a stable reference, so an edit re-renders
+ * only the rows whose task changed (each row carries several menus and popovers).
  */
+import { memo } from 'react'
 import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core'
 import {
   ArrowDown,
@@ -10,6 +14,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  CornerDownRight,
   Ellipsis,
   FolderInput,
   GripVertical,
@@ -32,11 +37,14 @@ import type { ISODate, Phase, Task, TaskPriority, TaskStatus } from '@/domain/ty
 import { cn } from '@/lib/utils'
 import { contextKit, dropdownKit, type MenuKit } from '@/features/projects/menuKit'
 
+/** Row actions. The List view passes ONE stable object (it reads the latest data when called). */
 export interface TaskCommands {
   open(taskId: string): void
   setStatus(task: Task, status: TaskStatus): void
   setPriority(task: Task, priority: TaskPriority): void
   setDates(task: Task, dates: { startDate: ISODate | null; dueDate: ISODate | null }): void
+  /** Shows or hides the subtasks of a parent. */
+  toggleExpanded(taskId: string): void
   /** Expands the parent and opens its "Add subtask" row. */
   addSubtask(taskId: string): void
   move(task: Task, delta: -1 | 1): void
@@ -51,52 +59,56 @@ export interface TaskMenuContext {
   phases: readonly Phase[]
 }
 
-export interface DragHandleProps {
-  attributes: DraggableAttributes
-  listeners: DraggableSyntheticListeners
-}
-
 export interface TaskRowProps {
   task: Task
   depth: 0 | 1
   today: ISODate
-  /** Done / total subtasks (parents only). */
-  subtasks: { done: number; total: number } | null
+  /** Done / total subtasks (parents only; 0 = no subtasks). */
+  subtaskDone?: number
+  subtaskTotal?: number
   expanded: boolean
-  onToggleExpanded?: () => void
-  handle: DragHandleProps | null
+  /** Drag handle wiring from dnd-kit (null = no handle). */
+  handleAttributes: DraggableAttributes | null
+  handleListeners: DraggableSyntheticListeners
   /** Activator element of the drag handle (dnd-kit `setActivatorNodeRef`). */
   handleRef?: (element: HTMLElement | null) => void
   /** The row is being dragged: it renders as the drop indicator. */
   placeholder?: boolean
-  /** Show the 2px drop line in the placeholder (off while a collapsed group is the target). */
+  /** Show the 2px drop line in the placeholder (off while an append-only group is the target). */
   dropLine?: boolean
   commands: TaskCommands
-  menu: TaskMenuContext
+  canMoveUp: boolean
+  canMoveDown: boolean
+  /** Phases of the project, for "Move to phase" (top-level rows). */
+  phases: readonly Phase[]
 }
 
 const revealOnRowHover =
   'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100'
 
-export function TaskRow({
+export const TaskRow = memo(function TaskRow({
   task,
   depth,
   today,
-  subtasks,
+  subtaskDone = 0,
+  subtaskTotal = 0,
   expanded,
-  onToggleExpanded,
-  handle,
+  handleAttributes,
+  handleListeners,
   handleRef,
   placeholder = false,
   dropLine = true,
   commands,
-  menu,
+  canMoveUp,
+  canMoveDown,
+  phases,
 }: TaskRowProps) {
   const done = task.status === 'done'
   const bucket = dueBucket(task, today)
   const overdue = bucket === 'overdue'
   const dueToday = bucket === 'today'
-  const hasSubtasks = subtasks !== null && subtasks.total > 0
+  const hasSubtasks = subtaskTotal > 0
+  const menu: TaskMenuContext = { canMoveUp, canMoveDown, phases }
 
   const items = (kit: MenuKit) => <TaskMenuItems kit={kit} task={task} menu={menu} commands={commands} />
 
@@ -120,12 +132,12 @@ export function TaskRow({
             />
           ) : null}
           <div className={cn('flex min-w-0 flex-1 items-center', placeholder && 'opacity-0')}>
-            {handle ? (
+            {handleAttributes ? (
               <button
                 type="button"
                 ref={handleRef}
-                {...handle.attributes}
-                {...handle.listeners}
+                {...handleAttributes}
+                {...handleListeners}
                 aria-label={`Move ${task.title}`}
                 className={cn(
                   'grid h-6 w-5 shrink-0 cursor-grab touch-none place-items-center rounded-sm text-fg-tertiary',
@@ -140,10 +152,10 @@ export function TaskRow({
               <span className="w-5 shrink-0" />
             )}
             {depth === 1 ? <span className="w-5 shrink-0" aria-hidden /> : null}
-            {hasSubtasks && onToggleExpanded ? (
+            {hasSubtasks && depth === 0 ? (
               <button
                 type="button"
-                onClick={onToggleExpanded}
+                onClick={() => commands.toggleExpanded(task.id)}
                 aria-expanded={expanded}
                 aria-label={`${expanded ? 'Hide' : 'Show'} subtasks of ${task.title}`}
                 className={cn(
@@ -191,10 +203,10 @@ export function TaskRow({
                     className="inline-flex shrink-0 items-center gap-1 text-meta text-fg-tertiary tabular-nums"
                   >
                     <ListTree className="size-3.5" />
-                    {subtasks.done}/{subtasks.total}
+                    {subtaskDone}/{subtaskTotal}
                   </span>
                   <span className="sr-only">
-                    , {subtasks.done} of {subtasks.total} subtasks done
+                    , {subtaskDone} of {subtaskTotal} subtasks done
                   </span>
                 </>
               ) : null}
@@ -264,7 +276,7 @@ export function TaskRow({
       <ContextMenuContent className="w-52">{items(contextKit)}</ContextMenuContent>
     </ContextMenu>
   )
-}
+})
 
 function TaskMenuItems({
   kit: K,
@@ -337,11 +349,17 @@ export function TaskRowPreview({
   task,
   subtaskCount,
   depth = 0,
+  destination = null,
 }: {
   task: Task
   subtaskCount: number
   /** 1 = a subtask: indented like its row. */
   depth?: 0 | 1
+  /**
+   * Group a drop would append the task to when the row under the pointer can't show it (a
+   * collapsed group, the "No phase" drop zone): shown on the lifted row itself.
+   */
+  destination?: string | null
 }) {
   // Same column widths as TaskRow, so the lifted row lines up with the rows around it.
   return (
@@ -361,11 +379,19 @@ export function TaskRowPreview({
       >
         {task.title}
       </span>
-      {subtaskCount > 0 ? (
-        <span className="ml-auto shrink-0 pl-3 text-meta text-fg-tertiary">
-          + {subtaskCount} {subtaskCount === 1 ? 'subtask' : 'subtasks'}
-        </span>
-      ) : null}
+      <span className="ml-auto flex shrink-0 items-center gap-3 pl-3">
+        {subtaskCount > 0 ? (
+          <span className="text-meta text-fg-tertiary">
+            + {subtaskCount} {subtaskCount === 1 ? 'subtask' : 'subtasks'}
+          </span>
+        ) : null}
+        {destination ? (
+          <span className="inline-flex h-6 max-w-64 items-center gap-1 rounded-full bg-accent-subtle px-2 text-meta font-medium text-accent-text">
+            <CornerDownRight className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">Move to {destination}</span>
+          </span>
+        ) : null}
+      </span>
     </div>
   )
 }

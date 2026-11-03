@@ -45,7 +45,9 @@ export const LinkLayer = memo(function LinkLayer({
   return (
     <svg
       aria-hidden
-      className="pointer-events-none absolute z-[1] overflow-visible"
+      // Own compositor layer: scrolling moves it instead of re-rasterising it (dashed conflict
+      // strokes are expensive to raster, especially without GPU raster).
+      className="pointer-events-none absolute z-[1] overflow-visible will-change-transform"
       style={{ left: offsetLeft + box.x, top: box.y, width, height }}
       width={width}
       height={height}
@@ -56,7 +58,13 @@ export const LinkLayer = memo(function LinkLayer({
         const emphasized =
           emphasizedTaskId !== null &&
           (link.predecessorId === emphasizedTaskId || link.successorId === emphasizedTaskId)
-        const tone = selected ? 'active' : link.conflict ? 'conflict' : emphasized ? 'active' : 'normal'
+        const tone = selected
+          ? 'active'
+          : link.conflict
+            ? 'conflict'
+            : emphasized
+              ? 'active'
+              : 'normal'
         return (
           <g key={link.id} className="group/link" data-conflict={link.conflict || undefined}>
             <path

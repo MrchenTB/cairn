@@ -52,6 +52,8 @@ const BUILDER_METHODS = [
   'single',
   'maybeSingle',
   'limit',
+  'not',
+  'gt',
 ] as const
 
 const preferencesRow = {
@@ -67,6 +69,12 @@ const devicePreferences = {
   timezone: 'Asia/Taipei',
   weekStartsOn: 1,
 } as const
+const preferencesFromDevice = () => ({
+  theme: devicePreferences.theme,
+  sidebar_collapsed: devicePreferences.sidebarCollapsed,
+  timezone: devicePreferences.timezone,
+  week_starts_on: devicePreferences.weekStartsOn,
+})
 
 function createFakeClient(respond: Responder = () => ({ data: [] })) {
   const calls: Call[] = []
@@ -98,15 +106,20 @@ function createFakeClient(respond: Responder = () => ({ data: [] })) {
 const op = (call: Call, name: string) => call.ops.find(([method]) => method === name)
 const opNames = (call: Call) => call.ops.map(([method]) => method)
 
-/** Serves `rows` honouring .range(from, to), the exact count, and an optional max_rows cap. */
-function paged(rows: unknown[], options: { maxRows?: number; withCount?: boolean } = {}) {
+/**
+ * Serves `rows` (sorted by id) honouring .gt('id', …), .range(from, to), the exact count, and an
+ * optional max_rows cap.
+ */
+function paged(rows: { id: string }[], options: { maxRows?: number; withCount?: boolean } = {}) {
   return (call: Call): FakeResponse => {
     const [, from, to] = op(call, 'range') as [string, number, number]
+    const after = op(call, 'gt')?.[2] as string | undefined
+    const visible = after === undefined ? rows : rows.filter((row) => row.id > after)
     const end = Math.min(to + 1, from + (options.maxRows ?? Infinity))
     const wantsCount =
       (op(call, 'select')?.[2] as { count?: string } | undefined)?.count === 'exact'
     return {
-      data: rows.slice(from, end),
+      data: visible.slice(from, end),
       count: wantsCount && options.withCount !== false ? rows.length : null,
     }
   }
@@ -176,7 +189,7 @@ describe('loadWorkspace', () => {
     expect((await new SupabaseRepository(client).loadWorkspace()).preferences).toBeNull()
   })
 
-  it('pages through more than 1000 rows', async () => {
+  it('pages through more than 1000 rows, each page after the last id of the previous one', async () => {
     const rows = taskRows(2500)
     const { client, calls } = createFakeClient((call) =>
       call.table === 'tasks' ? paged(rows)(call) : { data: [], count: 0 },
@@ -184,11 +197,19 @@ describe('loadWorkspace', () => {
     const snapshot = await new SupabaseRepository(client).loadWorkspace()
     expect(snapshot.tasks).toHaveLength(2500)
     expect(new Set(snapshot.tasks.map((t) => t.id)).size).toBe(2500)
-    const ranges = calls.filter((c) => c.table === 'tasks').map((c) => op(c, 'range')?.slice(1))
-    expect(ranges).toEqual([
-      [0, 999],
-      [1000, 1999],
-      [2000, 2999],
+    const pages = calls
+      .filter((c) => c.table === 'tasks')
+      .map((c) => [op(c, 'gt')?.slice(1) ?? null, op(c, 'range')?.slice(1)])
+    expect(pages).toEqual([
+      [null, [0, PAGE_SIZE - 1]],
+      [
+        ['id', rows[999].id],
+        [0, PAGE_SIZE - 1],
+      ],
+      [
+        ['id', rows[1999].id],
+        [0, PAGE_SIZE - 1],
+      ],
     ])
   })
 
@@ -199,8 +220,23 @@ describe('loadWorkspace', () => {
     )
     const snapshot = await new SupabaseRepository(client).loadWorkspace()
     expect(snapshot.tasks).toHaveLength(1000)
-    const starts = calls.filter((c) => c.table === 'tasks').map((c) => op(c, 'range')?.[1])
-    expect(starts).toEqual([0, 400, 800])
+    const after = calls.filter((c) => c.table === 'tasks').map((c) => op(c, 'gt')?.[2] ?? null)
+    expect(after).toEqual([null, rows[399].id, rows[799].id])
+  })
+
+  it('never skips a row when another device deletes rows during a multi-page load', async () => {
+    const rows = taskRows(2500)
+    let served = 0
+    const { client } = createFakeClient((call) => {
+      if (call.table !== 'tasks') return { data: [], count: 0 }
+      const page = paged(rows)(call)
+      served += 1
+      if (served === 1) rows.splice(10, 1) // deleted elsewhere once the first page was read
+      return page
+    })
+    const snapshot = await new SupabaseRepository(client).loadWorkspace()
+    const ids = new Set(snapshot.tasks.map((t) => t.id))
+    for (const row of rows) expect(ids.has(row.id)).toBe(true)
   })
 
   it('stops at a short page when no count is returned', async () => {
@@ -542,6 +578,19 @@ describe('error mapping', () => {
       /another account/,
     ],
     ['expired JWT', { code: 'PGRST301', message: 'JWT expired' }, 'auth', /session has expired/],
+    // Third review: refusals that would fail again must not be offered as a Retry (unknown).
+    [
+      'text the database cannot store',
+      { code: '22P05', message: 'unsupported Unicode escape sequence' },
+      'validation',
+      /unsupported character/,
+    ],
+    [
+      'character outside the encoding',
+      { code: '22021', message: 'invalid byte sequence for encoding "UTF8": 0x00' },
+      'validation',
+      /unsupported character/,
+    ],
     ['anything else', { code: 'XX000', message: 'internal error' }, 'unknown'],
   ]
 
@@ -576,6 +625,11 @@ describe('error mapping', () => {
   it('uses the HTTP status when there is no code', () => {
     expect(toRepositoryError({ message: '' }, 401).kind).toBe('auth')
     expect(toRepositoryError({ message: '' }, 403).kind).toBe('permission')
+    // a request body the server refuses as too large fails the same way every time
+    expect(toRepositoryError({ message: 'Payload Too Large' }, 413)).toMatchObject({
+      kind: 'validation',
+      message: expect.stringMatching(/too much/i),
+    })
     expect(toRepositoryError({ message: 'TypeError: Load failed', code: '' }, 0).kind).toBe(
       'network',
     )
@@ -611,21 +665,55 @@ describe('review: answers and partial writes', () => {
   })
 
   it('saves only the changed preference columns (other devices keep theirs)', async () => {
-    const { client, calls } = createFakeClient(() => ({ data: preferencesRow }))
+    const { client, calls } = createFakeClient(() => ({ data: [preferencesRow] }))
     const stored = await new SupabaseRepository(client).upsertPreferences(devicePreferences, {
       fields: ['theme', 'weekStartsOn'],
     })
-    expect(op(calls[0], 'upsert')).toEqual([
-      'upsert',
-      { theme: 'light', week_starts_on: 1 },
-      { onConflict: 'user_id' },
-    ])
+    expect(calls).toHaveLength(1)
+    expect(calls[0].table).toBe('user_preferences')
+    expect(op(calls[0], 'update')).toEqual(['update', { theme: 'light', week_starts_on: 1 }])
+    // a filter (RLS limits it to the caller's own row); PostgREST refuses unfiltered updates
+    expect(op(calls[0], 'not')).toEqual(['not', 'user_id', 'is', null])
     expect(stored).toEqual({
       theme: 'dark',
       sidebarCollapsed: true,
       timezone: 'Europe/Paris',
       weekStartsOn: 0,
     })
+  })
+
+  it('a partial save on an account without a row creates it from the whole value', async () => {
+    const { client, calls } = createFakeClient((call) => {
+      if (op(call, 'update')) return { data: [] } // no row yet
+      return { data: [{ ...preferencesFromDevice(), user_id: 'u' }] }
+    })
+    const stored = await new SupabaseRepository(client).upsertPreferences(devicePreferences, {
+      fields: ['theme'],
+    })
+    expect(opNames(calls[1])).toEqual(['upsert', 'select'])
+    expect(op(calls[1], 'upsert')).toEqual([
+      'upsert',
+      { theme: 'light', sidebar_collapsed: false, timezone: 'Asia/Taipei', week_starts_on: 1 },
+      { onConflict: 'user_id', ignoreDuplicates: true },
+    ])
+    expect(stored).toEqual(devicePreferences)
+
+    // another device created it in between: only the asked columns change on that row
+    let updates = 0
+    const raced = createFakeClient((call) => {
+      if (op(call, 'update')) return { data: updates++ === 0 ? [] : [preferencesRow] }
+      return { data: [] } // the insert found the row already there
+    })
+    expect(
+      await new SupabaseRepository(raced.client).upsertPreferences(devicePreferences, {
+        fields: ['theme'],
+      }),
+    ).toMatchObject({ theme: 'dark', timezone: 'Europe/Paris' })
+    expect(raced.calls.map(opNames)).toEqual([
+      ['update', 'not', 'select'],
+      ['upsert', 'select'],
+      ['update', 'not', 'select'],
+    ])
   })
 
   it('onlyIfMissing inserts without overwriting and returns the existing row', async () => {

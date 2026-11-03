@@ -18,7 +18,11 @@ const COLUMN_RECTS: Record<string, ClientRect> = {
 
 function args(
   cards: Record<string, ClientRect>,
-  options: { pointer: { x: number; y: number } | null; collisionRect: ClientRect; activeId: string },
+  options: {
+    pointer: { x: number; y: number } | null
+    collisionRect: ClientRect
+    activeId: string
+  },
 ): Args {
   const rects = { ...COLUMN_RECTS, ...cards }
   return {
@@ -37,7 +41,11 @@ describe('detectBoardCollision — pointer drags', () => {
     const pointer = { x: 310, y: 30 }
     const collisionRect = rect(160, 0, 300, 60)
     const inTodo = { a: rect(0, 0, 300, 60), b: rect(320, 0, 300, 50) }
-    const inProgress = { a: rect(320, 0, 300, 60), b: rect(320, 68, 300, 50), c: rect(0, 0, 300, 50) }
+    const inProgress = {
+      a: rect(320, 0, 300, 60),
+      b: rect(320, 68, 300, 50),
+      c: rect(0, 0, 300, 50),
+    }
     const memory = createCollisionMemory()
     memory.lastOverId = 'b'
 
@@ -47,7 +55,11 @@ describe('detectBoardCollision — pointer drags', () => {
           ? { todo: ['a'], in_progress: ['b'], done: [] }
           : { todo: ['c'], in_progress: ['a', 'b'], done: [] }
       expect(
-        detectBoardCollision(args(layout, { pointer, collisionRect, activeId: 'a' }), columns, memory),
+        detectBoardCollision(
+          args(layout, { pointer, collisionRect, activeId: 'a' }),
+          columns,
+          memory,
+        ),
       ).toEqual([{ id: 'b' }])
     }
     expect(memory.pointer).toEqual(pointer)
@@ -58,7 +70,11 @@ describe('detectBoardCollision — pointer drags', () => {
     const cards = { a: rect(10, 10, 280, 60), b: rect(330, 10, 280, 60), c: rect(330, 80, 280, 60) }
     const columns: BoardColumnIds = { todo: ['a'], in_progress: ['b', 'c'], done: [] }
     const result = detectBoardCollision(
-      args(cards, { pointer: { x: 400, y: 100 }, collisionRect: rect(300, 70, 280, 60), activeId: 'a' }),
+      args(cards, {
+        pointer: { x: 400, y: 100 },
+        collisionRect: rect(300, 70, 280, 60),
+        activeId: 'a',
+      }),
       columns,
       memory,
     )
@@ -67,12 +83,20 @@ describe('detectBoardCollision — pointer drags', () => {
   })
 
   it('aims a column hit at the card nearest to the pointer, the dragged card included', () => {
-    const cards = { a: rect(330, 10, 280, 60), b: rect(330, 80, 280, 60), c: rect(330, 150, 280, 60) }
+    const cards = {
+      a: rect(330, 10, 280, 60),
+      b: rect(330, 80, 280, 60),
+      c: rect(330, 150, 280, 60),
+    }
     const columns: BoardColumnIds = { todo: [], in_progress: ['a', 'b', 'c'], done: [] }
     // Below every card (empty space / composer): the last card.
     expect(
       detectBoardCollision(
-        args(cards, { pointer: { x: 400, y: 400 }, collisionRect: rect(330, 370, 280, 60), activeId: 'x' }),
+        args(cards, {
+          pointer: { x: 400, y: 400 },
+          collisionRect: rect(330, 370, 280, 60),
+          activeId: 'x',
+        }),
         columns,
         createCollisionMemory(),
       ),
@@ -80,7 +104,11 @@ describe('detectBoardCollision — pointer drags', () => {
     // In the gap between a and b, nearer to b's centre.
     expect(
       detectBoardCollision(
-        args(cards, { pointer: { x: 400, y: 76 }, collisionRect: rect(330, 46, 280, 60), activeId: 'x' }),
+        args(cards, {
+          pointer: { x: 400, y: 76 },
+          collisionRect: rect(330, 46, 280, 60),
+          activeId: 'x',
+        }),
         columns,
         createCollisionMemory(),
       ),
@@ -88,7 +116,11 @@ describe('detectBoardCollision — pointer drags', () => {
     // The dragged card itself (c) is a candidate: below the last card it stays put.
     expect(
       detectBoardCollision(
-        args(cards, { pointer: { x: 400, y: 260 }, collisionRect: rect(330, 230, 280, 60), activeId: 'c' }),
+        args(cards, {
+          pointer: { x: 400, y: 260 },
+          collisionRect: rect(330, 230, 280, 60),
+          activeId: 'c',
+        }),
         columns,
         createCollisionMemory(),
       ),
@@ -99,11 +131,14 @@ describe('detectBoardCollision — pointer drags', () => {
     const columns: BoardColumnIds = { todo: ['a'], in_progress: [], done: [] }
     expect(
       detectBoardCollision(
-        args({ a: rect(10, 10, 280, 60) }, {
-          pointer: { x: 700, y: 300 },
-          collisionRect: rect(560, 270, 280, 60),
-          activeId: 'a',
-        }),
+        args(
+          { a: rect(10, 10, 280, 60) },
+          {
+            pointer: { x: 700, y: 300 },
+            collisionRect: rect(560, 270, 280, 60),
+            activeId: 'a',
+          },
+        ),
         columns,
         createCollisionMemory(),
       ),
@@ -114,7 +149,9 @@ describe('detectBoardCollision — pointer drags', () => {
     const outside = { pointer: { x: 2000, y: 300 }, collisionRect: rect(1900, 270, 280, 60) }
     const columns: BoardColumnIds = { todo: [], in_progress: ['a'], done: [] }
     const memory = createCollisionMemory()
-    expect(detectBoardCollision(args({}, { ...outside, activeId: 'a' }), columns, memory)).toEqual([])
+    expect(detectBoardCollision(args({}, { ...outside, activeId: 'a' }), columns, memory)).toEqual(
+      [],
+    )
     memory.lastOverId = 'b'
     expect(detectBoardCollision(args({}, { ...outside, activeId: 'a' }), columns, memory)).toEqual([
       { id: 'b' },
@@ -145,11 +182,14 @@ describe('detectBoardCollision — keyboard drags (no pointer)', () => {
     const columns: BoardColumnIds = { todo: ['a'], in_progress: [], done: [] }
     expect(
       detectBoardCollision(
-        args({ a: rect(10, 10, 280, 60) }, {
-          pointer: null,
-          collisionRect: rect(648, 40, 280, 60),
-          activeId: 'a',
-        }),
+        args(
+          { a: rect(10, 10, 280, 60) },
+          {
+            pointer: null,
+            collisionRect: rect(648, 40, 280, 60),
+            activeId: 'a',
+          },
+        ),
         columns,
         createCollisionMemory(),
       ),

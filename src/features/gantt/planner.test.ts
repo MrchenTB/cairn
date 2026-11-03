@@ -25,7 +25,12 @@ function setup(options: {
     projects: [project],
     tasks: options.tasks,
     dependencies: (options.links ?? []).map(([predecessorId, successorId]) =>
-      makeDependency({ id: `${predecessorId}>${successorId}`, projectId: 'p', predecessorId, successorId }),
+      makeDependency({
+        id: `${predecessorId}>${successorId}`,
+        projectId: 'p',
+        predecessorId,
+        successorId,
+      }),
     ),
   })
   const writes: ScheduleChange[][] = []
@@ -35,7 +40,10 @@ function setup(options: {
   const applySchedule = vi.fn(async (changes: readonly ScheduleChange[]): Promise<Result> => {
     for (const change of changes) {
       if (change.startDate && change.dueDate && change.dueDate < change.startDate) {
-        return { ok: false, error: { kind: 'validation', message: "Due date can't be before the start date." } }
+        return {
+          ok: false,
+          error: { kind: 'validation', message: "Due date can't be before the start date." },
+        }
       }
     }
     writes.push([...changes])
@@ -68,18 +76,44 @@ function setup(options: {
   const env: PlannerEnv = {
     getData: () => data,
     applySchedule,
-    warn: (message, opts) => warnings.push({ message, description: opts.description, review: opts.action?.onClick }),
+    warn: (message, opts) =>
+      warnings.push({ message, description: opts.description, review: opts.action?.onClick }),
     requestReschedule,
   }
-  return { planner: createPlanner(env), writes, requests, warnings, applySchedule, data: () => data }
+  return {
+    planner: createPlanner(env),
+    writes,
+    requests,
+    warnings,
+    applySchedule,
+    data: () => data,
+  }
 }
 
 // A (Nov 2–4) → B (Nov 5–6) → C (Nov 7–9): no conflicts to begin with.
 function chain() {
   return [
-    makeTask({ id: 'A', projectId: 'p', title: 'Alpha', startDate: '2026-11-02', dueDate: '2026-11-04' }),
-    makeTask({ id: 'B', projectId: 'p', title: 'Beta', startDate: '2026-11-05', dueDate: '2026-11-06' }),
-    makeTask({ id: 'C', projectId: 'p', title: 'Gamma', startDate: '2026-11-07', dueDate: '2026-11-09' }),
+    makeTask({
+      id: 'A',
+      projectId: 'p',
+      title: 'Alpha',
+      startDate: '2026-11-02',
+      dueDate: '2026-11-04',
+    }),
+    makeTask({
+      id: 'B',
+      projectId: 'p',
+      title: 'Beta',
+      startDate: '2026-11-05',
+      dueDate: '2026-11-06',
+    }),
+    makeTask({
+      id: 'C',
+      projectId: 'p',
+      title: 'Gamma',
+      startDate: '2026-11-07',
+      dueDate: '2026-11-09',
+    }),
   ]
 }
 const links: Array<[string, string]> = [
@@ -105,13 +139,21 @@ describe('planScheduleChange — Manual', () => {
 
   it('does not warn when no NEW conflict appears', async () => {
     const h = setup({ tasks: chain(), links })
-    await h.planner.planScheduleChange({ taskId: 'C', startDate: '2026-11-10', dueDate: '2026-11-12' })
+    await h.planner.planScheduleChange({
+      taskId: 'C',
+      startDate: '2026-11-10',
+      dueDate: '2026-11-12',
+    })
     expect(h.warnings).toEqual([])
   })
 
   it('validation errors write nothing and report the message (no toast)', async () => {
     const h = setup({ tasks: chain(), links })
-    const outcome = await h.planner.planScheduleChange({ taskId: 'A', startDate: '2026-11-05', dueDate: '2026-11-01' })
+    const outcome = await h.planner.planScheduleChange({
+      taskId: 'A',
+      startDate: '2026-11-05',
+      dueDate: '2026-11-01',
+    })
     expect(outcome).toMatchObject({ status: 'invalid', error: { kind: 'validation' } })
     expect(h.applySchedule).not.toHaveBeenCalled()
     expect(h.warnings).toEqual([])
@@ -119,9 +161,16 @@ describe('planScheduleChange — Manual', () => {
 
   it('unknown task → invalid; same dates → unchanged without a write', async () => {
     const h = setup({ tasks: chain(), links })
-    expect((await h.planner.planScheduleChange({ taskId: 'nope', startDate: null, dueDate: null })).status).toBe('invalid')
     expect(
-      await h.planner.planScheduleChange({ taskId: 'A', startDate: '2026-11-02', dueDate: '2026-11-04' }),
+      (await h.planner.planScheduleChange({ taskId: 'nope', startDate: null, dueDate: null }))
+        .status,
+    ).toBe('invalid')
+    expect(
+      await h.planner.planScheduleChange({
+        taskId: 'A',
+        startDate: '2026-11-02',
+        dueDate: '2026-11-04',
+      }),
     ).toEqual({ status: 'unchanged' })
     expect(h.applySchedule).not.toHaveBeenCalled()
   })
@@ -137,7 +186,11 @@ describe('planScheduleChange — Manual', () => {
 describe('planScheduleChange — Auto', () => {
   it('without shifts it writes directly (no preview)', async () => {
     const h = setup({ mode: 'auto', tasks: chain(), links })
-    const outcome = await h.planner.planScheduleChange({ taskId: 'C', startDate: '2026-11-08', dueDate: '2026-11-10' })
+    const outcome = await h.planner.planScheduleChange({
+      taskId: 'C',
+      startDate: '2026-11-08',
+      dueDate: '2026-11-10',
+    })
     expect(outcome).toEqual({ status: 'written' })
     expect(h.requests).toEqual([])
     expect(h.writes).toEqual([[{ taskId: 'C', startDate: '2026-11-08', dueDate: '2026-11-10' }]])
@@ -147,7 +200,9 @@ describe('planScheduleChange — Auto', () => {
     const h = setup({ mode: 'auto', tasks: chain(), links, answer: 'cancel' })
     const outcome = await h.planner.planScheduleChange(delayA, { source: 'modal' })
     expect(outcome).toEqual({ status: 'cancelled' })
-    expect(h.requests).toEqual([{ kind: 'change', projectId: 'p', change: delayA, source: 'modal' }])
+    expect(h.requests).toEqual([
+      { kind: 'change', projectId: 'p', change: delayA, source: 'modal' },
+    ])
     expect(h.applySchedule).not.toHaveBeenCalled()
     expect(h.data().tasks.A.startDate).toBe('2026-11-02')
   })
@@ -183,7 +238,11 @@ describe('planScheduleChange — Auto', () => {
 
   it('moving a successor before its predecessor cannot be auto-fixed: written, then warned', async () => {
     const h = setup({ mode: 'auto', tasks: chain(), links })
-    const outcome = await h.planner.planScheduleChange({ taskId: 'B', startDate: '2026-11-03', dueDate: '2026-11-04' })
+    const outcome = await h.planner.planScheduleChange({
+      taskId: 'B',
+      startDate: '2026-11-03',
+      dueDate: '2026-11-04',
+    })
     expect(outcome).toEqual({ status: 'written' })
     expect(h.requests).toEqual([])
     expect(h.warnings.map((w) => w.message)).toEqual(['1 dependency conflict'])
@@ -202,8 +261,20 @@ describe('reviewConflicts / reviewNewDependency', () => {
 
   it('a new violated dependency: Auto previews the shifts, Manual warns', async () => {
     const tasks = [
-      makeTask({ id: 'A', projectId: 'p', title: 'Alpha', startDate: '2026-11-02', dueDate: '2026-11-06' }),
-      makeTask({ id: 'B', projectId: 'p', title: 'Beta', startDate: '2026-11-04', dueDate: '2026-11-05' }),
+      makeTask({
+        id: 'A',
+        projectId: 'p',
+        title: 'Alpha',
+        startDate: '2026-11-02',
+        dueDate: '2026-11-06',
+      }),
+      makeTask({
+        id: 'B',
+        projectId: 'p',
+        title: 'Beta',
+        startDate: '2026-11-04',
+        dueDate: '2026-11-05',
+      }),
     ]
     const auto = setup({ mode: 'auto', tasks, links: [['A', 'B']], answer: 'apply' })
     expect(await auto.planner.reviewNewDependency('A>B')).toEqual({ status: 'written' })

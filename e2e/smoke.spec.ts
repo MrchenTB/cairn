@@ -2,12 +2,13 @@
 /**
  * Shell smoke test — runs in LOCAL data mode against the dev server (playwright.config.ts).
  *
- * Covers the app frame only: boot without console errors, sidebar navigation, redirects and the
- * NotFound page, sidebar collapse + theme persistence (theme applied before React mounts), the
- * ⌘/Ctrl+K search toggle with Esc, the shortcuts help, and keyboard basics (skip link, focus
- * return, no shortcuts while typing). Pages inside the shell belong to feature slices, so the
- * assertions stick to shell contracts: URL, document title, breadcrumb, aria-current,
- * aria-expanded, the data-collapsed / .dark state and the stored preferences.
+ * Covers the app frame only: boot without console errors, sidebar navigation (with its screen
+ * reader announcement), redirects and the NotFound page, sidebar collapse + theme persistence
+ * (theme applied before React mounts), the ⌘/Ctrl+K search toggle with Esc, the shortcuts help,
+ * a failed save's toast Retry over a modal, and keyboard basics (skip link, focus return, no
+ * shortcuts while typing). Pages inside the shell belong to feature slices, so the assertions
+ * stick to shell contracts: URL, document title, breadcrumb, aria-current, aria-expanded, the
+ * data-collapsed / .dark state and the stored preferences.
  */
 import { expect, test as base, type Locator, type Page } from '@playwright/test'
 
@@ -112,6 +113,9 @@ test.describe('app shell (local mode)', () => {
       { name: /^Settings$/, url: /\/settings\/account$/, crumb: 'Settings' },
       { name: /^Overview$/, url: /\/overview$/, crumb: 'Overview' },
     ]
+    // Screen readers hear the new page's name (focus stays on the link that was used).
+    const announcer = page.locator('[data-slot="route-announcer"]')
+    await expect(announcer).toHaveAttribute('aria-live', 'polite')
     for (const destination of destinations) {
       const link = sidebar(page).getByRole('link', { name: destination.name })
       await link.click()
@@ -120,6 +124,7 @@ test.describe('app shell (local mode)', () => {
       await expect(currentCrumb(page)).toHaveText(destination.crumb)
       await expect(link).toHaveAttribute('aria-current', 'page')
       await expect(sidebar(page).locator('[aria-current="page"]')).toHaveCount(1)
+      await expect(announcer).toHaveText(destination.crumb)
     }
     await page.goBack()
     await expect(page).toHaveURL(/\/settings\/account$/)
@@ -277,6 +282,31 @@ test.describe('app shell (local mode)', () => {
     await page.keyboard.press('Escape')
     await expect(help).toHaveCount(0)
     await expect(button).toBeFocused()
+  })
+
+  test("a failed save's toast Retry stays usable over a modal dialog", async ({ page }) => {
+    await openApp(page, '/overview')
+    // A CSS locator: while the modal is open the sidebar is hidden from assistive tech.
+    const aside = page.locator('aside[aria-label="Sidebar"]')
+    await page.evaluate(() => {
+      type TestHooks = { failNextWrites(count: number): void }
+      ;(window as Window & { __cairnTest?: TestHooks }).__cairnTest?.failNextWrites(1)
+    })
+    await page.locator('body').press('[')
+    // The write fails: the collapse is rolled back and an error toast offers Retry.
+    const retry = page.locator('[data-sonner-toast] [data-button]', { hasText: 'Retry' })
+    await expect(retry).toBeVisible()
+    await expect(aside).toHaveAttribute('data-collapsed', 'false')
+
+    // A modal opens on top (Radix makes the rest of the page inert to the pointer).
+    await page.locator('body').press('?')
+    const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    await expect(help).toBeVisible()
+
+    await retry.click() // a real hit-tested click: it must reach the toast, not the overlay
+    await expect(aside).toHaveAttribute('data-collapsed', 'true')
+    await expect(help).toBeVisible() // using the toast did not dismiss the dialog
+    await expectSavedPreference(page, 'sidebarCollapsed', true)
   })
 
   test('the skip link moves keyboard focus to the main content', async ({ page }) => {

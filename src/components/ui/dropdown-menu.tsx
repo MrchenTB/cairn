@@ -56,7 +56,7 @@ export function DropdownMenuItem({
         menuItem,
         inset && 'pl-8',
         variant === 'destructive' &&
-          'text-danger data-[highlighted]:bg-danger-subtle [&>svg]:text-danger',
+          'text-danger data-[highlighted]:bg-danger-subtle [&:not([data-disabled])>svg]:text-danger',
         className,
       )}
       {...props}

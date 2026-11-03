@@ -8,7 +8,10 @@ import { findConflicts, type DependencyConflict } from '@/domain/scheduling'
 import type { Dependency, ISODate, Task } from '@/domain/types'
 
 /** Dates shown instead of the stored ones (live drag or pending write), per task id. */
-export type DateOverrides = ReadonlyMap<string, { startDate: ISODate | null; dueDate: ISODate | null }>
+export type DateOverrides = ReadonlyMap<
+  string,
+  { startDate: ISODate | null; dueDate: ISODate | null }
+>
 
 /**
  * `base` (= findConflicts over stored dates) with every dependency touching an overridden task

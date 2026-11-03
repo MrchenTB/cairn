@@ -124,14 +124,15 @@ function EditTaskFormBody({
   const canSave = formDirty && !hasErrors(errors) && !saving
 
   const titleRef = useRef<HTMLTextAreaElement>(null)
+  const subtaskInputRef = useRef<HTMLInputElement>(null)
   /** Set right before a navigation this form confirmed itself (the guard lets it through). */
   const allowNavigationRef = useRef(false)
   const savingRef = useRef(false)
-  const latest = useRef({ task, edits, dirty })
+  const latest = useRef({ task, edits, dirty, subtaskDraft })
   // The latest onClose: a write that resolves later must not close with an old location.
   const onCloseRef = useRef(onClose)
   useLayoutEffect(() => {
-    latest.current = { task, edits, dirty }
+    latest.current = { task, edits, dirty, subtaskDraft }
     onCloseRef.current = onClose
   })
   const mountedRef = useRef(true)
@@ -230,7 +231,13 @@ function EditTaskFormBody({
     if (!mountedRef.current) return
     // Close unless more was typed while the write was in flight.
     const after = latest.current
-    if (isUnchanged(diffTask(after.task, after.edits))) closeNow()
+    if (!isUnchanged(diffTask(after.task, after.edits))) return
+    if (after.subtaskDraft) {
+      // An "Add subtask" line that was never added would be lost: stay and point at it.
+      subtaskInputRef.current?.focus()
+      return
+    }
+    closeNow()
   }
   useLayoutEffect(() => {
     submitRef.current = () => void save()
@@ -451,6 +458,7 @@ function EditTaskFormBody({
                 parent={task}
                 onOpenTask={openOther}
                 onDraftChange={setSubtaskDraft}
+                inputRef={subtaskInputRef}
               />
             ) : null}
             <DependenciesSection task={task} onOpenTask={openOther} />

@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useUIStore } from '@/app/uiStore'
 import { useWorkspaceStore } from '@/data/store'
@@ -174,8 +174,11 @@ describe('Task Modal · create', { timeout: 20_000 }, () => {
     const modal = await findModal()
 
     const picker = within(modal).getByRole('button', { name: 'Project: none chosen' })
+    // The footer says why Create is unavailable; trying anyway turns it into the field error.
+    expect(within(modal).getByText('Choose a project to create this task.')).toBeInTheDocument()
     await user.type(titleBox(), 'Order snacks{Enter}')
     expect(await screen.findByText('Choose a project for this task.')).toBeInTheDocument()
+    expect(within(modal).queryByText('Choose a project to create this task.')).toBeNull()
     expect(createButton()).toBeDisabled()
 
     await user.click(picker)
@@ -288,6 +291,38 @@ describe('Task Modal · create', { timeout: 20_000 }, () => {
     await user.click(within(again).getByRole('button', { name: 'Discard' }))
     await expectClosed()
     expect(storeTasks().some((task) => task.title === 'Half a thought')).toBe(false)
+  })
+
+  it('gives focus back to the element that opened it', async () => {
+    const { project } = await seedWorkspace()
+    const { user } = renderHosts(`/projects/${project.id}/list`)
+    const opener = document.createElement('button')
+    opener.textContent = 'New task'
+    document.body.append(opener)
+    try {
+      opener.focus()
+      openNewTask({ projectId: project.id })
+      await findModal()
+      expect(titleBox()).toHaveFocus()
+      await user.keyboard('{Escape}')
+      await expectClosed()
+      await waitFor(() => expect(opener).toHaveFocus())
+    } finally {
+      opener.remove()
+    }
+  })
+
+  it('Esc that cancels an IME composition does not close the modal', async () => {
+    const { project } = await seedWorkspace()
+    const { user } = renderHosts(`/projects/${project.id}/list`)
+    openNewTask({ projectId: project.id })
+    await findModal()
+    fireEvent.keyDown(titleBox(), { key: 'Escape', isComposing: true })
+    fireEvent.keyDown(titleBox(), { key: 'Escape', keyCode: 229 })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.getByRole('dialog', { name: 'New task' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await expectClosed()
   })
 
   it('a slow create finishing later still confirms, without closing the next New task', async () => {

@@ -2,7 +2,13 @@ import type { ComponentProps, ReactNode } from 'react'
 import { Command as CommandPrimitive } from 'cmdk'
 import { Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from './dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  type DialogContentProps,
+} from './dialog'
 
 /** cmdk root styled for the search overlay (keyboard: ↑↓ to move, ↵ to open). */
 export function Command({ className, ...props }: ComponentProps<typeof CommandPrimitive>) {
@@ -147,6 +153,14 @@ export interface CommandDialogProps extends ComponentProps<typeof Dialog> {
   description?: string
   className?: string
   commandProps?: ComponentProps<typeof CommandPrimitive>
+  /**
+   * Event handlers for the dialog panel, e.g. `onCloseAutoFocus` (where focus goes on close) or
+   * `onEscapeKeyDown` (keep it open for the Esc that cancels an IME composition).
+   */
+  contentProps?: Pick<
+    DialogContentProps,
+    'onOpenAutoFocus' | 'onCloseAutoFocus' | 'onEscapeKeyDown' | 'onPointerDownOutside'
+  >
 }
 
 /** The search overlay shell: 640px panel 15vh from the top, above other dialogs. */
@@ -155,6 +169,7 @@ export function CommandDialog({
   description,
   className,
   commandProps,
+  contentProps,
   children,
   ...props
 }: CommandDialogProps) {
@@ -165,6 +180,7 @@ export function CommandDialog({
         position="top"
         showClose={false}
         overlayClassName="z-(--z-command)"
+        {...contentProps}
         className={cn('top-[15vh] z-(--z-command) max-h-[70vh] p-0', className)}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>

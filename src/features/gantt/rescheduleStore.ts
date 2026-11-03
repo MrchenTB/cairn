@@ -58,7 +58,8 @@ export function requestReschedule(
     const settle = (outcome: RescheduleOutcome) => {
       if (settled) return
       settled = true
-      if (useRescheduleStore.getState().active?.id === id) useRescheduleStore.setState({ active: null })
+      if (useRescheduleStore.getState().active?.id === id)
+        useRescheduleStore.setState({ active: null })
       resolve(outcome)
     }
     useRescheduleStore.setState({ active: { id, request, execute, settle } })

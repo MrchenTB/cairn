@@ -9,6 +9,7 @@ import { useAuth } from '@/data/hooks'
 import { AppSplash } from './AppSplash'
 import { AuthLayout, FormAlert } from './AuthLayout'
 import type { LoginRedirectState } from './AuthGate'
+import { clearAuthRedirectError, peekAuthRedirectError } from './authRedirectError'
 import { safeReturnPath } from './loginRedirect'
 import { MIN_PASSWORD_LENGTH } from './passwordRules'
 
@@ -47,21 +48,33 @@ function NoticePanel({ notice, onBack }: { notice: Notice; onBack: () => void })
   )
 }
 
-function CredentialsForm() {
+interface CredentialsFormProps {
+  mode: FormMode
+  onModeChange: (mode: FormMode) => void
+}
+
+function CredentialsForm({ mode, onModeChange }: CredentialsFormProps) {
   const { actions } = useAuth()
   const ids = useId()
   const emailRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
-  const [mode, setMode] = useState<FormMode>('sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState<'submit' | 'reset' | null>(null)
-  const [error, setError] = useState<FormError | null>(null)
+  // Arriving from an expired / already used reset or confirmation link: say so up front.
+  const [error, setError] = useState<FormError | null>(() => {
+    const message = peekAuthRedirectError()
+    return message ? { field: null, message } : null
+  })
   const [notice, setNotice] = useState<Notice | null>(null)
 
+  useEffect(() => clearAuthRedirectError(), [])
+
+  /** The page title follows the mode; focus goes to the top of the (now different) form. */
   const switchMode = (next: FormMode) => {
-    setMode(next)
+    onModeChange(next)
     setError(null)
+    emailRef.current?.focus()
   }
 
   const fail = (next: FormError) => {
@@ -189,11 +202,12 @@ function CredentialsForm() {
               At least {MIN_PASSWORD_LENGTH} characters.
             </p>
           ) : (
+            // -my-1 py-1: a 24px target (WCAG 2.5.8) without moving the layout.
             <button
               type="button"
               onClick={sendReset}
               disabled={pending !== null}
-              className="self-end rounded-sm text-meta text-fg-tertiary transition-colors duration-fast hover:text-fg hover:duration-instant disabled:opacity-50"
+              className="-my-1 self-end rounded-sm py-1 text-meta text-fg-tertiary transition-colors duration-fast hover:text-fg hover:duration-instant disabled:opacity-50"
             >
               {pending === 'reset' ? 'Sending…' : 'Forgot password?'}
             </button>
@@ -226,20 +240,32 @@ function CredentialsForm() {
 
 /**
  * /login — Supabase email + password. Local mode has no accounts and redirects to /overview;
- * a signed-in user goes back to the page they originally asked for.
+ * a signed-in user goes back to the page they originally asked for. The page title names the
+ * current form ("Welcome to Cairn" / "Create your account").
  */
 export function LoginPage() {
   const { mode, status } = useAuth()
   const location = useLocation()
+  const [formMode, setFormMode] = useState<FormMode>('sign-in')
   const from = (location.state as LoginRedirectState | null)?.from
+  const showsForm = mode !== 'local' && status === 'signed_out'
+
+  // Outside the app shell nothing else names the page (after sign-out it still said "Settings").
+  useEffect(() => {
+    if (showsForm)
+      document.title = `${formMode === 'sign-in' ? 'Sign in' : 'Create account'} · Cairn`
+  }, [showsForm, formMode])
 
   if (mode === 'local') return <Navigate to="/overview" replace />
   if (status === 'signed_in') return <Navigate to={safeReturnPath(from)} replace />
   if (status === 'loading') return <AppSplash />
 
   return (
-    <AuthLayout title="Welcome to Cairn" subtitle="Plan clearly. Work simply.">
-      <CredentialsForm />
+    <AuthLayout
+      title={formMode === 'sign-in' ? 'Welcome to Cairn' : 'Create your account'}
+      subtitle="Plan clearly. Work simply."
+    >
+      <CredentialsForm mode={formMode} onModeChange={setFormMode} />
     </AuthLayout>
   )
 }

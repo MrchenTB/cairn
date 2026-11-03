@@ -86,8 +86,17 @@ const cardTitles = (region: HTMLElement) =>
   )
 const storeTask = (id: string) => useWorkspaceStore.getState().data.tasks[id]
 
+/** The local repository's test hooks (installed in dev/test builds, local mode). */
+function testHooks() {
+  const hooks = window.__cairnTest
+  if (!hooks) throw new Error('window.__cairnTest is not installed')
+  return hooks
+}
+
 beforeEach(() => {
   localStorage.clear()
+  window.__cairnTest?.failNextWrites(0)
+  window.__cairnTest?.setLatency(0)
   useWorkspaceStore.getState().actions.reset()
   useUIStore.setState({ newTask: null })
 })
@@ -156,6 +165,41 @@ describe('BoardView', () => {
     expect(cardTitles(column(/^To Do/))).not.toContain('Plan retro')
   })
 
+  it('rolls a failed status change back and keeps keyboard focus on the card', async () => {
+    const { projectId, tasks } = await seed()
+    const { user } = renderBoard(`/projects/${projectId}/board`)
+    testHooks().failNextWrites(1)
+
+    const card = screen.getByRole('button', { name: 'Plan retro' }).closest('li') as HTMLElement
+    await user.click(within(card).getByRole('button', { name: 'Status: To Do' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /In Progress/ }))
+
+    // Optimistic first, then rolled back once the write failed.
+    await waitFor(() => expect(cardTitles(column(/^To Do/))).toContain('Plan retro'))
+    expect(cardTitles(column(/^In Progress/))).not.toContain('Plan retro')
+    expect(storeTask(tasks['Plan retro'].id).status).toBe('todo')
+    expect(useWorkspaceStore.getState().sync.lastError).not.toBeNull()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Plan retro' })).toHaveFocus())
+  })
+
+  it('moves focus between cards with the arrow keys', async () => {
+    const { projectId } = await seed()
+    const { user } = renderBoard(`/projects/${projectId}/board`)
+    const card = (name: string) => screen.getByRole('button', { name })
+
+    card('Interview users').focus()
+    await user.keyboard('{ArrowDown}')
+    expect(card('Draft survey')).toHaveFocus()
+    await user.keyboard('{ArrowRight}') // In Progress has one card: its last
+    expect(card('Prototype')).toHaveFocus()
+    await user.keyboard('{ArrowRight}')
+    expect(card('Write brief')).toHaveFocus()
+    await user.keyboard('{ArrowUp}{ArrowRight}') // nothing above, no column further right
+    expect(card('Write brief')).toHaveFocus()
+    await user.keyboard('{ArrowLeft}{ArrowLeft}')
+    expect(card('Interview users')).toHaveFocus()
+  })
+
   it('reorders within a column from the ⋯ menu without touching status', async () => {
     const { projectId, tasks } = await seed()
     const { user } = renderBoard(`/projects/${projectId}/board`)
@@ -179,6 +223,21 @@ describe('BoardView', () => {
       ]),
     )
     expect(storeTask(tasks['Interview users'].id).status).toBe('todo')
+  })
+
+  it('puts a card back where it was when a menu move fails', async () => {
+    const { projectId } = await seed()
+    const { user } = renderBoard(`/projects/${projectId}/board`)
+    testHooks().failNextWrites(1)
+
+    const card = screen
+      .getByRole('button', { name: 'Interview users' })
+      .closest('li') as HTMLElement
+    await user.click(within(card).getByRole('button', { name: /More actions/ }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Move to bottom' }))
+
+    await waitFor(() => expect(useWorkspaceStore.getState().sync.lastError).not.toBeNull())
+    expect(cardTitles(column(/^To Do/))).toEqual(['Interview users', 'Draft survey', 'Plan retro'])
   })
 
   it('adds tasks inline at the end of a column and keeps focus for rapid entry', async () => {

@@ -100,6 +100,23 @@ describe('Sidebar', () => {
     )
   })
 
+  it('spells out what the My Tasks dot means in the collapsed rail tooltip', async () => {
+    const today = todayInTimeZone(TIME_ZONE)
+    seed(projects, { sidebarCollapsed: true }, [
+      makeTask({ projectId: 'a', dueDate: '2000-01-03' }),
+      makeTask({ projectId: 'a', dueDate: today }),
+      makeTask({ projectId: 'b', dueDate: today }),
+    ])
+    const { user } = renderUI(<Sidebar />, { route: '/overview' })
+    await user.tab() // Expand sidebar
+    await user.tab() // Overview
+    await user.tab() // My Tasks
+    expect(screen.getByRole('link', { name: /^My Tasks/ })).toHaveFocus()
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'My Tasks · 1 overdue · 2 due today',
+    )
+  })
+
   it('says "Local only — not synced" in local mode', () => {
     seed(projects)
     renderUI(<Sidebar />, { route: '/overview' })

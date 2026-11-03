@@ -1,8 +1,11 @@
 /**
  * Live feedback next to the pointer while dragging: the new dates (e.g. "Nov 4 – Nov 7 · 4 days")
  * or, while drawing a dependency, what dropping would do. Portalled and fixed-positioned, never
- * hit-testable (so `elementFromPoint` keeps finding the bar underneath).
+ * hit-testable (so `elementFromPoint` keeps finding the bar underneath). Kept inside the window:
+ * it flips to the left of the pointer near the right edge (auto-scroll happens right there) and
+ * below it near the top.
  */
+import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { TriangleAlert } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -15,22 +18,40 @@ export interface DragTooltipProps {
   tone?: 'default' | 'danger'
 }
 
-export function DragTooltip({ clientX, clientY, text, detail, tone = 'default' }: DragTooltipProps) {
+const GAP = 12
+const EDGE = 8
+
+export function DragTooltip({
+  clientX,
+  clientY,
+  text,
+  detail,
+  tone = 'default',
+}: DragTooltipProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  useLayoutEffect(() => {
+    const next = ref.current?.offsetWidth ?? 0
+    setWidth((previous) => (previous === next ? previous : next))
+  }, [text, detail, tone])
   if (typeof document === 'undefined') return null
-  // Above-right of the pointer, flipped below near the top of the window.
+  const viewportWidth = window.innerWidth
+  const flip = clientX + GAP + width > viewportWidth - EDGE
+  const left = flip ? Math.max(EDGE, clientX - GAP - width) : clientX + GAP
   const top = clientY < 64 ? clientY + 20 : clientY - 40
   return createPortal(
     <div
+      ref={ref}
       aria-hidden
       className={cn(
-        'pointer-events-none fixed z-(--z-tooltip) flex max-w-xs items-center gap-1.5 rounded-md bg-inverse px-2 py-1',
+        'pointer-events-none fixed z-(--z-tooltip) flex max-w-[min(32rem,calc(100vw-16px))] items-center gap-1.5 rounded-md bg-inverse px-2 py-1',
         'text-meta font-medium whitespace-nowrap text-fg-inverse shadow-popover tabular-nums',
       )}
-      style={{ left: clientX + 12, top }}
+      style={{ left, top }}
     >
       {tone === 'danger' ? <TriangleAlert className="size-3.5 shrink-0" aria-hidden /> : null}
-      <span>{text}</span>
-      {detail ? <span className="opacity-70">{detail}</span> : null}
+      <span className="min-w-0 truncate">{text}</span>
+      {detail ? <span className="shrink-0 opacity-70">{detail}</span> : null}
     </div>,
     document.body,
   )

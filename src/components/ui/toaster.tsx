@@ -24,7 +24,9 @@ const STYLE = {
 
 /**
  * Toast stack (bottom-right, max 3 visible), themed with tokens. Mount once; trigger toasts via
- * `notify` from '@/lib/notify'. Semantic colour only on the icon — no richColors.
+ * `notify` from '@/lib/notify'. Semantic colour only on the icon — no richColors. Visible toasts
+ * are always laid out in full (`expand`): a newer toast never hides a failure and its Retry.
+ * Alt+T (sonner) moves keyboard focus to the stack; toasts stay clickable over modals (index.css).
  */
 export function Toaster({ theme = 'light', ...props }: ToasterProps) {
   return (
@@ -33,6 +35,7 @@ export function Toaster({ theme = 'light', ...props }: ToasterProps) {
       position="bottom-right"
       offset={16}
       gap={8}
+      expand
       visibleToasts={3}
       icons={ICONS}
       style={STYLE}

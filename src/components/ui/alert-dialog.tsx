@@ -49,7 +49,8 @@ export function AlertDialogHeader({ className, ...props }: ComponentProps<'div'>
 export function AlertDialogFooter({ className, ...props }: ComponentProps<'div'>) {
   return (
     <div
-      className={cn('flex items-center justify-end gap-2 px-5 pt-3 pb-4', className)}
+      // Long action labels wrap onto another row instead of spilling out of the panel.
+      className={cn('flex flex-wrap items-center justify-end gap-2 px-5 pt-3 pb-4', className)}
       {...props}
     />
   )

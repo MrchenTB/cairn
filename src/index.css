@@ -250,6 +250,14 @@ html[data-input-modality='keyboard']
 [data-sonner-toaster][data-sonner-theme] {
   font-family: var(--font-family-sans);
 }
+/*
+ * A modal dialog or menu sets `pointer-events: none` on <body>; toasts must stay usable on top of
+ * it (Retry after a failed save, Undo). DialogContent ignores pointer-downs on toasts, so using
+ * one never dismisses the dialog underneath. Hidden (leaving) toasts keep sonner's `none`.
+ */
+[data-sonner-toaster] [data-sonner-toast]:not([data-visible='false']) {
+  pointer-events: auto;
+}
 [data-sonner-toaster] [data-sonner-toast][data-styled='true'] {
   padding: 10px 12px;
   gap: 8px;

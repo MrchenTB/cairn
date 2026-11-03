@@ -13,6 +13,7 @@ import { PasswordRecoveryDialog } from '../PasswordRecoveryDialog'
 import { useCurrentProjectId, useGlobalShortcuts } from '../shortcuts'
 import { useWorkspaceBootstrap } from '../useWorkspaceBootstrap'
 import { isProjectView, recordProjectVisit, setProjectView } from '../viewPrefs'
+import { RouteAnnouncer } from './RouteAnnouncer'
 import { ShortcutsDialog } from './ShortcutsDialog'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
@@ -81,6 +82,7 @@ export function AppShell() {
           </main>
         </div>
       </div>
+      <RouteAnnouncer />
       <ShortcutsDialog />
       <PasswordRecoveryDialog />
       {boot.loadedOnce ? (

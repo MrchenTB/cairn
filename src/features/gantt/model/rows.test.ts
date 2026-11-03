@@ -65,9 +65,18 @@ describe('buildGanttRows', () => {
       phases: [p2, p1],
       tasks: [
         makeTask({ projectId: 'p', title: 'Loose', dueDate: '2026-11-04', sortOrder: 'a0' }),
-        makeTask({ projectId: 'p', phaseId: p1.id, title: 'Wireframes', startDate: '2026-11-02', dueDate: '2026-11-06', sortOrder: 'a1' }),
+        makeTask({
+          projectId: 'p',
+          phaseId: p1.id,
+          title: 'Wireframes',
+          startDate: '2026-11-02',
+          dueDate: '2026-11-06',
+          sortOrder: 'a1',
+        }),
       ],
-      milestones: [makeMilestone({ projectId: 'p', phaseId: p1.id, name: 'Review', date: '2026-11-09' })],
+      milestones: [
+        makeMilestone({ projectId: 'p', phaseId: p1.id, name: 'Review', date: '2026-11-09' }),
+      ],
     })
     expect(model.rows.map(describeRow)).toEqual([
       'group:No phase',
@@ -95,7 +104,9 @@ describe('buildGanttRows', () => {
       {
         phases: [p1],
         tasks: [makeTask({ projectId: 'p', phaseId: p1.id, title: 'T', dueDate: '2026-11-04' })],
-        milestones: [makeMilestone({ projectId: 'p', phaseId: p1.id, name: 'M', date: '2026-11-09' })],
+        milestones: [
+          makeMilestone({ projectId: 'p', phaseId: p1.id, name: 'M', date: '2026-11-09' }),
+        ],
       },
       [groupRowKey(p1)],
     )
@@ -105,11 +116,27 @@ describe('buildGanttRows', () => {
   })
 
   it('subtasks are indented under their parent and hidden when it is collapsed', () => {
-    const parent = makeTask({ projectId: 'p', title: 'Parent', startDate: '2026-11-02', dueDate: '2026-11-03' })
-    const child = makeTask({ projectId: 'p', parentTaskId: parent.id, title: 'Child', startDate: '2026-11-04', dueDate: '2026-11-10' })
+    const parent = makeTask({
+      projectId: 'p',
+      title: 'Parent',
+      startDate: '2026-11-02',
+      dueDate: '2026-11-03',
+    })
+    const child = makeTask({
+      projectId: 'p',
+      parentTaskId: parent.id,
+      title: 'Child',
+      startDate: '2026-11-04',
+      dueDate: '2026-11-10',
+    })
     const expanded = rowsOf({ tasks: [parent, child] })
     expect(expanded.rows.map(describeRow)).toEqual(['Parent', '  Child'])
-    expect(expanded.rows[0]).toMatchObject({ subtaskCount: 1, collapsed: false, rollup: null, subtaskRollup: null })
+    expect(expanded.rows[0]).toMatchObject({
+      subtaskCount: 1,
+      collapsed: false,
+      rollup: null,
+      subtaskRollup: null,
+    })
     expect(expanded.taskRowIndex.get(child.id)).toBe(1)
 
     const collapsed = rowsOf({ tasks: [parent, child] }, [taskRowKey(parent.id)])
@@ -124,7 +151,12 @@ describe('buildGanttRows', () => {
 
   it('a parent without own dates shows a rollup bracket of its subtasks', () => {
     const parent = makeTask({ projectId: 'p', title: 'Parent' })
-    const child = makeTask({ projectId: 'p', parentTaskId: parent.id, title: 'Child', dueDate: '2026-11-12' })
+    const child = makeTask({
+      projectId: 'p',
+      parentTaskId: parent.id,
+      title: 'Child',
+      dueDate: '2026-11-12',
+    })
     const model = rowsOf({ tasks: [parent, child] })
     const row = model.rows[0]
     expect(row.kind).toBe('task')
@@ -137,7 +169,13 @@ describe('buildGanttRows', () => {
 
   it('tasks without any dates go to "Unscheduled (n)" at the bottom, drawable', () => {
     const p1 = makePhase({ projectId: 'p', name: 'Design' })
-    const dated = makeTask({ projectId: 'p', phaseId: p1.id, title: 'Dated', dueDate: '2026-11-04', sortOrder: 'a1' })
+    const dated = makeTask({
+      projectId: 'p',
+      phaseId: p1.id,
+      title: 'Dated',
+      dueDate: '2026-11-04',
+      sortOrder: 'a1',
+    })
     const loose = makeTask({ projectId: 'p', phaseId: p1.id, title: 'Loose', sortOrder: 'a2' })
     const parent = makeTask({ projectId: 'p', title: 'Parent', sortOrder: 'a3' })
     const child = makeTask({ projectId: 'p', parentTaskId: parent.id, title: 'Child' })

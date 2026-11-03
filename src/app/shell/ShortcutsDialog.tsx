@@ -13,9 +13,13 @@ import { useUIStore } from '../uiStore'
 
 const GROUP_ORDER = ['General', 'Navigation', 'Current view']
 
-/** Esc is handled by every overlay itself, so it is listed statically. */
+/**
+ * Keys handled outside the shortcut engine, so they are listed statically: Esc by every overlay,
+ * Alt+T by the toast stack (sonner moves focus to the notifications, e.g. to reach a Retry).
+ */
 const STATIC: RegisteredHotkey[] = [
   { id: -1, keys: ['escape'], description: 'Close dialog or menu', group: 'General' },
+  { id: -2, keys: ['alt+t'], description: 'Focus notifications', group: 'General' },
 ]
 
 /** "?" help: every shortcut that is active right now, grouped (view shortcuts included). */

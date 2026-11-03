@@ -46,7 +46,14 @@ export interface ScaleSpec {
  * readable. Precise edits on Month go through Alt+←/→ on a focused bar or the Task Modal.
  */
 export const SCALES: Record<GanttScale, ScaleSpec> = {
-  day: { id: 'day', label: 'Day', dayWidth: 36, paddingDays: 14, extendDays: 42, shadeWeekends: true },
+  day: {
+    id: 'day',
+    label: 'Day',
+    dayWidth: 36,
+    paddingDays: 14,
+    extendDays: 42,
+    shadeWeekends: true,
+  },
   week: {
     id: 'week',
     label: 'Week',

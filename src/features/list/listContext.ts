@@ -1,7 +1,7 @@
 /** Shared state of one List view (avoids threading the same props through every row). */
 import { createContext, useContext } from 'react'
 import type { ISODate, Phase, Project, Task } from '@/domain/types'
-import type { TaskCommands, TaskMenuContext } from './TaskRow'
+import type { TaskCommands } from './TaskRow'
 import type { ListDragState } from './useListDnd'
 
 export interface CreateTaskRequest {
@@ -24,12 +24,13 @@ export interface ListContextValue {
   project: Project
   today: ISODate
   phases: readonly Phase[]
+  /** Stable for the life of the view (rows are memoised on it). */
   commands: TaskCommands
   phaseCommands: PhaseCommands
-  menuFor(task: Task): TaskMenuContext
+  /** Whether "Move up" / "Move down" have somewhere to go among the task's siblings. */
+  moveRange(task: Task): { canMoveUp: boolean; canMoveDown: boolean }
   /** Parents whose subtasks are shown. */
   expanded: ReadonlySet<string>
-  toggleExpanded(taskId: string): void
   /** Which inline "Add …" row is open (see addRowKey), if any. */
   editingRow: string | null
   setEditingRow(key: string | null): void
@@ -37,6 +38,8 @@ export interface ListContextValue {
   createTask(request: CreateTaskRequest): Promise<string | null>
   openMilestone(milestoneId: string): void
   drag: ListDragState | null
+  /** The OS asks for reduced motion: rows don't animate while they make room. */
+  reducedMotion: boolean
 }
 
 export const ListContext = createContext<ListContextValue | null>(null)

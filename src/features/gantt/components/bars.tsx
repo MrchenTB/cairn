@@ -16,8 +16,12 @@ import { measureLabelWidth } from './measure'
 /** Highlight while a dependency is being drawn over this task. */
 export type LinkTargetState = 'valid' | 'invalid' | null
 
+/*
+ * Keyboard focus ring, outside the bar. No `outline-none` here: in Tailwind 4 it sets
+ * --tw-outline-style: none, which `focus-visible:outline-2` then inherits (no ring at all).
+ */
 const focusRing =
-  'outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus'
+  'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-solid focus-visible:outline-focus'
 
 /** Box-shadow ring (not an outline, which the focus styles own) on a link drop target. */
 function linkRing(state: LinkTargetState): string | false {
@@ -272,7 +276,9 @@ export function DueMarker({
         {conflict ? (
           <TriangleAlert className="size-3 shrink-0 text-(--gantt-conflict)" aria-hidden />
         ) : null}
-        <span className={cn('font-medium tabular-nums', overdue ? 'text-danger' : 'text-fg-secondary')}>
+        <span
+          className={cn('font-medium tabular-nums', overdue ? 'text-danger' : 'text-fg-secondary')}
+        >
           {dateLabel}
         </span>
         <span className="text-fg-tertiary">{task.title}</span>
@@ -428,9 +434,18 @@ export function RollupBracket({ rect, title }: { rect: BarRect; title: string })
       title={title}
       style={{ left: rect.left, width: rect.width, top: ROW_HEIGHT / 2 - 3, height: 7 }}
     >
-      <span aria-hidden className="absolute inset-x-0 top-0 h-[3px] rounded-[1px] bg-(--gantt-summary)" />
-      <span aria-hidden className="absolute top-0 left-0 h-[7px] w-0.5 rounded-b-[1px] bg-(--gantt-summary)" />
-      <span aria-hidden className="absolute top-0 right-0 h-[7px] w-0.5 rounded-b-[1px] bg-(--gantt-summary)" />
+      <span
+        aria-hidden
+        className="absolute inset-x-0 top-0 h-[3px] rounded-[1px] bg-(--gantt-summary)"
+      />
+      <span
+        aria-hidden
+        className="absolute top-0 left-0 h-[7px] w-0.5 rounded-b-[1px] bg-(--gantt-summary)"
+      />
+      <span
+        aria-hidden
+        className="absolute top-0 right-0 h-[7px] w-0.5 rounded-b-[1px] bg-(--gantt-summary)"
+      />
     </div>
   )
 }

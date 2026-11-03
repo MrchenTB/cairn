@@ -14,6 +14,7 @@ import {
 const titleBox = () => screen.getByRole('textbox', { name: 'Task title' })
 const saveButton = () => screen.getByRole('button', { name: 'Save' })
 const dependencies = () => Object.values(useWorkspaceStore.getState().data.dependencies)
+const blockedByList = () => screen.getByRole('list', { name: 'Blocked by' })
 
 async function findModal(title: string) {
   return screen.findByRole('dialog', { name: `Edit task: ${title}` })
@@ -221,6 +222,35 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     )
   })
 
+  it('⌘↵ in "Add subtask" adds the typed subtask; Save never drops an unsent line', async () => {
+    const { project, tasks } = await seedWorkspace()
+    const review = tasks['Write literature review']
+    const { user } = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
+    await findModal('Write literature review')
+    const add = screen.getByRole('textbox', { name: 'Add subtask' })
+
+    // With text, ⌘↵ / Ctrl+↵ adds the subtask (the modal stays open).
+    await user.type(add, 'Check citations')
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    await waitFor(() =>
+      expect(storeTasks().find((task) => task.title === 'Check citations')?.parentTaskId).toBe(
+        review.id,
+      ),
+    )
+    expect(add).toHaveValue('')
+    expect(screen.getByRole('dialog', { name: /Edit task/ })).toBeInTheDocument()
+
+    // Save with an unsent line: the form is saved, the modal stays and points at the line.
+    await user.type(titleBox(), '!')
+    await user.type(add, 'Not added yet')
+    await user.click(saveButton())
+    await waitFor(() => expect(storeTask(review.id)?.title).toBe('Write literature review!'))
+    await waitFor(() => expect(add).toHaveFocus())
+    expect(add).toHaveValue('Not added yet')
+    expect(screen.getByRole('dialog', { name: /Edit task/ })).toBeInTheDocument()
+    expect(saveButton()).toBeDisabled()
+  })
+
   it('an unsent "Add subtask" draft counts as unsaved when closing', async () => {
     const { project, tasks } = await seedWorkspace()
     const review = tasks['Write literature review']
@@ -275,12 +305,39 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
       ),
     ).toBe(true)
 
-    // Chips are removable (immediately).
+    // Chips are removable (immediately); focus stays in the row (here: the chip before).
     await user.click(screen.getByRole('button', { name: 'Remove “Book a room” from Blocked by' }))
     await waitFor(() =>
       expect(dependencies().some((d) => d.predecessorId === tasks['Book a room'].id)).toBe(false),
     )
     expect(saveButton()).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: 'Remove “Collect sources” from Blocked by' }),
+    ).toHaveFocus()
+  })
+
+  it('removing a chip moves focus to the next chip of the row', async () => {
+    const { project, tasks } = await seedWorkspace()
+    const review = tasks['Write literature review']
+    const actions = useWorkspaceStore.getState().actions
+    expect((await actions.addDependency(tasks['Book a room'].id, review.id)).ok).toBe(true)
+    const { user } = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
+    await findModal('Write literature review')
+
+    screen.getByRole('button', { name: 'Remove “Collect sources” from Blocked by' }).focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(dependencies().some((d) => d.predecessorId === tasks['Collect sources'].id)).toBe(
+        false,
+      ),
+    )
+    expect(
+      screen.getByRole('button', { name: 'Remove “Book a room” from Blocked by' }),
+    ).toHaveFocus()
+    // The last chip of the row: focus goes to "Add".
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(within(blockedByList()).queryAllByRole('listitem')).toHaveLength(1))
+    expect(screen.getByRole('button', { name: 'Add a task that blocks this one' })).toHaveFocus()
   })
 
   it('shows the dependency conflict with the required start date and a Gantt link', async () => {

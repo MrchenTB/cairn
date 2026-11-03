@@ -74,6 +74,13 @@ export function setTasksExpanded(taskIds: readonly string[], expanded: boolean):
   expandedTasks.set(taskIds, expanded)
 }
 
+/** Shows or hides one parent's subtasks; returns whether they are shown now. */
+export function toggleTaskExpanded(taskId: string): boolean {
+  const next = !expandedTasks.get().has(taskId)
+  expandedTasks.set([taskId], next)
+  return next
+}
+
 /** Key of a phase group in the collapsed set. */
 export function groupKey(projectId: string, containerId: string): string {
   return `${projectId}|${containerId}`

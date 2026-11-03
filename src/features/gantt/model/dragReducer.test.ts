@@ -94,13 +94,19 @@ describe('resize', () => {
   it('end: grows and shrinks, never before the start (min 1 day)', () => {
     expect(iso(dragBy({ mode: 'resize-end', ...origin }, 2).preview.end)).toBe('2026-11-07')
     const shrunk = dragBy({ mode: 'resize-end', ...origin }, -10)
-    expect([iso(shrunk.preview.start), iso(shrunk.preview.end)]).toEqual(['2026-11-02', '2026-11-02'])
+    expect([iso(shrunk.preview.start), iso(shrunk.preview.end)]).toEqual([
+      '2026-11-02',
+      '2026-11-02',
+    ])
   })
 
   it('start: moves, never after the end', () => {
     expect(iso(dragBy({ mode: 'resize-start', ...origin }, -3).preview.start)).toBe('2026-10-30')
     const clamped = dragBy({ mode: 'resize-start', ...origin }, 10)
-    expect([iso(clamped.preview.start), iso(clamped.preview.end)]).toEqual(['2026-11-05', '2026-11-05'])
+    expect([iso(clamped.preview.start), iso(clamped.preview.end)]).toEqual([
+      '2026-11-05',
+      '2026-11-05',
+    ])
   })
 
   it('resizing across a month end keeps the other end fixed', () => {
@@ -150,7 +156,10 @@ describe('previewDates / toScheduleChange', () => {
   })
 
   it('keeps missing dates missing', () => {
-    expect(previewDates({ mode: 'move', start: null, end: null }, 3)).toEqual({ start: null, end: null })
+    expect(previewDates({ mode: 'move', start: null, end: null }, 3)).toEqual({
+      start: null,
+      end: null,
+    })
     expect(previewDates({ mode: 'resize-end', start: d('2026-11-02'), end: null }, 3)).toEqual({
       start: d('2026-11-02'),
       end: null,

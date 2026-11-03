@@ -31,6 +31,12 @@ export function usePrefersReducedMotion(): boolean {
 /** The pointer has to move this far before a drag starts, so clicks stay clicks. */
 export const POINTER_ACTIVATION = { distance: 4 } as const
 
+/**
+ * PointerSensor options. dnd-kit memoises sensors on the options' identity: a new object on every
+ * render rebuilds every draggable's listeners (and re-renders every row), so share this one.
+ */
+export const POINTER_SENSOR_OPTIONS = { activationConstraint: POINTER_ACTIVATION } as const
+
 const DROP_ANIMATION: DropAnimation = {
   duration: 160,
   easing: 'cubic-bezier(0.16, 1, 0.3, 1)',

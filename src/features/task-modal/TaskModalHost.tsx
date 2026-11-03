@@ -13,6 +13,7 @@ import { useUIStore, type NewTaskDefaults } from '@/app/uiStore'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useProjects, useTask, useWorkspaceStatus } from '@/data/hooks'
 import type { Task } from '@/domain/types'
+import { getFocusReturnTarget } from '@/lib/focus'
 import { notify } from '@/lib/notify'
 import {
   defaultsWithDraft,
@@ -20,7 +21,12 @@ import {
   takePendingProjectCreate,
 } from './createSupport'
 import { CreateTaskForm } from './CreateTaskForm'
-import { ignorePointerDownOnToasts } from './dialogGuards'
+import {
+  afterDialogsClosed,
+  ignoreEscapeWhileComposing,
+  ignorePointerDownOnToasts,
+  returnFocusAfterClose,
+} from './dialogGuards'
 import { EditTaskForm } from './EditTaskForm'
 import type { TaskFormValues } from './formModel'
 import { isSaveShortcut } from './keys'
@@ -49,28 +55,6 @@ function createKey(defaults: NewTaskDefaults): string {
 
 function sessionKey(session: Session): string {
   return session.kind === 'edit' ? `edit-${session.taskId}` : createKey(session.defaults)
-}
-
-/**
- * Runs `callback` once no dialog is on screen any more (exit animations included), checking
- * every frame, at most `timeoutMs` later. Returns a cancel function.
- */
-function afterDialogsClosed(callback: () => void, timeoutMs = 1000): () => void {
-  const startedAt = performance.now()
-  let frame = 0
-  const tick = () => {
-    const open = document.querySelector('[role="dialog"], [role="alertdialog"]') !== null
-    if (open && performance.now() - startedAt < timeoutMs) {
-      frame = requestAnimationFrame(tick)
-      return
-    }
-    frame = 0
-    callback()
-  }
-  frame = requestAnimationFrame(tick)
-  return () => {
-    if (frame) cancelAnimationFrame(frame)
-  }
 }
 
 export function TaskModalHost() {
@@ -112,12 +96,10 @@ export function TaskModalHost() {
     projectsRef.current = allProjects
   })
 
-  // Remember what had focus when the modal opened (before Radix moves focus into it).
+  // Remember what had focus when the modal opened (before Radix moves focus into it); for an
+  // item of a closing menu, that menu's trigger.
   useLayoutEffect(() => {
-    if (open && !wasOpenRef.current) {
-      const active = document.activeElement
-      openerRef.current = active instanceof HTMLElement && active !== document.body ? active : null
-    }
+    if (open && !wasOpenRef.current) openerRef.current = getFocusReturnTarget()
     wasOpenRef.current = open
   }, [open])
 
@@ -188,14 +170,10 @@ export function TaskModalHost() {
     [closeNewTask, openProjectDialog],
   )
 
-  const restoreFocus = () => {
+  const returnFocus = () => {
     const opener = openerRef.current
     openerRef.current = null
-    if (opener?.isConnected) {
-      opener.focus({ preventScroll: true })
-      return
-    }
-    document.getElementById('main')?.focus({ preventScroll: true })
+    returnFocusAfterClose(opener)
   }
 
   const current = shown?.session ?? null
@@ -219,9 +197,10 @@ export function TaskModalHost() {
           // The form focuses its title itself.
           onOpenAutoFocus={(event) => event.preventDefault()}
           onPointerDownOutside={ignorePointerDownOnToasts}
+          onEscapeKeyDown={ignoreEscapeWhileComposing}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
-            restoreFocus()
+            returnFocus()
           }}
           // ⌘↵ / Ctrl+↵ saves from anywhere in the modal (its menus and popovers included).
           onKeyDown={(event) => {

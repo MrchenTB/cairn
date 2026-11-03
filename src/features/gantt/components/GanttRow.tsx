@@ -88,7 +88,10 @@ function MilestoneGlyph({ past }: { past: boolean }) {
       width={14}
       height={14}
       aria-hidden
-      className={cn('shrink-0', past ? 'text-(--gantt-milestone-past)' : 'text-(--gantt-milestone)')}
+      className={cn(
+        'shrink-0',
+        past ? 'text-(--gantt-milestone-past)' : 'text-(--gantt-milestone)',
+      )}
     >
       <rect
         x="4"
@@ -271,9 +274,10 @@ function Lane(props: GanttRowViewProps) {
   }
   if (row.kind === 'unscheduled') {
     return (
+      // Above the today line (z-[1]) on the header's own background, so the line never cuts it.
       <span
-        className="pointer-events-none sticky text-meta whitespace-nowrap text-fg-tertiary"
-        style={{ left: paneWidth + 12 }}
+        className="pointer-events-none sticky z-[2] rounded-sm bg-muted px-1 text-meta whitespace-nowrap text-fg-tertiary"
+        style={{ left: paneWidth + 8 }}
       >
         {row.collapsed
           ? 'Tasks without dates'

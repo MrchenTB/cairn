@@ -54,7 +54,8 @@ const collapsed = createStored(COLLAPSED_KEY, (raw): Record<string, string[]> =>
   const result: Record<string, string[]> = {}
   if (!isPlainObject(raw)) return result
   for (const [projectId, keys] of Object.entries(raw)) {
-    if (Array.isArray(keys)) result[projectId] = keys.filter((k): k is string => typeof k === 'string')
+    if (Array.isArray(keys))
+      result[projectId] = keys.filter((k): k is string => typeof k === 'string')
   }
   return result
 })

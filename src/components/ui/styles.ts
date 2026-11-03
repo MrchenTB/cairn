@@ -24,13 +24,14 @@ export const floatingMotion = [
 /**
  * One row in a menu / select / listbox (32px, icon + label + optional trailing hint). Leading
  * icons are tertiary, except in a destructive item (data-variant) where they keep the danger
- * colour. Keyboard users also get an inset focus ring on the highlighted row (src/index.css).
+ * colour, and in a disabled item, where they fade with the label. Keyboard users also get an
+ * inset focus ring on the highlighted row (src/index.css).
  */
 export const menuItem = [
   'relative flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-ui text-fg outline-none select-none',
   'data-[highlighted]:bg-hover data-[disabled]:pointer-events-none data-[disabled]:text-fg-disabled',
   '[&_svg]:shrink-0 [&_svg:not([class*=size-])]:size-4',
-  '[&:not([data-variant=destructive])>svg:not([class*=text-])]:text-fg-tertiary',
+  '[&:not([data-variant=destructive]):not([data-disabled])>svg:not([class*=text-])]:text-fg-tertiary',
 ].join(' ')
 
 /** Small uppercase-free section heading inside menus. */

@@ -40,6 +40,7 @@ import {
 import { ModalBody, ModalFooter, ModalHeader } from './modalParts'
 import type { ModalControls } from './modalControls'
 import { ProjectCrumb, ProjectPicker } from './ProjectPicker'
+import { useUnloadPrompt } from './useUnloadPrompt'
 
 export interface CreateTaskFormProps {
   defaults: NewTaskDefaults
@@ -103,6 +104,9 @@ export function CreateTaskForm({
   const dirty = isCreateDirty(values, initial.values) || projectId !== initial.projectId
   const canCreate = !hasErrors(errors) && project !== null && !saving
   const noProjects = options.length === 0 && !parent
+
+  // A typed task is not lost to an accidental reload or closed tab.
+  useUnloadPrompt(dirty && !saving)
 
   const titleRef = useRef<HTMLTextAreaElement>(null)
   const savingRef = useRef(false)
@@ -187,6 +191,13 @@ export function CreateTaskForm({
 
   const showTitleError = showErrors || titleTouched
   const isSubtask = Boolean(defaults.parentTaskId)
+  // Says why "Create" is unavailable before the user runs into the error (then the error says it).
+  const footerNote =
+    !noProjects && !project && !showErrors
+      ? 'Choose a project to create this task.'
+      : project?.status === 'archived'
+        ? 'This project is archived.'
+        : null
   const currentPhase = phases.find((phase) => phase.id === values.phaseId) ?? null
   const showPhase = project !== null && (phases.length > 0 || values.phaseId !== null)
 
@@ -309,11 +320,7 @@ export function CreateTaskForm({
         <FieldError>{formError}</FieldError>
       </ModalBody>
 
-      <ModalFooter
-        meta={
-          noProjects ? null : project?.status === 'archived' ? 'This project is archived.' : null
-        }
-      >
+      <ModalFooter meta={footerNote}>
         <Button variant="secondary" size="md" onClick={() => void requestClose()}>
           Cancel
         </Button>

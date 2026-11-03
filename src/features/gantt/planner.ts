@@ -231,8 +231,9 @@ export function createPlanner(env: PlannerEnv): Planner {
     },
 
     async reviewConflicts(projectId) {
-      const outcome = await env.requestReschedule({ kind: 'resolve', projectId }, (_choice, writes) =>
-        env.applySchedule(writes),
+      const outcome = await env.requestReschedule(
+        { kind: 'resolve', projectId },
+        (_choice, writes) => env.applySchedule(writes),
       )
       return fromReschedule(outcome)
     },
@@ -251,9 +252,7 @@ export function createPlanner(env: PlannerEnv): Planner {
         )
         return fromReschedule(outcome)
       }
-      const before = new Set(
-        [...conflictIds(data, projectId)].filter((id) => id !== dependencyId),
-      )
+      const before = new Set([...conflictIds(data, projectId)].filter((id) => id !== dependencyId))
       warnAboutNewConflicts(projectId, before)
       return { status: 'unchanged' }
     },

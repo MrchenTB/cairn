@@ -49,7 +49,7 @@ export function readableServerMessage(message: unknown): string | null {
   const text = message.trim()
   if (text === '' || text.length > 200) return null
   if (
-    /violates|constraint|relation|column|syntax|operator|function|duplicate key|null value|invalid input|out of range|jsonb?\b|uuid|PGRST|SQL|JWT|permission denied|TypeError|fetch/i.test(
+    /violates|constraint|relation|column|syntax|operator|function|duplicate key|null value|invalid input|out of range|jsonb?\b|uuid|PGRST|SQL|JWT|permission denied|TypeError|fetch|unicode|escape sequence|byte sequence|encoding/i.test(
       text,
     )
   ) {

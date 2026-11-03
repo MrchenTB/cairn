@@ -4,9 +4,11 @@ import userEvent from '@testing-library/user-event'
 import { createMemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useUIStore } from '@/app/uiStore'
 import { ConfirmHost } from '@/components/ui/confirm'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { getWorkspaceActions, useWorkspaceStore } from '@/data/store'
+import { addDays, todayInTimeZone } from '@/domain/dates'
 import { bySortOrder } from '@/domain/ordering'
 import type { Result, Task } from '@/domain/types'
 import { ViewBarSlotProvider } from '@/features/projects/viewBar'
@@ -246,6 +248,92 @@ describe('ListView — subtasks', () => {
       expect(useWorkspaceStore.getState().data.tasks[task.id].status).toBe('done'),
     )
     expect(screen.getByRole('button', { name: /^Draft guide/ })).toHaveTextContent(', done')
+  })
+})
+
+describe('ListView — editing in place', () => {
+  it('sets a due date from the row through the planner and keeps other rows as they were', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const task = must(await a.createTask({ projectId: project.id, title: 'Draft guide' }))
+    must(await a.createTask({ projectId: project.id, title: 'Book rooms', priority: 'high' }))
+    const { user } = renderList(project.id)
+
+    const tomorrow = addDays(todayInTimeZone(useWorkspaceStore.getState().preferences.timezone), 1)
+    const row = document.querySelector(`[data-task-row="${task.id}"]`) as HTMLElement
+    await user.click(within(row).getByRole('button', { name: 'Due date: not set' }))
+    await user.click(await screen.findByRole('button', { name: /^Tomorrow/ }))
+    await waitFor(() => expect(useWorkspaceStore.getState().data.tasks[task.id].dueDate).toBe(tomorrow))
+    expect(within(row).getByRole('button', { name: /^Due date: / })).toHaveTextContent('Tomorrow')
+
+    // The other (memoised) row still shows its own values.
+    const other = rowTitles().indexOf('Book rooms')
+    expect(other).toBe(1)
+    expect(screen.getAllByRole('button', { name: 'Priority: High' })).toHaveLength(1)
+  })
+
+  it('changes a priority from the row', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const task = must(await a.createTask({ projectId: project.id, title: 'Draft guide' }))
+    const { user } = renderList(project.id)
+    await user.click(screen.getByRole('button', { name: 'Priority: No priority' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /Urgent/ }))
+    await waitFor(() =>
+      expect(useWorkspaceStore.getState().data.tasks[task.id].priority).toBe('urgent'),
+    )
+    expect(screen.getByRole('button', { name: 'Priority: Urgent' })).toBeInTheDocument()
+  })
+
+  it('expands and collapses every parent from the view bar', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const p1 = must(await a.createTask({ projectId: project.id, title: 'Recruit' }))
+    must(await a.createTask({ projectId: project.id, title: 'Email list', parentTaskId: p1.id }))
+    const p2 = must(await a.createTask({ projectId: project.id, title: 'Report' }))
+    must(await a.createTask({ projectId: project.id, title: 'Outline', parentTaskId: p2.id }))
+    const { user } = renderList(project.id)
+
+    const viewBar = screen.getByTestId('view-bar')
+    await user.click(within(viewBar).getByRole('button', { name: 'Expand subtasks' }))
+    expect(rowTitles()).toEqual(['Recruit', 'Email list', 'Report', 'Outline'])
+    await user.click(within(viewBar).getByRole('button', { name: 'Collapse subtasks' }))
+    expect(rowTitles()).toEqual(['Recruit', 'Report'])
+  })
+
+  it('lists milestones in their group and opens them for editing', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    must(await a.createTask({ projectId: project.id, title: 'Draft guide' }))
+    const milestone = must(
+      await a.createMilestone({ projectId: project.id, name: 'Kick-off', date: '2026-10-20' }),
+    )
+    const { user } = renderList(project.id)
+    await user.click(screen.getByRole('button', { name: /^Milestone Kick-off, Tuesday, October 20, 2026/ }))
+    expect(useUIStore.getState().milestoneDialog).toEqual({ mode: 'edit', milestoneId: milestone.id })
+  })
+})
+
+describe('ListView — "No phase"', () => {
+  it('is hidden while empty; moving a task there from the menu brings it back first', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const discovery = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
+    must(await a.createTask({ projectId: project.id, title: 'Interview users', phaseId: discovery.id }))
+    must(await a.createTask({ projectId: project.id, title: 'Survey', phaseId: discovery.id }))
+    const { user } = renderList(project.id)
+    expect(screen.queryByRole('button', { name: /^No phase/ })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Actions for Survey' }))
+    const submenu = await screen.findByRole('menuitem', { name: 'Move to phase' })
+    act(() => submenu.focus())
+    await user.keyboard('{ArrowRight}')
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'No phase' })).toHaveFocus())
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(byTitle(project.id, 'Survey')?.phaseId).toBeNull())
+    expect(screen.getByRole('button', { name: 'No phase, 1 task' })).toBeInTheDocument()
+    expect(rowTitles()).toEqual(['Survey', 'Interview users'])
   })
 })
 

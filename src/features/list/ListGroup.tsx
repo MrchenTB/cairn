@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Diamond,
   Ellipsis,
+  Layers,
   Pencil,
   Plus,
   Trash,
@@ -150,6 +151,36 @@ export function ListGroup({
         </div>
       )}
     </section>
+  )
+}
+
+/**
+ * Pointer-drag target for an empty, hidden "No phase" group. It is drawn over the top of the list
+ * (sticky, taking no layout space), so showing it never moves the rows under the pointer; a drop
+ * takes the task out of its phase. Keyboard users use the row menu ("Move to phase").
+ */
+export function NoPhaseDropZone({ containerId }: { containerId: string }) {
+  const ctx = useListContext()
+  const { setNodeRef } = useDroppable({
+    id: containerId,
+    data: { type: 'group', containerId, overlay: true } satisfies ListDragData,
+  })
+  const isTarget = ctx.drag?.kind === 'task' && ctx.drag.overContainer === containerId
+  return (
+    <div
+      ref={setNodeRef}
+      aria-hidden
+      data-drop-target={isTarget || undefined}
+      className={cn(
+        'sticky top-0 z-[3] -mb-8 flex h-8 items-center gap-2 bg-muted pr-3 pl-6 text-meta',
+        'shadow-[0_1px_0_0_var(--border-default)] transition-colors duration-fast',
+        'data-[drop-target]:bg-selected data-[drop-target]:shadow-[inset_2px_0_0_var(--accent),0_1px_0_0_var(--border-default)]',
+      )}
+    >
+      <Layers className="size-3.5 shrink-0 text-fg-tertiary" />
+      <span className="font-semibold text-fg-secondary">No phase</span>
+      <span className="truncate text-fg-tertiary">Drop here to take the task out of its phase</span>
+    </div>
   )
 }
 
@@ -402,7 +433,11 @@ function TopLevelItem({ entry, containerId }: { entry: OutlineTask; containerId:
   const ctx = useListContext()
   const { task, subtasks } = entry
   const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
-    useSortable({ id: task.id, data: { type: 'task', containerId } satisfies ListDragData })
+    useSortable({
+      id: task.id,
+      data: { type: 'task', containerId } satisfies ListDragData,
+      transition: ctx.reducedMotion ? null : undefined,
+    })
   const style: CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition: transition,
@@ -411,6 +446,7 @@ function TopLevelItem({ entry, containerId }: { entry: OutlineTask; containerId:
   const addingSubtask = ctx.editingRow === addRowKey.subtask(task.id)
   const expanded = ctx.expanded.has(task.id) && subtasks.length > 0
   const showChildren = !isDragging && (expanded || addingSubtask)
+  const { canMoveUp, canMoveDown } = ctx.moveRange(task)
 
   return (
     <li ref={setNodeRef} style={style} className={cn('relative', isDragging && 'z-[1]')}>
@@ -418,15 +454,18 @@ function TopLevelItem({ entry, containerId }: { entry: OutlineTask; containerId:
         task={task}
         depth={0}
         today={ctx.today}
-        subtasks={progress ? { done: progress.done, total: progress.total } : null}
+        subtaskDone={progress?.done ?? 0}
+        subtaskTotal={progress?.total ?? 0}
         expanded={expanded}
-        onToggleExpanded={() => ctx.toggleExpanded(task.id)}
-        handle={{ attributes, listeners }}
+        handleAttributes={attributes}
+        handleListeners={listeners}
         handleRef={setActivatorNodeRef}
         placeholder={isDragging}
-        dropLine={!(ctx.drag?.kind === 'task' && ctx.drag.overCollapsed)}
+        dropLine={!(isDragging && ctx.drag?.kind === 'task' && ctx.drag.overAppendOnly)}
         commands={ctx.commands}
-        menu={ctx.menuFor(task)}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        phases={ctx.phases}
       />
       {showChildren ? <SubtaskBlock parent={task} subtasks={expanded ? subtasks : []} /> : null}
     </li>
@@ -468,24 +507,31 @@ function SubtaskBlock({ parent, subtasks }: { parent: Task; subtasks: readonly T
 function SubtaskItem({ task, parentId, containerId }: { task: Task; parentId: string; containerId: string }) {
   const ctx = useListContext()
   const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
-    useSortable({ id: task.id, data: { type: 'subtask', containerId, parentId } satisfies ListDragData })
+    useSortable({
+      id: task.id,
+      data: { type: 'subtask', containerId, parentId } satisfies ListDragData,
+      transition: ctx.reducedMotion ? null : undefined,
+    })
   const style: CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition: transition,
   }
+  const { canMoveUp, canMoveDown } = ctx.moveRange(task)
   return (
     <li ref={setNodeRef} style={style} className={cn('relative', isDragging && 'z-[1]')}>
       <TaskRow
         task={task}
         depth={1}
         today={ctx.today}
-        subtasks={null}
         expanded={false}
-        handle={{ attributes, listeners }}
+        handleAttributes={attributes}
+        handleListeners={listeners}
         handleRef={setActivatorNodeRef}
         placeholder={isDragging}
         commands={ctx.commands}
-        menu={ctx.menuFor(task)}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        phases={ctx.phases}
       />
     </li>
   )

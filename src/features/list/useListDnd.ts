@@ -2,10 +2,13 @@
  * Drag-and-drop wiring for the List view (dnd-kit core + sortable).
  *
  * - Top-level tasks: one sortable container per outline group; while the pointer crosses into
- *   another (expanded) group the task is previewed there (multi-container pattern). Dropping on
- *   a collapsed group's header puts it at the end of that group (the header is highlighted and
- *   the preview keeps its place, without a drop line, so the layout never shifts under the
- *   pointer).
+ *   another (expanded) group the task is previewed there (multi-container pattern). Some groups
+ *   only take drops ("append only"): a collapsed group's header, and the empty "No phase" drop
+ *   zone shown while dragging. Over them the target is highlighted and the preview keeps its
+ *   place, without a drop line, so the layout never shifts under the pointer; the drop appends.
+ * - The preview only switches container after the pointer itself moved (`mayPreviewSwitch`):
+ *   moving a row changes the layout, which can change what is under a still pointer, and
+ *   following that would bounce the row between two groups forever.
  * - Subtasks: reordered among their siblings only (no cross-parent drag in V1).
  * - Keyboard (Space/Enter, arrows, Space/Enter, Esc): reorders within the current container;
  *   moving to another phase uses the row menu ("Move to phase").
@@ -25,6 +28,7 @@ import {
   type Collision,
   type CollisionDetection,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragOverEvent,
   type DragStartEvent,
   type DroppableContainer,
@@ -32,9 +36,10 @@ import {
   type UniqueIdentifier,
 } from '@dnd-kit/core'
 import type { MoveTaskInput } from '@/domain/types'
-import { POINTER_ACTIVATION } from '@/features/projects/dnd'
+import { POINTER_SENSOR_OPTIONS } from '@/features/projects/dnd'
 import {
   findContainer,
+  mayPreviewSwitch,
   moveToContainer,
   resolveSubtaskDrop,
   resolveTopLevelDrop,
@@ -47,6 +52,8 @@ export interface ListDragData {
   containerId: string
   /** Subtasks: their parent. */
   parentId?: string
+  /** A drop zone drawn over the rows (the empty "No phase" target): it wins over them. */
+  overlay?: boolean
   sortable?: { containerId: UniqueIdentifier; index: number; items: UniqueIdentifier[] }
 }
 
@@ -54,12 +61,14 @@ export type ListDragState =
   | {
       kind: 'task'
       activeId: string
+      /** Keyboard drags stay inside their group (other groups are reached through the menu). */
+      via: 'pointer' | 'keyboard'
       initial: Containers
       current: Containers
       /** The group the pointer is over (drop target highlight). */
       overContainer: string | null
-      /** That group is collapsed: the task goes to its end (no drop line in the preview). */
-      overCollapsed: boolean
+      /** That group only takes drops (collapsed / drop zone): no drop line in the preview. */
+      overAppendOnly: boolean
     }
   | { kind: 'subtask'; activeId: string; parentId: string; siblings: readonly string[] }
 
@@ -102,25 +111,33 @@ export const listKeyboardCoordinates: KeyboardCoordinateGetter = (event, { conte
   }
 }
 
+/** Stable sensor options (see POINTER_SENSOR_OPTIONS). */
+const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: listKeyboardCoordinates }
+
 interface UseListDndOptions {
   /** Group containers (top-level task ids per group) as currently rendered from the store. */
   containers: Containers
   /** Subtask ids of a parent, in order. */
   subtaskIds: (parentId: string) => readonly string[]
-  /** Collapsed groups don't preview a dragged task; dropping on them appends. */
-  isCollapsed: (containerId: string) => boolean
+  /**
+   * Groups that never preview a dragged task (collapsed groups, the empty "No phase" drop zone):
+   * dropping on them appends.
+   */
+  isAppendOnly: (containerId: string) => boolean
   onMove: (input: MoveTaskInput) => void
 }
 
-export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseListDndOptions) {
+export function useListDnd({ containers, subtaskIds, isAppendOnly, onMove }: UseListDndOptions) {
   const [drag, setDrag] = useState<ListDragState | null>(null)
   // The handlers read and write the latest state synchronously (pointer events can outrun renders).
   const stateRef = useRef<ListDragState | null>(null)
   const lastOverId = useRef<UniqueIdentifier | null>(null)
   const recentlyMoved = useRef(false)
-  const options = useRef({ subtaskIds, isCollapsed, onMove })
+  /** Pointer offset (drag delta) at the last container switch of the preview. */
+  const lastSwitchAt = useRef<{ x: number; y: number } | null>(null)
+  const options = useRef({ subtaskIds, isAppendOnly, onMove })
   useEffect(() => {
-    options.current = { subtaskIds, isCollapsed, onMove }
+    options.current = { subtaskIds, isAppendOnly, onMove }
   })
 
   const commit = (next: ListDragState | null) => {
@@ -152,10 +169,20 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
         : rectIntersection({ ...args, droppableContainers: siblings })
     }
 
+    // A drop zone drawn over the rows wins while the pointer is inside it.
+    const overlays = args.droppableContainers.filter((entry) => dataOf(entry)?.overlay)
+    if (overlays.length > 0) {
+      const overlayHits = pointerWithin({ ...args, droppableContainers: overlays })
+      if (overlayHits.length > 0) {
+        lastOverId.current = overlayHits[0].id
+        return [overlayHits[0]]
+      }
+    }
+
     // Top-level task under the pointer: rows first, then a group (→ its nearest row, if shown).
     const allowed = args.droppableContainers.filter((entry) => {
-      const type = dataOf(entry)?.type
-      return type === 'task' || type === 'group'
+      const data = dataOf(entry)
+      return !data?.overlay && (data?.type === 'task' || data?.type === 'group')
     })
     const scoped = { ...args, droppableContainers: allowed }
     const hits = pointerWithin(scoped)
@@ -183,14 +210,15 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
   }, [])
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: POINTER_ACTIVATION }),
-    useSensor(KeyboardSensor, { coordinateGetter: listKeyboardCoordinates }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
   )
 
-  const onDragStart = ({ active }: DragStartEvent) => {
+  const onDragStart = ({ active, activatorEvent }: DragStartEvent) => {
     const data = dataOf(active)
     const activeId = String(active.id)
     lastOverId.current = active.id
+    lastSwitchAt.current = null
     if (data?.type === 'subtask' && data.parentId) {
       commit({
         kind: 'subtask',
@@ -203,29 +231,34 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
       commit({
         kind: 'task',
         activeId,
+        via: activatorEvent instanceof KeyboardEvent ? 'keyboard' : 'pointer',
         initial: containers,
         current: containers,
         overContainer: containerId,
-        overCollapsed: false,
+        overAppendOnly: false,
       })
     }
   }
 
-  const onDragOver = ({ active, over }: DragOverEvent) => {
+  /** Updates the drop highlight and, when the pointer moved into another group, the preview. */
+  const preview = ({ active, over, delta }: DragMoveEvent | DragOverEvent) => {
     const state = stateRef.current
     if (!state || state.kind !== 'task') return
     const overId = over ? String(over.id) : null
     const from = findContainer(state.current, state.activeId)
     const to = findContainer(state.current, overId)
-    // Over a collapsed group the preview stays put (moving the row would shift the header away
-    // from the pointer); the header is the drop highlight and the row's drop line is hidden.
-    const overCollapsed = to !== null && to !== from && options.current.isCollapsed(to)
+    // Over an append-only group the preview stays put (moving the row would shift the target away
+    // from the pointer); the group is the drop highlight and the row's drop line is hidden.
+    const overAppendOnly = to !== null && to !== from && options.current.isAppendOnly(to)
     let next = state
-    if (to !== state.overContainer || overCollapsed !== state.overCollapsed) {
-      next = { ...state, overContainer: to, overCollapsed }
+    if (to !== state.overContainer || overAppendOnly !== state.overAppendOnly) {
+      next = { ...state, overContainer: to, overAppendOnly }
       commit(next)
     }
-    if (!over || !overId || !from || !to || from === to || overCollapsed) return
+    if (!over || !overId || !from || !to || from === to || overAppendOnly) return
+    // The layout moved, not the pointer: onDragMove checks again once the pointer travels.
+    if (!mayPreviewSwitch(lastSwitchAt.current, delta)) return
+    lastSwitchAt.current = { x: delta.x, y: delta.y }
     const overIsGroup = overId === to
     const dragged = active.rect.current.translated
     const placeAfter =
@@ -243,6 +276,7 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
     const state = stateRef.current
     commit(null)
     lastOverId.current = null
+    lastSwitchAt.current = null
     if (!state) return
     const overId = over ? String(over.id) : null
     const input =
@@ -260,6 +294,7 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
   const onDragCancel = () => {
     commit(null)
     lastOverId.current = null
+    lastSwitchAt.current = null
   }
 
   return {
@@ -268,6 +303,6 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
     containers: previewContainers ?? containers,
     sensors,
     collisionDetection,
-    handlers: { onDragStart, onDragOver, onDragEnd, onDragCancel },
+    handlers: { onDragStart, onDragMove: preview, onDragOver: preview, onDragEnd, onDragCancel },
   }
 }

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useActions, useDataMode, useSyncState } from '@/data/hooks'
 import { cn } from '@/lib/utils'
@@ -91,9 +91,12 @@ export function SyncIndicator({ collapsed }: { collapsed: boolean }) {
               </Button>
             ) : null}
             {status.kind === 'local' ? (
-              <Button variant="link" size="xs" asChild>
-                <Link to="/settings/data">Backup &amp; export</Link>
-              </Button>
+              // Navigating away closes the popover (it would stay open over Settings otherwise).
+              <PopoverClose asChild>
+                <Button variant="link" size="xs" asChild>
+                  <Link to="/settings/data">Backup &amp; export</Link>
+                </Button>
+              </PopoverClose>
             ) : null}
           </div>
         </PopoverContent>

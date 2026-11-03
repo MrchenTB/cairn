@@ -176,7 +176,11 @@ export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 export interface SyncState {
   /** Remote writes currently in flight. > 0 → UI shows "Saving…". */
   pending: number
-  /** Most recent failed write/load that has not been followed by a successful write. */
+  /**
+   * Most recent failed write/load that has not been followed by a successful write (a failed
+   * write that a later refresh shows the server applied after all — its answer was lost — no
+   * longer counts).
+   */
   lastError: AppError | null
   /** epoch ms of the last successful write */
   lastSavedAt: number | null
@@ -197,6 +201,8 @@ export interface SyncState {
  * 3. Persist through the Repository. On success, reconcile with the returned rows.
  *    On failure: roll back exactly this change (Immer inverse patches), set sync.lastError,
  *    and show an error toast with a "Retry" action. Never report success for a failed write.
+ *    Then re-fetch once idle: a failure without an answer (network, timeout) may still have been
+ *    applied, and such a change must show up rather than look lost.
  * 4. The returned promise resolves after the server answered.
  */
 export interface WorkspaceActions {
@@ -250,7 +256,7 @@ export interface WorkspaceActions {
    * Re-runs the failed writes not followed by a successful one (usually just the most recent;
    * several after an outage), one at a time in the order they were made, stopping at the first
    * that fails again. A failed write that a newer change of the same fields replaced is never
-   * re-sent (it would overwrite that newer change).
+   * re-sent (it would overwrite that newer change), nor one a refresh showed the server applied.
    */
   retryLastFailed(): Promise<Result>
 }

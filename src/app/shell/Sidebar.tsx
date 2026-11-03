@@ -46,6 +46,8 @@ interface NavItemProps {
   badge?: ReactNode
   /** Small dot on the icon in the collapsed rail. */
   badgeDot?: 'danger' | 'neutral' | null
+  /** Collapsed-rail tooltip (default: the label). Spell out what a badge dot means here. */
+  tooltip?: ReactNode
   end?: boolean
 }
 
@@ -57,11 +59,12 @@ function NavItem({
   shortcut,
   badge,
   badgeDot,
+  tooltip,
   end,
 }: NavItemProps) {
   return (
     <Tooltip
-      content={label}
+      content={tooltip ?? label}
       shortcut={shortcut}
       side="right"
       delayDuration={300}
@@ -110,6 +113,13 @@ function useMyTasksAttention() {
     }
     return { overdue, dueToday, total: overdue + dueToday }
   }, [data, today])
+}
+
+/** "1 overdue · 2 due today" — what the My Tasks dot means, shown in the collapsed rail tooltip. */
+function attentionSummary({ overdue, dueToday }: { overdue: number; dueToday: number }): string {
+  return [overdue > 0 ? `${overdue} overdue` : null, dueToday > 0 ? `${dueToday} due today` : null]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 /**
@@ -328,6 +338,14 @@ export function Sidebar() {
               ) : null
             }
             badgeDot={attention.overdue > 0 ? 'danger' : attention.total > 0 ? 'neutral' : null}
+            tooltip={
+              attention.total > 0 ? (
+                <span>
+                  My Tasks
+                  <span className="text-fg-inverse/70"> · {attentionSummary(attention)}</span>
+                </span>
+              ) : undefined
+            }
           />
           <NavItem
             to="/projects"

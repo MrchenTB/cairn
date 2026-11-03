@@ -54,9 +54,10 @@ import { searchWorkspace } from '@/domain/search'
 import type { ISODate, Project } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import {
-  POINTER_ACTIVATION,
+  POINTER_SENSOR_OPTIONS,
   SCREEN_READER_INSTRUCTIONS,
   useDropAnimation,
+  usePrefersReducedMotion,
 } from './dnd'
 import { contextKit, dropdownKit, type MenuKit } from './menuKit'
 import { ProjectMenuItems } from './ProjectMenuItems'
@@ -81,6 +82,10 @@ function parseFilter(value: string | null): StatusFilter {
     ? (value as StatusFilter)
     : DEFAULT_FILTER
 }
+
+/** Stable dnd-kit config (dnd-kit memoises sensors and modifiers on identity). */
+const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates }
+const MODIFIERS = [restrictToVerticalAxis]
 
 /** Project table columns; narrower panels drop Dates, then Tasks (container queries). */
 const GRID =
@@ -324,13 +329,14 @@ function ProjectsTable({
 }: ProjectsTableProps) {
   const actions = useActions()
   const dropAnimation = useDropAnimation()
+  const reducedMotion = usePrefersReducedMotion()
   const [activeId, setActiveId] = useState<string | null>(null)
   const ids = useMemo(() => projects.map((project) => project.id), [projects])
   const byId = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects])
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: POINTER_ACTIVATION }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
   )
 
   const nameOf = (id: UniqueIdentifier) => byId.get(String(id))?.name ?? 'project'
@@ -387,7 +393,7 @@ function ProjectsTable({
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          modifiers={[restrictToVerticalAxis]}
+          modifiers={MODIFIERS}
           accessibility={{ announcements, screenReaderInstructions: SCREEN_READER_INSTRUCTIONS }}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
@@ -403,6 +409,7 @@ function ProjectsTable({
                   counts={counts[project.id]}
                   today={today}
                   reorderable={reorderable}
+                  reducedMotion={reducedMotion}
                   commands={commands}
                   canMoveUp={index > 0}
                   canMoveDown={index < projects.length - 1}
@@ -413,7 +420,14 @@ function ProjectsTable({
             </div>
           </SortableContext>
           <DragOverlay dropAnimation={dropAnimation}>
-            {activeProject ? <ProjectRowPreview project={activeProject} /> : null}
+            {activeProject ? (
+              <ProjectRowPreview
+                project={activeProject}
+                progress={progress[activeProject.id]}
+                counts={counts[activeProject.id]}
+                today={today}
+              />
+            ) : null}
           </DragOverlay>
         </DndContext>
       </div>
@@ -427,6 +441,8 @@ interface ProjectRowProps {
   counts: TaskCounts | undefined
   today: ISODate
   reorderable: boolean
+  /** Rows don't animate while they make room. */
+  reducedMotion: boolean
   commands: ProjectCommands
   canMoveUp: boolean
   canMoveDown: boolean
@@ -440,6 +456,7 @@ function ProjectRow({
   counts,
   today,
   reorderable,
+  reducedMotion,
   commands,
   canMoveUp,
   canMoveDown,
@@ -447,14 +464,15 @@ function ProjectRow({
   onDelete,
 }: ProjectRowProps) {
   const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
-    useSortable({ id: project.id, disabled: !reorderable })
+    useSortable({
+      id: project.id,
+      disabled: !reorderable,
+      transition: reducedMotion ? null : undefined,
+    })
   const style: CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition: transition,
   }
-  const dates = formatDateRange(project.startDate, project.dueDate, today)
-  const open = counts?.open ?? 0
-  const total = counts?.total ?? 0
 
   const menuItems = (kit: MenuKit) => (
     <ProjectMenuItems kit={kit} project={project} commands={commands} onDelete={onDelete}>
@@ -506,7 +524,7 @@ function ProjectRow({
                 {...listeners}
                 aria-label={`Reorder ${project.name}`}
                 className={cn(
-                  'absolute top-1/2 left-1 z-[1] grid h-6 w-5 -translate-y-1/2 cursor-grab place-items-center rounded-sm text-fg-tertiary',
+                  'absolute top-1/2 left-1 z-[1] grid h-6 w-5 -translate-y-1/2 cursor-grab touch-none place-items-center rounded-sm text-fg-tertiary',
                   'opacity-0 transition-opacity duration-fast group-hover/row:opacity-100 focus-visible:opacity-100',
                   'hover:bg-hover hover:text-fg active:cursor-grabbing',
                   insetFocus,
@@ -531,59 +549,13 @@ function ProjectRow({
               <span className="min-w-0 truncate text-fg-tertiary">{project.description}</span>
             ) : null}
           </div>
-          <div role="cell" className={cn(isDragging && 'opacity-0')}>
-            <ProjectStatusBadge status={project.status} />
-          </div>
-          <div role="cell" className={cn('min-w-0', isDragging && 'opacity-0')}>
-            <ProgressBar
-              value={progress?.percent ?? null}
-              done={progress?.done}
-              total={progress?.total}
-              aria-label={`${project.name} progress`}
-            />
-          </div>
-          <div
-            role="cell"
-            className={cn(
-              'hidden truncate text-meta text-fg-secondary tabular-nums @3xl:block',
-              isDragging && 'opacity-0',
-            )}
-          >
-            {dates || (
-              <>
-                <span className="text-fg-tertiary" aria-hidden>
-                  —
-                </span>
-                <span className="sr-only">No dates</span>
-              </>
-            )}
-          </div>
-          <div
-            role="cell"
-            className={cn(
-              'hidden text-right text-meta tabular-nums @5xl:block',
-              isDragging && 'opacity-0',
-            )}
-          >
-            {total === 0 ? (
-              <>
-                <span className="text-fg-tertiary" aria-hidden>
-                  —
-                </span>
-                <span className="sr-only">No tasks</span>
-              </>
-            ) : (
-              <span title={`${open} open of ${plural(total, 'task')} (subtasks included)`}>
-                <span className="sr-only">
-                  {open} open of {plural(total, 'task')}, subtasks included
-                </span>
-                <span aria-hidden>
-                  <span className="text-fg-secondary">{open}</span>
-                  <span className="text-fg-tertiary"> / {total}</span>
-                </span>
-              </span>
-            )}
-          </div>
+          <ProjectFacts
+            project={project}
+            progress={progress}
+            counts={counts}
+            today={today}
+            className={cn(isDragging && 'opacity-0')}
+          />
           <div role="cell" className={cn('relative z-[1] flex justify-end', isDragging && 'opacity-0')}>
             <DropdownMenu>
               <Tooltip content="Project actions">
@@ -613,14 +585,90 @@ function ProjectRow({
   )
 }
 
-function ProjectRowPreview({ project }: { project: Project }) {
+interface ProjectFactsProps {
+  project: Project
+  progress: ProgressInfo | undefined
+  counts: TaskCounts | undefined
+  today: ISODate
+  /** Applied to every cell (e.g. hidden while the row is the drop placeholder). */
+  className?: string
+}
+
+/** The Status, Progress, Dates and Tasks cells of a project row (also used by the drag preview). */
+function ProjectFacts({ project, progress, counts, today, className }: ProjectFactsProps) {
+  const dates = formatDateRange(project.startDate, project.dueDate, today)
+  const open = counts?.open ?? 0
+  const total = counts?.total ?? 0
   return (
-    <div className="flex h-10 cursor-grabbing items-center gap-2.5 rounded-md bg-elevated px-6 text-ui shadow-drag">
-      <ProjectDot color={project.color} />
-      <span className="truncate font-medium text-fg">{project.name}</span>
-      <span className="ml-auto">
-        <ProjectStatusBadge status={project.status} size="sm" />
-      </span>
+    <>
+      <div role="cell" className={className}>
+        <ProjectStatusBadge status={project.status} />
+      </div>
+      <div role="cell" className={cn('min-w-0', className)}>
+        <ProgressBar
+          value={progress?.percent ?? null}
+          done={progress?.done}
+          total={progress?.total}
+          aria-label={`${project.name} progress`}
+        />
+      </div>
+      <div
+        role="cell"
+        className={cn('hidden truncate text-meta text-fg-secondary tabular-nums @3xl:block', className)}
+      >
+        {dates || (
+          <>
+            <span className="text-fg-tertiary" aria-hidden>
+              —
+            </span>
+            <span className="sr-only">No dates</span>
+          </>
+        )}
+      </div>
+      <div role="cell" className={cn('hidden text-right text-meta tabular-nums @5xl:block', className)}>
+        {total === 0 ? (
+          <>
+            <span className="text-fg-tertiary" aria-hidden>
+              —
+            </span>
+            <span className="sr-only">No tasks</span>
+          </>
+        ) : (
+          <span title={`${open} open of ${plural(total, 'task')} (subtasks included)`}>
+            <span className="sr-only">
+              {open} open of {plural(total, 'task')}, subtasks included
+            </span>
+            <span aria-hidden>
+              <span className="text-fg-secondary">{open}</span>
+              <span className="text-fg-tertiary"> / {total}</span>
+            </span>
+          </span>
+        )}
+      </div>
+    </>
+  )
+}
+
+/** Floating copy of a row while it is dragged: the same columns, so it lines up with the table. */
+function ProjectRowPreview(props: Omit<ProjectFactsProps, 'className'>) {
+  const { project } = props
+  return (
+    <div
+      aria-hidden
+      className={cn(
+        GRID,
+        'h-10 cursor-grabbing items-center gap-4 rounded-md bg-elevated px-6 text-ui shadow-drag',
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        <ProjectDot color={project.color} />
+        <span className="max-w-[70%] shrink-0 truncate font-medium text-fg">{project.name}</span>
+        {project.description ? (
+          <span className="min-w-0 truncate text-fg-tertiary">{project.description}</span>
+        ) : null}
+      </div>
+      <ProjectFacts {...props} />
+      <div />
     </div>
   )
 }

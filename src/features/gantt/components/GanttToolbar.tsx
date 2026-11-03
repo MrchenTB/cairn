@@ -1,9 +1,10 @@
 /**
  * Gantt controls rendered into the project view bar (via <ViewBarActions>): conflicts chip
  * (hidden at zero), Unscheduled (n) (hidden at zero), dependency mode (Manual / Auto), Today (T)
- * and Day / Week / Month.
+ * and Day / Week / Month. Memoised: the chart re-renders on every virtual-row change while
+ * scrolling, the toolbar only when its own props change (callbacks must be stable).
  */
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { ArrowRight, CalendarOff, ChevronDown, TriangleAlert, Workflow } from 'lucide-react'
 import type { GanttScale } from '@/app/viewPrefs'
 import { Button } from '@/components/ui/button'
@@ -52,7 +53,7 @@ export interface GanttToolbarProps {
   onShowUnscheduled: () => void
 }
 
-export function GanttToolbar(props: GanttToolbarProps) {
+export const GanttToolbar = memo(function GanttToolbar(props: GanttToolbarProps) {
   return (
     <>
       <ConflictsChip {...props} />
@@ -79,7 +80,7 @@ export function GanttToolbar(props: GanttToolbarProps) {
       />
     </>
   )
-}
+})
 
 function ConflictsChip({
   conflicts,
@@ -104,63 +105,83 @@ function ConflictsChip({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[340px] p-0">
-        <div className="px-3 pt-3 pb-2">
-          <p className="text-ui font-semibold text-fg">Dependency conflicts</p>
-          <p className="mt-0.5 text-meta text-fg-secondary">
-            These tasks start before a task they depend on has finished.
-          </p>
-        </div>
-        <ul className="max-h-72 overflow-y-auto px-1 pb-1" aria-label="Conflicts">
-          {conflicts.map((conflict) => {
-            const predecessor = tasksById[conflict.predecessorId]
-            const successor = tasksById[conflict.successorId]
-            return (
-              <li key={conflict.dependencyId}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false)
-                    onOpenConflict(conflict.successorId)
-                  }}
-                  className={cn(
-                    'flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-hover focus-visible:bg-hover',
-                    insetFocus,
-                  )}
-                >
-                  <span className="flex w-full min-w-0 items-center gap-1.5 text-ui text-fg">
-                    <span className="truncate">{predecessor?.title ?? 'Task'}</span>
-                    <ArrowRight className="size-3 shrink-0 text-fg-tertiary" aria-hidden />
-                    <span className="sr-only">has to finish before</span>
-                    <span className="truncate font-medium">{successor?.title ?? 'Task'}</span>
-                  </span>
-                  <span className="text-meta text-fg-tertiary tabular-nums">
-                    Needs to start {formatDateSmart(conflict.requiredStart, today)} or later ·
-                    starts {formatDateSmart(conflict.actualStart, today)}
-                  </span>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-        <div className="flex items-center justify-between gap-3 border-t border-subtle px-3 py-2">
-          <span className="text-meta text-fg-tertiary">
-            {scheduleMode === 'manual'
-              ? 'Manual mode never moves tasks on its own.'
-              : 'Auto mode moves successors when you edit.'}
-          </span>
-          <Button
-            size="xs"
-            variant="secondary"
-            onClick={() => {
-              setOpen(false)
-              onResolveAll()
-            }}
-          >
-            Resolve all…
-          </Button>
-        </div>
+        {/* A child component: the list is only built while the popover is open. */}
+        <ConflictList
+          conflicts={conflicts}
+          tasksById={tasksById}
+          today={today}
+          scheduleMode={scheduleMode}
+          onOpenConflict={(successorId) => {
+            setOpen(false)
+            onOpenConflict(successorId)
+          }}
+          onResolveAll={() => {
+            setOpen(false)
+            onResolveAll()
+          }}
+        />
       </PopoverContent>
     </Popover>
+  )
+}
+
+function ConflictList({
+  conflicts,
+  tasksById,
+  today,
+  scheduleMode,
+  onOpenConflict,
+  onResolveAll,
+}: Pick<GanttToolbarProps, 'conflicts' | 'tasksById' | 'today' | 'scheduleMode'> & {
+  onOpenConflict: (successorId: string) => void
+  onResolveAll: () => void
+}) {
+  const title = (taskId: string) =>
+    Object.hasOwn(tasksById, taskId) ? tasksById[taskId].title : 'Task'
+  return (
+    <>
+      <div className="px-3 pt-3 pb-2">
+        <p className="text-ui font-semibold text-fg">Dependency conflicts</p>
+        <p className="mt-0.5 text-meta text-fg-secondary">
+          These tasks start before a task they depend on has finished.
+        </p>
+      </div>
+      <ul className="max-h-72 overflow-y-auto px-1 pb-1" aria-label="Conflicts">
+        {conflicts.map((conflict) => (
+          <li key={conflict.dependencyId}>
+            <button
+              type="button"
+              onClick={() => onOpenConflict(conflict.successorId)}
+              className={cn(
+                'flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-hover focus-visible:bg-hover',
+                insetFocus,
+              )}
+            >
+              <span className="flex w-full min-w-0 items-center gap-1.5 text-ui text-fg">
+                <span className="truncate">{title(conflict.predecessorId)}</span>
+                <ArrowRight className="size-3 shrink-0 text-fg-tertiary" aria-hidden />
+                <span className="sr-only">has to finish before</span>
+                <span className="truncate font-medium">{title(conflict.successorId)}</span>
+              </span>
+              <span className="text-meta text-fg-tertiary tabular-nums">
+                Needs to start {formatDateSmart(conflict.requiredStart, today)} or later · starts{' '}
+                {formatDateSmart(conflict.actualStart, today)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="flex items-center justify-between gap-3 border-t border-subtle px-3 py-2">
+        <span className="text-meta text-fg-tertiary">
+          {scheduleMode === 'manual'
+            ? 'Manual mode never moves tasks on its own.'
+            : 'Auto mode moves successors when you edit.'}
+        </span>
+        <Button size="xs" variant="secondary" onClick={onResolveAll}>
+          Resolve all…
+        </Button>
+      </div>
+    </>
   )
 }
 

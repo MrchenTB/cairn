@@ -18,6 +18,24 @@ import type { MoveTaskInput } from '@/domain/types'
 /** containerId → item ids in display order. */
 export type Containers = Readonly<Record<string, readonly string[]>>
 
+/** Pointer travel (px, either axis) needed after a preview container switch before the next. */
+export const SWITCH_DISTANCE = 4
+
+/**
+ * May the drag preview switch container again? Only once the pointer itself travelled
+ * `distance` px (either axis) from where the last switch happened (`last` = the drag offset
+ * then; null = no switch yet). A switch moves rows, which can change what is under a still
+ * pointer; following that would bounce the row between two groups forever.
+ */
+export function mayPreviewSwitch(
+  last: { x: number; y: number } | null,
+  delta: { x: number; y: number },
+  distance = SWITCH_DISTANCE,
+): boolean {
+  if (!last) return true
+  return Math.abs(delta.x - last.x) >= distance || Math.abs(delta.y - last.y) >= distance
+}
+
 const GROUP_PREFIX = 'group:'
 const PARENT_PREFIX = 'parent:'
 const NO_PHASE = 'none'

@@ -15,7 +15,12 @@
  * required to be UUIDs.
  */
 import { isISODate } from '@/domain/dates'
-import { validateDateRange, validateDescription, validateName } from '@/domain/validation'
+import {
+  hasUnstorableCharacters,
+  validateDateRange,
+  validateDescription,
+  validateName,
+} from '@/domain/validation'
 import { validateNewDependency } from '@/domain/scheduling'
 import {
   DEPENDENCY_TYPES,
@@ -314,8 +319,9 @@ function checkDates(start: unknown, due: unknown): void {
   if (error) invalid(error.message)
 }
 
+/** Non-empty text Postgres can store (no NUL, no unpaired surrogate), like every text column. */
 function checkSortOrder(value: unknown): void {
-  if (typeof value !== 'string' || value === '') {
+  if (typeof value !== 'string' || value === '' || hasUnstorableCharacters(value)) {
     invalid('The item could not be placed. Refresh and try again.')
   }
 }
@@ -573,7 +579,8 @@ function checkPreferences(value: Preferences): Preferences {
   if (
     typeof value.timezone !== 'string' ||
     value.timezone === '' ||
-    characterCount(value.timezone) > 100
+    characterCount(value.timezone) > 100 ||
+    hasUnstorableCharacters(value.timezone)
   ) {
     invalid('The time zone is not valid.')
   }

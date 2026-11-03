@@ -755,3 +755,38 @@ describe('unreadable data and full storage', () => {
     expect((await local.loadWorkspace()).projects.map((p) => p.id)).toEqual(['p1'])
   })
 })
+
+// ---------------------------------------------------------------------------
+// Third review (each test failed before its fix; localRepository.parity.test.ts compares the
+// whole rule set with the real database)
+// ---------------------------------------------------------------------------
+
+describe('text the database cannot store', () => {
+  beforeEach(seed)
+
+  it('is refused in sort keys and time zones too, like Postgres does', async () => {
+    await repo.insertTask(task('parent'))
+    await repo.insertTask(task('child', { parentTaskId: 'parent' }))
+    const nul = 'a0\u0000'
+    const unpaired = 'a0\ud800'
+    for (const sortOrder of [nul, unpaired]) {
+      await expectError(repo.insertProject(makeProject({ sortOrder })), 'validation')
+      await expectError(repo.updateTask('parent', { sortOrder }), 'validation')
+      await expectError(repo.updatePhase('ph1', { sortOrder }), 'validation')
+      await expectError(
+        repo.deleteTask('parent', { keepSubtasks: true, promotedSortOrders: { child: sortOrder } }),
+        'validation',
+      )
+    }
+    const preferences = {
+      theme: 'system',
+      sidebarCollapsed: false,
+      timezone: 'Asia/Taipei\u0000',
+      weekStartsOn: 1,
+    } as const
+    await expectError(repo.upsertPreferences(preferences), 'validation', /time zone/)
+    expect((await stored()).projects).toHaveLength(2)
+    expect(await storedTask('child')).toMatchObject({ parentTaskId: 'parent' })
+    expect((await stored()).preferences).toBeNull()
+  })
+})

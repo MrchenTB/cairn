@@ -185,12 +185,22 @@ describe('buildLinkViews', () => {
       ['bc', true],
     ])
     expect(
-      buildLinkViews({ dependencies: deps, endpoint, conflictIds: new Set(), firstRow: 20, lastRow: 30 }).map(
-        (v) => v.id,
-      ),
+      buildLinkViews({
+        dependencies: deps,
+        endpoint,
+        conflictIds: new Set(),
+        firstRow: 20,
+        lastRow: 30,
+      }).map((v) => v.id),
     ).toEqual(['bc'])
     expect(
-      buildLinkViews({ dependencies: deps, endpoint, conflictIds: new Set(), firstRow: 41, lastRow: 60 }),
+      buildLinkViews({
+        dependencies: deps,
+        endpoint,
+        conflictIds: new Set(),
+        firstRow: 41,
+        lastRow: 60,
+      }),
     ).toEqual([])
   })
 

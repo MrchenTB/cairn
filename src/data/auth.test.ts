@@ -598,3 +598,68 @@ describe('second review', () => {
     expect(store.getState().status).toBe('signed_in')
   })
 })
+
+describe('third review', () => {
+  it('an auth service that cannot even start leaves the app signed out, never loading forever', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const store = createAuthStore({
+        mode: 'supabase',
+        auth: () => {
+          throw new Error('supabaseUrl is required.')
+        },
+        workspace: fakeWorkspace().store,
+      })
+      await expect(store.getState().actions.init()).resolves.toBeUndefined()
+      expect(store.getState()).toMatchObject({ status: 'signed_out', user: null })
+      expect(error).toHaveBeenCalled()
+    } finally {
+      error.mockRestore()
+    }
+  })
+
+  it('a stored session that can no longer be refreshed starts signed out (nothing loads)', async () => {
+    const fake = fakeSupabaseAuth()
+    fake.auth.getSession.mockResolvedValueOnce({
+      data: { session: null },
+      error: { name: 'AuthApiError', code: 'refresh_token_not_found', status: 400 },
+    } as never)
+    const workspace = fakeWorkspace()
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: fake.service,
+      workspace: workspace.store,
+    })
+    await store.getState().actions.init()
+    expect(store.getState()).toMatchObject({ status: 'signed_out', user: null })
+    expect(workspace.actions.load).not.toHaveBeenCalled()
+    // the session ending while signed in (supabase-js emits SIGNED_OUT) clears the workspace
+    vi.useFakeTimers()
+    try {
+      fake.emit('SIGNED_IN', { user: { id: 'u1', email: 'me@example.com' } })
+      await vi.runAllTimersAsync()
+      expect(workspace.actions.load).toHaveBeenCalledOnce()
+      fake.emit('SIGNED_OUT', null)
+      await vi.runAllTimersAsync()
+      expect(store.getState().status).toBe('signed_out')
+      expect(workspace.actions.reset).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('an event still on its way when the subscription ends is never delivered', async () => {
+    vi.useFakeTimers()
+    try {
+      const fake = fakeSupabaseAuth()
+      const seen: (AuthUser | null)[] = []
+      const stop = fake.service.onChange((user) => seen.push(user))
+      fake.emit('SIGNED_OUT', null) // deferred to a later task…
+      stop() // …and the store stops listening first (hot reload, test teardown)
+      await vi.runAllTimersAsync()
+      expect(seen).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

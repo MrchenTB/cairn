@@ -86,8 +86,8 @@ export function PaneResizer({ width, onResize, onCommit, scrolled }: PaneResizer
         }}
         onKeyDown={onKeyDown}
         className={cn(
-          'group/resizer absolute inset-y-0 z-30 flex w-2 -translate-x-1/2 cursor-col-resize touch-none justify-center outline-none',
-          'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus',
+          'group/resizer absolute inset-y-0 z-30 flex w-2 -translate-x-1/2 cursor-col-resize touch-none justify-center',
+          'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-solid focus-visible:outline-focus',
         )}
         style={{ left: width }}
       >

@@ -62,9 +62,13 @@ function ProjectGantt({ project }: { project: Project }) {
         <EmptyState
           icon={ChartGantt}
           title="No tasks yet"
-          description="Add a task with dates to see it on the timeline. Tasks without dates wait in “Unscheduled” until you drag them onto it."
+          description="Add a task to start planning. Tasks with dates appear as bars; tasks without dates wait under Unscheduled."
           action={
-            <Button variant="secondary" size="md" onClick={() => openNewTask({ projectId: project.id })}>
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => openNewTask({ projectId: project.id })}
+            >
               <Plus strokeWidth={2} />
               New task
             </Button>

@@ -1,10 +1,11 @@
 /**
  * /projects/:projectId/list — the project outline as a dense list (domain buildProjectOutline):
- * flat when the project has no phases; otherwise "No phase" first (hidden when empty except
- * while dragging) and one collapsible group per phase. Rows edit status / priority / dates in
- * place, open the Task Modal, expand subtasks and reorder by drag (or the row menu).
+ * flat when the project has no phases; otherwise "No phase" first (hidden when empty; while a
+ * task is dragged it is offered as a drop zone) and one collapsible group per phase. Rows edit
+ * status / priority / dates in place, open the Task Modal, expand subtasks and reorder by drag
+ * (or the row menu).
  */
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import {
   DndContext,
@@ -40,7 +41,11 @@ import {
 } from '@/domain/types'
 import { validateName } from '@/domain/validation'
 import { planScheduleChangeDetailed } from '@/features/gantt/planner'
-import { SCREEN_READER_INSTRUCTIONS, useDropAnimation } from '@/features/projects/dnd'
+import {
+  SCREEN_READER_INSTRUCTIONS,
+  useDropAnimation,
+  usePrefersReducedMotion,
+} from '@/features/projects/dnd'
 import { usePhaseDialog } from '@/features/projects/phaseDialogStore'
 import { stepAfterId } from '@/features/projects/projectOrder'
 import { deletePhaseDescription, phaseContents, plural } from '@/features/projects/projectStats'
@@ -58,11 +63,12 @@ import {
   stepMove,
   type Containers,
 } from './listDnd'
-import { ListGroup } from './ListGroup'
+import { ListGroup, NoPhaseDropZone } from './ListGroup'
 import {
   groupKey,
   setGroupCollapsed,
   setTasksExpanded,
+  toggleTaskExpanded,
   useCollapsedGroups,
   useExpandedTasks,
 } from './listPrefs'
@@ -70,6 +76,9 @@ import { TaskRowPreview, type TaskCommands } from './TaskRow'
 import { useListDnd } from './useListDnd'
 
 const NO_PHASE_CONTAINER = groupContainerId(null)
+/** Stable dnd-kit config objects (dnd-kit memoises on their identity). */
+const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } }
+const OVERLAY_MODIFIERS = [restrictToVerticalAxis]
 
 const validateTitle = (value: string) =>
   validateName(value, TITLE_MAX_LENGTH, 'Task title')?.message ?? null
@@ -105,6 +114,7 @@ function ProjectList({ project }: { project: Project }) {
   const expanded = useExpandedTasks()
   const collapsedGroups = useCollapsedGroups()
   const dropAnimation = useDropAnimation()
+  const reducedMotion = usePrefersReducedMotion()
   const [editingRow, setEditingRow] = useState<string | null>(null)
 
   const outline = useMemo(
@@ -154,7 +164,21 @@ function ProjectList({ project }: { project: Project }) {
     [actions, topLevelOrder],
   )
 
-  const dnd = useListDnd({ containers: baseContainers, subtaskIds, isCollapsed, onMove: moveTask })
+  // "No phase" is hidden while it is empty (unless its add row is open). While a task is dragged
+  // it is offered as a drop zone over the top of the list instead, so the rows never move.
+  const noPhaseGroup = outline.groups[0]
+  const showNoPhase =
+    !outline.hasPhases ||
+    noPhaseGroup.tasks.length > 0 ||
+    noPhaseGroup.milestones.length > 0 ||
+    editingRow === addRowKey.group(NO_PHASE_CONTAINER)
+  const isAppendOnly = useCallback(
+    (containerId: string) =>
+      isCollapsed(containerId) || (containerId === NO_PHASE_CONTAINER && !showNoPhase),
+    [isCollapsed, showNoPhase],
+  )
+
+  const dnd = useListDnd({ containers: baseContainers, subtaskIds, isAppendOnly, onMove: moveTask })
 
   const siblingOrder = useCallback(
     (task: Task): readonly string[] =>
@@ -199,9 +223,15 @@ function ProjectList({ project }: { project: Project }) {
     [actions, dependencies, tasks],
   )
 
+  // Rows are memoised on ONE commands object for the life of the view; the commands read the
+  // latest outline and callbacks when they run.
+  const latest = useRef({ openTask, siblingOrder, baseContainers, moveTask, removeTask })
+  useLayoutEffect(() => {
+    latest.current = { openTask, siblingOrder, baseContainers, moveTask, removeTask }
+  })
   const commands = useMemo<TaskCommands>(
     () => ({
-      open: openTask,
+      open: (taskId) => latest.current.openTask(taskId),
       setStatus: (task, status) => void report(actions.updateTask(task.id, { status })),
       setPriority: (task, priority) => void report(actions.updateTask(task.id, { priority })),
       setDates: (task, dates) => {
@@ -215,21 +245,26 @@ function ProjectList({ project }: { project: Project }) {
           },
         )
       },
+      toggleExpanded: (taskId) => {
+        if (!toggleTaskExpanded(taskId)) {
+          setEditingRow((row) => (row === addRowKey.subtask(taskId) ? null : row))
+        }
+      },
       addSubtask: (taskId) => {
         setTasksExpanded([taskId], true)
         setEditingRow(addRowKey.subtask(taskId))
       },
       move: (task, delta) => {
-        const input = stepMove(siblingOrder(task), task.id, delta)
-        if (input) moveTask(input)
+        const input = stepMove(latest.current.siblingOrder(task), task.id, delta)
+        if (input) latest.current.moveTask(input)
       },
       moveToPhase: (task, phaseId) => {
-        const input = moveToGroupEnd(baseContainers, task.id, phaseId)
-        if (input) moveTask(input)
+        const input = moveToGroupEnd(latest.current.baseContainers, task.id, phaseId)
+        if (input) latest.current.moveTask(input)
       },
-      remove: (task) => void removeTask(task),
+      remove: (task) => void latest.current.removeTask(task),
     }),
-    [actions, baseContainers, moveTask, openTask, removeTask, siblingOrder],
+    [actions],
   )
 
   const phaseCommands = useMemo<PhaseCommands>(
@@ -283,26 +318,18 @@ function ProjectList({ project }: { project: Project }) {
       phases,
       commands,
       phaseCommands,
-      menuFor: (task) => {
+      moveRange: (task) => {
         const order = siblingOrder(task)
         const index = order.indexOf(task.id)
-        return {
-          canMoveUp: index > 0,
-          canMoveDown: index >= 0 && index < order.length - 1,
-          phases,
-        }
+        return { canMoveUp: index > 0, canMoveDown: index >= 0 && index < order.length - 1 }
       },
       expanded,
-      toggleExpanded: (taskId) => {
-        const next = !expanded.has(taskId)
-        setTasksExpanded([taskId], next)
-        if (!next) setEditingRow((row) => (row === addRowKey.subtask(taskId) ? null : row))
-      },
       editingRow,
       setEditingRow,
       createTask,
       openMilestone: (milestoneId) => openMilestoneDialog({ mode: 'edit', milestoneId }),
       drag: dnd.drag,
+      reducedMotion,
     }),
     [
       project,
@@ -316,6 +343,7 @@ function ProjectList({ project }: { project: Project }) {
       createTask,
       openMilestoneDialog,
       dnd.drag,
+      reducedMotion,
     ],
   )
 
@@ -326,13 +354,11 @@ function ProjectList({ project }: { project: Project }) {
   const allExpanded = parentIds.length > 0 && parentIds.every((id) => expanded.has(id))
 
   const titleOf = (id: UniqueIdentifier) => taskById.get(String(id))?.title ?? 'task'
-  const placeOf = (id: UniqueIdentifier) => {
-    if (isGroupContainerId(id)) {
-      const phaseId = phaseIdOfContainer(String(id))
-      return phaseId ? (phases.find((phase) => phase.id === phaseId)?.name ?? 'phase') : 'No phase'
-    }
-    return titleOf(id)
+  const groupName = (containerId: string) => {
+    const phaseId = phaseIdOfContainer(containerId)
+    return phaseId ? (phases.find((phase) => phase.id === phaseId)?.name ?? 'phase') : 'No phase'
   }
+  const placeOf = (id: UniqueIdentifier) => (isGroupContainerId(id) ? groupName(id) : titleOf(id))
   const announcements: Announcements = {
     onDragStart: ({ active }) => `Picked up ${titleOf(active.id)}.`,
     onDragOver: ({ active, over }) =>
@@ -343,15 +369,13 @@ function ProjectList({ project }: { project: Project }) {
   }
 
   const isEmpty = tasks.length === 0 && phases.length === 0 && milestones.length === 0
-  const draggingTask = dnd.drag?.kind === 'task'
-  const noPhaseGroup = outline.groups[0]
-  const showNoPhase =
-    !outline.hasPhases ||
-    noPhaseGroup.tasks.length > 0 ||
-    noPhaseGroup.milestones.length > 0 ||
-    draggingTask ||
-    editingRow === addRowKey.group(NO_PHASE_CONTAINER)
+  const showNoPhaseDropZone =
+    !showNoPhase && dnd.drag?.kind === 'task' && dnd.drag.via === 'pointer'
   const activeTask = dnd.drag ? taskById.get(dnd.drag.activeId) : undefined
+  const dropDestination =
+    dnd.drag?.kind === 'task' && dnd.drag.overAppendOnly && dnd.drag.overContainer
+      ? groupName(dnd.drag.overContainer)
+      : null
 
   return (
     <ListContext.Provider value={context}>
@@ -403,11 +427,12 @@ function ProjectList({ project }: { project: Project }) {
         <DndContext
           sensors={dnd.sensors}
           collisionDetection={dnd.collisionDetection}
-          measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+          measuring={MEASURING}
           accessibility={{ announcements, screenReaderInstructions: SCREEN_READER_INSTRUCTIONS }}
           {...dnd.handlers}
         >
           <div className="min-h-0 flex-1 overflow-y-auto pt-1 pb-16" data-list-scroll>
+            {showNoPhaseDropZone ? <NoPhaseDropZone containerId={NO_PHASE_CONTAINER} /> : null}
             {outline.groups.map((group, index) => {
               const containerId = groupContainerId(group.phase?.id ?? null)
               if (group.phase === null && !showNoPhase) return null
@@ -444,7 +469,7 @@ function ProjectList({ project }: { project: Project }) {
               />
             </div>
           </div>
-          <DragOverlay dropAnimation={dropAnimation} modifiers={[restrictToVerticalAxis]}>
+          <DragOverlay dropAnimation={dropAnimation} modifiers={OVERLAY_MODIFIERS}>
             {activeTask ? (
               <TaskRowPreview
                 task={activeTask}
@@ -454,6 +479,7 @@ function ProjectList({ project }: { project: Project }) {
                     ? (entries.get(activeTask.id)?.subtasks.length ?? 0)
                     : 0
                 }
+                destination={dropDestination}
               />
             ) : null}
           </DragOverlay>

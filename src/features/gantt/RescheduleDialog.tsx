@@ -201,7 +201,9 @@ function RescheduleDialogContent({ active }: { active: ActiveReschedule }) {
                 loading={busy === 'apply'}
                 disabled={busy !== null}
               >
-                {count === 1 && kind === 'change' ? 'Apply change' : `Apply ${plural(count, 'change')}`}
+                {count === 1 && kind === 'change'
+                  ? 'Apply change'
+                  : `Apply ${plural(count, 'change')}`}
               </Button>
             ) : (
               <Button ref={primaryRef} variant="secondary" size="md" onClick={cancel}>
@@ -263,7 +265,13 @@ function ShiftRow({
   if (!task) return null
   return (
     <li className="border-t border-subtle py-1.5 first:border-t-0">
-      <ShiftLine task={task} from={shift.from} to={shift.to} today={today} delta={shift.deltaDays} />
+      <ShiftLine
+        task={task}
+        from={shift.from}
+        to={shift.to}
+        today={today}
+        delta={shift.deltaDays}
+      />
     </li>
   )
 }

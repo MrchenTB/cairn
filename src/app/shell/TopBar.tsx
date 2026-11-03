@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Shortcut } from '@/components/ui/kbd'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useWorkspaceData } from '@/data/hooks'
+import { isMac } from '@/lib/keyboard'
 import { cn } from '@/lib/utils'
 import { collectCrumbs } from '../routeHandle'
 import { SHORTCUTS, useCurrentProjectId } from '../shortcuts'
@@ -58,9 +59,12 @@ function Breadcrumbs({ className }: { className?: string }) {
 
 /**
  * 44px location bar at the top of the main panel: breadcrumb on the left; Search (⌘K), theme
- * and a global "New task" on the right. Everything here is quiet (ghost): the page's own header
- * owns its primary action, so the location bar never competes with it (design §5.2/§5.3).
- * Its bottom hairline is the only header line.
+ * and a global "New task" (icon, C) on the right. Everything here is quiet (ghost, icon-only
+ * where possible): the page's own header owns its labelled primary action — a project page's
+ * "New task" — so the location bar never repeats or competes with it (design §5.2/§5.3). It uses
+ * the panel's 24px gutter (like PageHeader and page bodies), so the breadcrumb sits on the page
+ * title's left edge and the right-hand controls line up with the header actions below. Its bottom
+ * hairline is the only header line.
  */
 export function TopBar() {
   const searchOpen = useUIStore((s) => s.searchOpen)
@@ -69,14 +73,14 @@ export function TopBar() {
   const projectId = useCurrentProjectId()
 
   return (
-    <header className="flex h-(--topbar-height) shrink-0 items-center gap-1.5 border-b border-subtle pr-2.5 pl-4">
+    <header className="flex h-(--topbar-height) shrink-0 items-center gap-1.5 border-b border-subtle px-6">
       <Breadcrumbs className="mr-2 flex-1" />
       <Button
         variant="ghost"
         size="sm"
         aria-haspopup="dialog"
         aria-expanded={searchOpen}
-        aria-keyshortcuts="Meta+K Control+K"
+        aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
         onClick={() => setSearchOpen(true)}
         className="gap-2 pr-1.5 pl-2 font-normal text-fg-tertiary"
       >
@@ -85,16 +89,15 @@ export function TopBar() {
         <Shortcut keys={SHORTCUTS.search} className="ml-1" />
       </Button>
       <ThemeMenu />
-      <Tooltip content="New task" shortcut={SHORTCUTS.newTask} side="bottom">
+      <Tooltip content="New task" shortcut={SHORTCUTS.newTask} side="bottom" align="end">
         <Button
           variant="ghost"
-          size="sm"
+          size="icon"
+          aria-label="New task"
           aria-keyshortcuts="C"
-          className="gap-1.5 pr-2.5 pl-2"
           onClick={() => openNewTask(projectId ? { projectId } : {})}
         >
           <Plus strokeWidth={1.75} />
-          New task
         </Button>
       </Tooltip>
     </header>

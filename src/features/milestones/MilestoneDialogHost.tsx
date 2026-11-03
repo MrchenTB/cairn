@@ -8,7 +8,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useUIStore, type MilestoneDialogState } from '@/app/uiStore'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useMilestone, useWorkspaceStatus } from '@/data/hooks'
-import { ignorePointerDownOnToasts } from '@/features/task-modal/dialogGuards'
+import {
+  ignoreEscapeWhileComposing,
+  ignorePointerDownOnToasts,
+  returnFocusAfterClose,
+} from '@/features/task-modal/dialogGuards'
+import { getFocusReturnTarget } from '@/lib/focus'
 import { notify } from '@/lib/notify'
 import { MilestoneForm, type MilestoneFormControls } from './MilestoneForm'
 
@@ -45,11 +50,9 @@ export function MilestoneDialogHost() {
   const wasOpenRef = useRef(false)
   const deletingRef = useRef<string | null>(null)
 
+  // What had focus when the dialog opened (for a closing menu's item: the menu's trigger).
   useLayoutEffect(() => {
-    if (open && !wasOpenRef.current) {
-      const active = document.activeElement
-      openerRef.current = active instanceof HTMLElement && active !== document.body ? active : null
-    }
+    if (open && !wasOpenRef.current) openerRef.current = getFocusReturnTarget()
     wasOpenRef.current = open
   }, [open])
 
@@ -68,8 +71,7 @@ export function MilestoneDialogHost() {
   const restoreFocus = useCallback(() => {
     const opener = openerRef.current
     openerRef.current = null
-    if (opener?.isConnected) opener.focus({ preventScroll: true })
-    else document.getElementById('main')?.focus({ preventScroll: true })
+    returnFocusAfterClose(opener)
   }, [])
 
   const current = shown?.state ?? null
@@ -87,6 +89,7 @@ export function MilestoneDialogHost() {
           size="sm"
           className="max-w-[460px]"
           onPointerDownOutside={ignorePointerDownOnToasts}
+          onEscapeKeyDown={ignoreEscapeWhileComposing}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             restoreFocus()

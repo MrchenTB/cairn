@@ -4,6 +4,7 @@ import type { AuthState } from '@/data/contracts'
 import { useAuthStore } from '@/data/store'
 import type { Result } from '@/domain/types'
 import { renderUI } from '@/test/render'
+import { EXPIRED_LINK_MESSAGE, captureAuthRedirectError } from './authRedirectError'
 import { LoginPage } from './LoginPage'
 
 const OK: Result = { ok: true, value: undefined }
@@ -104,6 +105,37 @@ describe('LoginPage', () => {
     expect(actions.sendPasswordReset).toHaveBeenCalledWith('me@example.com')
     expect(await screen.findByRole('heading', { name: 'Check your email' })).toHaveFocus()
     expect(screen.getByText(/If an account exists for me@example.com/)).toBeInTheDocument()
+  })
+
+  it('names the current form in the heading and the document title; switching starts at Email', async () => {
+    signedOut()
+    document.title = 'Settings · Cairn' // e.g. right after signing out from Settings
+    const { user } = renderUI(<LoginPage />, { route: '/login' })
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Welcome to Cairn')
+    expect(document.title).toBe('Sign in · Cairn')
+
+    await user.click(screen.getByRole('button', { name: 'Create an account' }))
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Create your account')
+    expect(document.title).toBe('Create account · Cairn')
+    expect(screen.getByLabelText('Email')).toHaveFocus()
+
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Welcome to Cairn')
+    expect(document.title).toBe('Sign in · Cairn')
+  })
+
+  it('explains an expired reset / confirmation link once, then forgets it', async () => {
+    signedOut()
+    captureAuthRedirectError(
+      'https://cairn.example/#error=access_denied&error_code=otp_expired&error_description=x',
+    )
+    const first = renderUI(<LoginPage />, { route: '/login' })
+    expect(screen.getByRole('alert')).toHaveTextContent(EXPIRED_LINK_MESSAGE)
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription(EXPIRED_LINK_MESSAGE)
+    first.unmount()
+
+    renderUI(<LoginPage />, { route: '/login' }) // e.g. signing out later in the same tab
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('the password toggle keeps its name and reports state with aria-pressed', async () => {

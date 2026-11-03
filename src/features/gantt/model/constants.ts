@@ -44,5 +44,7 @@ export const MARKER_HALF_WIDTH = 5
 export const SUBTASK_INDENT = 20
 /** Rows rendered above and below the viewport. */
 export const ROW_OVERSCAN = 10
+/** Dependency lines are culled to whole chunks of rows (fewer SVG re-renders while scrolling). */
+export const LINK_ROW_CHUNK = 16
 /** Pixel width of the label column for due dates in the outline. */
 export const DUE_COLUMN_WIDTH = 72

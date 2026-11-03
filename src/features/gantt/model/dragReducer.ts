@@ -122,7 +122,10 @@ export function updateDrag(
 ): DragState {
   let phase = state.phase
   if (phase === 'pending') {
-    const travel = Math.hypot(sample.clientX - state.down.clientX, sample.clientY - state.down.clientY)
+    const travel = Math.hypot(
+      sample.clientX - state.down.clientX,
+      sample.clientY - state.down.clientY,
+    )
     if (travel < threshold) return { ...state, last: sample }
     phase = 'dragging'
   }

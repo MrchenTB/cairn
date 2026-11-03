@@ -43,7 +43,7 @@ const SURROGATE = /[\uD800-\uDFFF]/
 const SURROGATE_PAIR = /[\uD800-\uDBFF][\uDC00-\uDFFF]/g
 
 /** PostgreSQL text cannot hold NUL, and its JSON input rejects unpaired UTF-16 surrogates. */
-function hasUnstorableCharacters(value: string): boolean {
+export function hasUnstorableCharacters(value: string): boolean {
   if (value.includes('\u0000')) return true
   // A surrogate left over once the valid pairs are removed is unpaired.
   return SURROGATE.test(value) && SURROGATE.test(value.replace(SURROGATE_PAIR, ''))

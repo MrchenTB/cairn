@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useState, type Ref } from 'react'
 import { Plus } from 'lucide-react'
 import { DueLabel } from '@/components/task/DueLabel'
 import { STATUS_LABELS } from '@/components/task/labels'
@@ -12,7 +12,7 @@ import { computeProgress } from '@/domain/progress'
 import type { Task } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { FieldError, SectionHeading } from './fields'
-import { isPlainEnter } from './keys'
+import { isComposing } from './keys'
 
 export interface SubtasksSectionProps {
   parent: Task
@@ -20,13 +20,20 @@ export interface SubtasksSectionProps {
   onOpenTask: (taskId: string) => void
   /** Text typed into "Add subtask" but not added yet (counts as unsaved). Must be stable. */
   onDraftChange: (hasDraft: boolean) => void
+  /** The "Add subtask" input (the modal focuses it when Save leaves an unsent line behind). */
+  inputRef?: Ref<HTMLInputElement>
 }
 
 /**
  * Subtasks of a top-level task. Every action here saves immediately (it is not part of the
  * Save form): status changes, opening a subtask, and "Add subtask".
  */
-export function SubtasksSection({ parent, onOpenTask, onDraftChange }: SubtasksSectionProps) {
+export function SubtasksSection({
+  parent,
+  onOpenTask,
+  onDraftChange,
+  inputRef,
+}: SubtasksSectionProps) {
   const subtasks = useSubtasks(parent.id)
   const { createTask, updateTask } = useActions()
   const [draft, setDraft] = useState('')
@@ -115,6 +122,7 @@ export function SubtasksSection({ parent, onOpenTask, onDraftChange }: SubtasksS
           )}
         </span>
         <input
+          ref={inputRef}
           type="text"
           aria-label="Add subtask"
           aria-describedby={error ? errorId : undefined}
@@ -126,8 +134,14 @@ export function SubtasksSection({ parent, onOpenTask, onDraftChange }: SubtasksS
             if (error) setError(null)
           }}
           onKeyDown={(event) => {
-            if (!isPlainEnter(event)) return
+            if (event.key !== 'Enter' || event.shiftKey || event.altKey || isComposing(event)) {
+              return
+            }
+            // Nothing typed: ⌘↵ / Ctrl+↵ bubbles up and saves the modal. With a title, ↵ and
+            // ⌘↵ both add the subtask (the line is never lost to a save that closes the modal).
+            if (!hasDraft) return
             event.preventDefault()
+            event.stopPropagation()
             void add()
           }}
           className="h-7 min-w-0 flex-1 bg-transparent px-1 text-ui text-fg outline-none placeholder:text-fg-tertiary focus-visible:outline-none"

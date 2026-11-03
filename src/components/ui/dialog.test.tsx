@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { act, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { renderUI } from '@/test/render'
 import { Button } from './button'
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from './dialog'
@@ -88,5 +88,57 @@ describe('DialogContent focus return', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Target' })).toHaveFocus())
     act(() => {}) // flush the restore timer: it must not move focus back to the opener
     expect(screen.getByRole('button', { name: 'Target' })).toHaveFocus()
+  })
+})
+
+describe('DialogContent outside clicks', () => {
+  /** A left click outside the panel (Radix dismisses on the click that follows pointerdown). */
+  async function clickOutside(element: Element) {
+    fireEvent.pointerDown(element, { button: 0 })
+    fireEvent.mouseDown(element, { button: 0 })
+    fireEvent.pointerUp(element, { button: 0 })
+    fireEvent.mouseUp(element, { button: 0 })
+    fireEvent.click(element, { button: 0 })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+  }
+
+  function Harness({ onRetry }: { onRetry: () => void }) {
+    const [open, setOpen] = useState(true)
+    return (
+      <>
+        <Button>Page button</Button>
+        {/* The markup sonner renders for a toast with an action. */}
+        <section aria-label="Notifications">
+          <ol data-sonner-toaster="">
+            <li data-sonner-toast="">
+              <button type="button" onClick={onRetry}>
+                Retry
+              </button>
+            </li>
+          </ol>
+        </section>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent aria-describedby={undefined}>
+            <DialogTitle>Edit</DialogTitle>
+          </DialogContent>
+        </Dialog>
+      </>
+    )
+  }
+
+  it('using a toast action keeps the dialog open', async () => {
+    const onRetry = vi.fn()
+    renderUI(<Harness onRetry={onRetry} />)
+    await screen.findByRole('dialog', { name: 'Edit' })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0))) // Radix arms its listener
+
+    // While the modal is open the rest of the page is hidden from assistive tech.
+    const retry = screen.getByRole('button', { name: 'Retry', hidden: true })
+    await clickOutside(retry)
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog', { name: 'Edit' })).toBeInTheDocument()
+
+    await clickOutside(screen.getByRole('button', { name: 'Page button', hidden: true }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })

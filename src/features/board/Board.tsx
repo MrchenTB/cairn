@@ -6,7 +6,6 @@ import {
   KeyboardSensor,
   MeasuringStrategy,
   PointerSensor,
-  defaultDropAnimationSideEffects,
   useSensor,
   useSensors,
   type Announcements,
@@ -14,7 +13,6 @@ import {
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
-  type DropAnimation,
   type KeyboardCoordinateGetter,
   type ScreenReaderInstructions,
 } from '@dnd-kit/core'
@@ -24,6 +22,7 @@ import { useUIStore } from '@/app/uiStore'
 import { useOpenTask } from '@/app/taskModalRoute'
 import { useActions } from '@/data/hooks'
 import type { ISODate, MoveTaskInput, TaskPriority, TaskStatus } from '@/domain/types'
+import { POINTER_ACTIVATION, useDropAnimation } from '@/features/projects/dnd'
 import { notify } from '@/lib/notify'
 import { BoardCardOverlay } from './BoardCard'
 import { BoardColumn } from './BoardColumn'
@@ -32,6 +31,7 @@ import {
   BOARD_COLUMNS,
   entryIndex,
   findColumn,
+  focusTarget,
   keyboardTarget,
   moveCardInColumns,
   moveForBoardDrop,
@@ -46,7 +46,6 @@ import {
   type BoardModel,
   type ColumnStep,
 } from './boardModel'
-import { usePrefersReducedMotion } from './useReducedMotion'
 
 const KEY_DIRECTIONS: Record<string, BoardDirection> = {
   ArrowUp: 'up',
@@ -58,19 +57,12 @@ const KEY_DIRECTIONS: Record<string, BoardDirection> = {
 /** Space picks a card up (Enter opens it); Space/Enter drop; Esc or Tab cancel. */
 const KEYBOARD_CODES = { start: ['Space'], end: ['Space', 'Enter'], cancel: ['Escape', 'Tab'] }
 
-/** A click (no movement) opens the task; 5 px of movement starts a drag. */
-const POINTER_OPTIONS = { activationConstraint: { distance: 5 } }
+/** A click (no movement) opens the task; a few px of movement start a drag (shared setting). */
+const POINTER_OPTIONS = { activationConstraint: POINTER_ACTIVATION }
 
 const SCREEN_READER_INSTRUCTIONS: ScreenReaderInstructions = {
   draggable:
-    'Press Enter to open the task. To move it, press Space, use the arrow keys to move it up or down, or to another column, then press Space to drop it. Press Escape to cancel.',
-}
-
-/** Overlay settles onto the card's new place (≤ 200 ms, design §3.7); off with reduced motion. */
-const DROP_ANIMATION: DropAnimation = {
-  duration: 160,
-  easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
-  sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: '0' } } }),
+    'Arrow keys move between tasks. Press Enter to open the task. To move it, press Space, use the arrow keys to move it up or down, or to another column, then press Space to drop it. Press Escape to cancel.',
 }
 
 const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } }
@@ -94,7 +86,7 @@ export interface BoardProps {
 export function Board({ projectId, model, phaseFilter, showPhase, today }: BoardProps) {
   const actions = useActions()
   const openTask = useOpenTask()
-  const reducedMotion = usePrefersReducedMotion()
+  const dropAnimation = useDropAnimation()
   const rootRef = useRef<HTMLDivElement>(null)
 
   const baseColumns = useMemo(() => toColumnIds(model.columns), [model])
@@ -111,6 +103,8 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
   /** Collision detection's memory for the current drag (last target, pointer, column switch). */
   const collision = useRef(createCollisionMemory())
   const lastDrop = useRef<{ column: TaskStatus; position: number; count: number } | null>(null)
+  /** True from pick-up until the first drag-over (which only reports the card over itself). */
+  const justPickedUp = useRef(false)
 
   // Latest values for the drag handlers / sensors (they outlive a render).
   const latest = useRef({ baseColumns, model, cardsById, openTask })
@@ -137,30 +131,49 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
 
   // -- actions -----------------------------------------------------------------------------
 
-  const focusCard = useCallback((taskId: string) => {
-    const focused = document.activeElement
-    if (focused && focused !== document.body) return // focus is somewhere meaningful: keep it
+  const activatorOf = useCallback((taskId: string): HTMLElement | null => {
     const activators = rootRef.current?.querySelectorAll<HTMLElement>('[data-card-activator]') ?? []
-    for (const element of activators) {
-      if (element.dataset.cardActivator === taskId) {
-        element.focus()
-        return
-      }
-    }
+    for (const element of activators) if (element.dataset.cardActivator === taskId) return element
+    return null
   }, [])
+
+  /**
+   * Puts keyboard focus back on a card that was re-mounted in another column (status change,
+   * rollback of a failed move) — only when focus fell to the page, never stealing it.
+   */
+  const focusCard = useCallback(
+    (taskId: string) => {
+      const focused = document.activeElement
+      if (focused && focused !== document.body) return // focus is somewhere meaningful: keep it
+      activatorOf(taskId)?.focus()
+    },
+    [activatorOf],
+  )
 
   const commitMove = useCallback(
     async (move: MoveTaskInput) => {
       const result = await actions.moveTask(move)
+      if (result.ok) return
       // Remote failures were rolled back and toasted (with Retry) by the store.
-      if (!result.ok && result.error.kind === 'validation') {
+      if (result.error.kind === 'validation') {
         notify.error("Couldn't move task", { description: result.error.message })
       }
+      // A rolled-back card returns to its old column as a new element: keep keyboard focus on it.
+      requestAnimationFrame(() => focusCard(move.taskId))
     },
-    [actions],
+    [actions, focusCard],
   )
 
   const onOpen = useCallback((taskId: string) => latest.current.openTask(taskId), [])
+
+  /** Arrow keys on a card (not dragging): focus the neighbouring card. */
+  const onNavigate = useCallback(
+    (taskId: string, direction: BoardDirection) => {
+      const target = focusTarget(latest.current.baseColumns, taskId, direction)
+      if (target) activatorOf(target)?.focus()
+    },
+    [activatorOf],
+  )
 
   const onStatusChange = useCallback(
     (taskId: string, status: TaskStatus) => {
@@ -282,6 +295,7 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
   const onDragStart = useCallback(
     ({ active }: DragStartEvent) => {
       lastDrop.current = null
+      justPickedUp.current = true
       setDrag(latest.current.baseColumns)
       setActiveId(String(active.id))
     },
@@ -373,6 +387,10 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
         return `Picked up ${titleOf(active.id)}.${place ? ` ${place}.` : ''}`
       },
       onDragOver: ({ active, over }) => {
+        // The first drag-over only finds the card over its own place: keep "Picked up …".
+        const first = justPickedUp.current
+        justPickedUp.current = false
+        if (first && over?.id === active.id) return undefined
         if (!over) return `${titleOf(active.id)} is no longer over a column.`
         const column = findColumn(currentColumns(), String(over.id))
         const ids = column ? currentColumns()[column] : []
@@ -424,30 +442,36 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
       onDragEnd={onDragEnd}
       onDragCancel={resetDrag}
     >
-      <div ref={rootRef} className="min-h-0 flex-1 overflow-x-auto px-6 pt-2 pb-4">
-        {/* Fixed three columns sharing the width, never narrower than 280px (design §5.5). */}
-        <div className="grid h-full min-h-72 grid-cols-[repeat(3,minmax(280px,1fr))] gap-3">
-          {BOARD_COLUMNS.map((status) => (
-            <BoardColumn
-              key={status}
-              status={status}
-              cards={columnCards[status]}
-              isDropTarget={activeId !== null && shown[status].includes(activeId)}
-              emptyText={projectEmpty && status === 'todo' ? 'No tasks yet' : 'No tasks'}
-              showPhase={showPhase}
-              today={today}
-              onOpen={onOpen}
-              onStatusChange={onStatusChange}
-              onPriorityChange={onPriorityChange}
-              onStep={onStep}
-              onCreate={onCreate}
-              onNewTask={onNewTask}
-            />
-          ))}
-        </div>
+      {/*
+        Fixed three columns sharing the width, never narrower than 280px (design §5.5), as tall
+        as the view (at least 18rem; shorter windows scroll the board). The scroller is the grid
+        itself so its end padding stays visible when narrow windows scroll it sideways.
+      */}
+      <div
+        ref={rootRef}
+        className="grid min-h-0 flex-1 auto-rows-[minmax(18rem,1fr)] grid-cols-[repeat(3,minmax(280px,1fr))] gap-3 overflow-auto px-6 pt-2 pb-4"
+      >
+        {BOARD_COLUMNS.map((status) => (
+          <BoardColumn
+            key={status}
+            status={status}
+            cards={columnCards[status]}
+            isDropTarget={activeId !== null && shown[status].includes(activeId)}
+            emptyText={projectEmpty && status === 'todo' ? 'No tasks yet' : 'No tasks'}
+            showPhase={showPhase}
+            today={today}
+            onOpen={onOpen}
+            onNavigate={onNavigate}
+            onStatusChange={onStatusChange}
+            onPriorityChange={onPriorityChange}
+            onStep={onStep}
+            onCreate={onCreate}
+            onNewTask={onNewTask}
+          />
+        ))}
       </div>
       {createPortal(
-        <DragOverlay dropAnimation={reducedMotion ? null : DROP_ANIMATION}>
+        <DragOverlay dropAnimation={dropAnimation}>
           {activeCard ? (
             <BoardCardOverlay
               task={activeCard.task}

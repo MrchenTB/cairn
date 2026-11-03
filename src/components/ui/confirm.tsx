@@ -159,6 +159,8 @@ export function ConfirmHost() {
     >
       {current ? (
         <AlertDialogContent
+          // Several choices (choose()) need room for their labels on one row.
+          className={current.choices.length > 1 ? 'max-w-[540px]' : undefined}
           onOpenAutoFocus={(event) => {
             if (current.focusCancel) return // Radix focuses Cancel by default
             event.preventDefault()

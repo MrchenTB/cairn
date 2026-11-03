@@ -2,6 +2,7 @@ import { useCallback, useEffect, type RefObject } from 'react'
 import { useBlocker, type BlockerFunction } from 'react-router'
 import { TASK_PARAM } from '@/app/taskModalRoute'
 import { confirmDiscard } from './discard'
+import { useUnloadPrompt } from './useUnloadPrompt'
 
 export interface NavigationGuardProps {
   /** The task being edited: navigations that keep `?task=<taskId>` are never blocked. */
@@ -42,15 +43,7 @@ export function NavigationGuard({ taskId, allowRef }: NavigationGuardProps) {
     }
   }, [blocker, allowRef])
 
-  useEffect(() => {
-    const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault()
-      // Legacy browsers need a return value to show the prompt.
-      event.returnValue = ''
-    }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [])
+  useUnloadPrompt(true)
 
   return null
 }

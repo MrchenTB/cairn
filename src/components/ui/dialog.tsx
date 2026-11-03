@@ -2,6 +2,7 @@ import type { ComponentProps } from 'react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { X } from 'lucide-react'
 import { useFocusReturn } from '@/lib/focus'
+import { isToastTarget } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { Button } from './button'
 import { FocusReturnRecorder } from './focus-return'
@@ -49,8 +50,9 @@ export interface DialogContentProps extends ComponentProps<typeof DialogPrimitiv
  * Centred modal panel: overlay, focus trap, Esc / outside click to close are handled by Radix.
  * On close, focus returns to the Trigger — or, for dialogs opened without one (a shortcut, app
  * state, the URL), to the element that had focus when it opened. A custom `onCloseAutoFocus`
- * runs first and can take over with `event.preventDefault()`. Always render a <DialogTitle>
- * (visually hidden if needed).
+ * runs first and can take over with `event.preventDefault()`. Using a toast (its Retry / Undo)
+ * is not a click outside: it never closes the dialog. Always render a <DialogTitle> (visually
+ * hidden if needed).
  */
 export function DialogContent({
   className,
@@ -59,6 +61,7 @@ export function DialogContent({
   showClose = true,
   overlayClassName,
   onCloseAutoFocus,
+  onPointerDownOutside,
   children,
   ...props
 }: DialogContentProps) {
@@ -77,6 +80,12 @@ export function DialogContent({
           className,
         )}
         onCloseAutoFocus={focusReturn.onCloseAutoFocus}
+        onPointerDownOutside={(event) => {
+          onPointerDownOutside?.(event)
+          if (!event.defaultPrevented && isToastTarget(event.detail.originalEvent.target)) {
+            event.preventDefault()
+          }
+        }}
         {...props}
       >
         <FocusReturnRecorder targetRef={focusReturn.targetRef} />

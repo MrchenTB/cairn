@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react'
+import { useId, useMemo, useRef, useState, type RefObject } from 'react'
 import { Command as CommandPrimitive } from 'cmdk'
 import { Plus, Search, X } from 'lucide-react'
 import { StatusIcon } from '@/components/task/StatusIcon'
@@ -17,6 +17,7 @@ import { validateNewDependency, type DependencyValidation } from '@/domain/sched
 import { searchWorkspace } from '@/domain/search'
 import type { Dependency, Phase, Project, Task } from '@/domain/types'
 import { reviewNewDependency } from '@/features/gantt/planner'
+import { afterDialogsClosed, ignoreEscapeWhileComposing } from './dialogGuards'
 import { FieldError, SectionHeading } from './fields'
 
 type Direction = 'blockedBy' | 'blocking'
@@ -91,7 +92,7 @@ export function DependenciesSection({ task, onOpenTask }: DependenciesSectionPro
       return
     }
     // A link that is already violated: Auto mode previews the shifts, Manual mode warns.
-    void reviewNewDependency(result.value.id)
+    await reviewNewDependency(result.value.id)
   }
 
   const remove = async (dependency: Dependency) => {
@@ -115,7 +116,7 @@ export function DependenciesSection({ task, onOpenTask }: DependenciesSectionPro
             tasksById={tasksById}
             dependencies={dependencies}
             links={links[direction]}
-            onAdd={(otherId) => void add(direction, otherId)}
+            onAdd={(otherId) => add(direction, otherId)}
             onRemove={(dependency) => void remove(dependency)}
             onOpenTask={onOpenTask}
           />
@@ -135,45 +136,96 @@ interface DependencyRowProps {
   tasksById: Record<string, Task>
   dependencies: readonly Dependency[]
   links: Array<{ dependency: Dependency; other: Task }>
-  onAdd: (otherId: string) => void
+  /** Resolves once the link was written and reviewed (the Auto-mode preview closed). */
+  onAdd: (otherId: string) => Promise<void>
   onRemove: (dependency: Dependency) => void
   onOpenTask: (taskId: string) => void
 }
 
-function DependencyRow({ direction, links, onRemove, onOpenTask, ...picker }: DependencyRowProps) {
+function DependencyRow({
+  direction,
+  links,
+  onAdd,
+  onRemove,
+  onOpenTask,
+  ...picker
+}: DependencyRowProps) {
   const labels = LABELS[direction]
   const labelId = useId()
+  const removeButtons = useRef(new Map<string, HTMLButtonElement>())
+  const addButton = useRef<HTMLButtonElement>(null)
+
+  const add = async (otherId: string) => {
+    await onAdd(otherId)
+    // The Auto-mode preview opens while the picker closes, so it has nothing to give focus back
+    // to: once it is gone, keep keyboard users in this row.
+    const button = addButton.current
+    const modal = button?.closest('[role="dialog"]') ?? null
+    afterDialogsClosed(
+      () => {
+        const active = document.activeElement
+        if ((!active || active === document.body) && button?.isConnected) {
+          button.focus({ preventScroll: true })
+        }
+      },
+      { except: modal },
+    )
+  }
+
+  const remove = (index: number) => {
+    // The chip and its focused × disappear: keep keyboard focus in this row (the next chip, the
+    // previous one, else "Add").
+    const neighbour = links[index + 1] ?? links[index - 1]
+    const target =
+      (neighbour && removeButtons.current.get(neighbour.dependency.id)) ?? addButton.current
+    target?.focus({ preventScroll: true })
+    onRemove(links[index].dependency)
+  }
+
   return (
     <>
-      <span id={labelId} className="flex h-6 items-center text-meta text-fg-secondary">
+      <span id={labelId} className="flex h-7 items-center text-meta text-fg-secondary">
         {labels.row}
       </span>
       <ul aria-labelledby={labelId} className="flex min-w-0 flex-wrap items-center gap-1.5">
-        {links.map(({ dependency, other }) => (
+        {links.map(({ dependency, other }, index) => (
           <li
             key={dependency.id}
-            className="inline-flex h-6 max-w-full min-w-0 items-center rounded-full border border-default bg-surface pr-0.5 pl-2 text-meta"
+            className="inline-flex h-7 max-w-full min-w-0 items-center rounded-full border border-default bg-surface pr-px pl-2.5 text-meta"
           >
             <StatusIcon status={other.status} size={12} decorative />
             <button
               type="button"
               onClick={() => onOpenTask(other.id)}
-              className="ml-1 min-w-0 truncate rounded-sm text-fg hover:underline focus-visible:outline-offset-1"
+              className="ml-1 min-w-0 self-stretch truncate rounded-sm text-fg hover:underline focus-visible:outline-offset-[-2px]"
             >
               {other.title}
             </button>
             <button
+              ref={(node) => {
+                if (!node) return undefined
+                removeButtons.current.set(dependency.id, node)
+                return () => {
+                  removeButtons.current.delete(dependency.id)
+                }
+              }}
               type="button"
               aria-label={labels.remove(other.title)}
-              onClick={() => onRemove(dependency)}
-              className="ml-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-fg-tertiary transition-colors duration-fast hover:bg-hover hover:text-fg hover:duration-instant"
+              onClick={() => remove(index)}
+              // 24px target (WCAG 2.5.8).
+              className="ml-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-fg-tertiary transition-colors duration-fast hover:bg-hover hover:text-fg hover:duration-instant"
             >
               <X className="size-3" aria-hidden />
             </button>
           </li>
         ))}
         <li>
-          <DependencyPicker direction={direction} {...picker} />
+          <DependencyPicker
+            direction={direction}
+            triggerRef={addButton}
+            onAdd={(otherId) => void add(otherId)}
+            {...picker}
+          />
         </li>
       </ul>
     </>
@@ -202,7 +254,11 @@ function DependencyPicker({
   tasksById,
   dependencies,
   onAdd,
-}: Omit<DependencyRowProps, 'links' | 'onRemove' | 'onOpenTask'>) {
+  triggerRef,
+}: Omit<DependencyRowProps, 'links' | 'onAdd' | 'onRemove' | 'onOpenTask'> & {
+  onAdd: (otherId: string) => void
+  triggerRef: RefObject<HTMLButtonElement | null>
+}) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const labels = LABELS[direction]
@@ -280,16 +336,22 @@ function DependencyPicker({
     >
       <PopoverTrigger asChild>
         <Button
+          ref={triggerRef}
           variant="ghost"
           size="xs"
           aria-label={labels.add}
-          className="h-6 gap-1 px-1.5 text-fg-tertiary"
+          className="h-7 gap-1 px-2 text-fg-tertiary"
         >
           <Plus aria-hidden />
           Add
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" aria-label={labels.add} className="w-80 p-0">
+      <PopoverContent
+        align="start"
+        aria-label={labels.add}
+        className="w-80 p-0"
+        onEscapeKeyDown={ignoreEscapeWhileComposing}
+      >
         <Command shouldFilter={false} loop label={labels.add}>
           <div className="flex h-9 shrink-0 items-center gap-2 border-b border-subtle px-3">
             <Search className="size-3.5 shrink-0 text-fg-tertiary" aria-hidden />

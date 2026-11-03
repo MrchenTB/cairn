@@ -7,7 +7,9 @@
  *   → apply optimistically with Immer `produceWithPatches` (field-level patches)
  *   → persist through the Repository
  *   → success: reconcile with the stored rows (only entities that still exist)
- *   → failure: apply THIS change's inverse patches, set sync.lastError/canRetry, toast + Retry.
+ *   → failure: apply THIS change's inverse patches, set sync.lastError/canRetry, toast + Retry,
+ *     then fetch the current state once idle (a failure without an answer may still have been
+ *     applied: such a change then shows up again and its failure is withdrawn).
  *
  * Writes are sent one at a time in the order they were made (a FIFO queue), so the server
  * applies them in the user's order (create-then-edit never races) while the UI stays instant.
@@ -85,6 +87,7 @@ import type {
   WorkspaceSnapshot,
 } from '@/domain/types'
 import {
+  hasUnstorableCharacters,
   parseBackupFile,
   validateDateRange,
   validateDescription,
@@ -232,6 +235,10 @@ interface RetryHandle {
   seq: number
   /** The fields it changes (bookkeeping fields left out), as Immer paths. */
   paths: readonly Path[]
+  /** Its forward patches: a later snapshot that already holds them shows it was saved after all. */
+  patches: readonly Patch[]
+  /** What it failed with (sync.lastError while it is the latest failure). */
+  error: AppError
   /** A newer change replaced it. */
   stale: boolean
   /** Already re-sent by a Retry. */
@@ -263,6 +270,41 @@ function replaces(newer: readonly Path[], older: readonly Path[]): boolean {
 interface RowUpdate {
   path: readonly string[]
   row: object
+}
+
+/** Row fields the server sets itself: a stored row never matches the optimistic one there. */
+const SERVER_STAMPED_FIELDS: ReadonlySet<string> = new Set([
+  'createdAt',
+  'updatedAt',
+  'completedAt',
+])
+
+/** Same stored value; whole rows are compared without their server-stamped fields. */
+function sameStoredValue(stored: unknown, expected: unknown): boolean {
+  if (Object.is(stored, expected)) return true
+  if (!isRecord(stored) || !isRecord(expected)) return false
+  for (const key of new Set([...Object.keys(stored), ...Object.keys(expected)])) {
+    if (!SERVER_STAMPED_FIELDS.has(key) && !Object.is(stored[key], expected[key])) return false
+  }
+  return true
+}
+
+/**
+ * True when `doc` (a fresh server snapshot) already holds every change of a write's forward
+ * patches: a write that failed without an answer was then applied by the server after all.
+ */
+function holdsChanges(doc: unknown, patches: readonly Patch[]): boolean {
+  const changes = patches.filter(
+    (patch) => !(patch.path.length === 4 && BOOKKEEPING_FIELDS.has(patch.path[3])),
+  )
+  return (
+    changes.length > 0 &&
+    changes.every((patch) =>
+      patch.op === 'remove'
+        ? resolvePath(doc, patch.path) === undefined
+        : sameStoredValue(resolvePath(doc, patch.path), patch.value),
+    )
+  )
 }
 
 function isPrefix(prefix: Path, path: Path): boolean {
@@ -352,8 +394,10 @@ function enumError(value: unknown, allowed: readonly string[], label: string): A
   return { kind: 'validation', message: `Invalid ${label}.` }
 }
 
+/** A sort key the database stores: non-empty text without NUL or unpaired surrogates. */
 function sortOrderError(value: unknown): AppError | null {
-  if (value === undefined || (typeof value === 'string' && value !== '')) return null
+  if (value === undefined) return null
+  if (typeof value === 'string' && value !== '' && !hasUnstorableCharacters(value)) return null
   return { kind: 'validation', message: 'Invalid sort order.' }
 }
 
@@ -504,6 +548,11 @@ interface WriteSpec<T> {
   label: string
   /** Optimistic change (omit for writes that wait for the server, e.g. import). */
   recipe?: (draft: Draft<Doc>) => void
+  /**
+   * For a write without a recipe: the changes it makes once stored, as patches (a refresh that
+   * already holds them shows that a failure without an answer was applied after all).
+   */
+  expected?: () => Patch[]
   persist: (repository: Repository) => Promise<T>
   /** Stored rows to merge on success. */
   reconcile?: (value: T) => RowUpdate[]
@@ -522,6 +571,9 @@ interface WriteSpec<T> {
    */
   alreadyDone?: { kind: 'not_found' | 'conflict'; value: () => T }
 }
+
+/** The tables an import fills (BackupData and WorkspaceData share these names). */
+const IMPORTED_TABLES = ['projects', 'phases', 'tasks', 'milestones', 'dependencies'] as const
 
 /** Deletes: a row that is already gone is deleted. */
 const DELETED: WriteSpec<void>['alreadyDone'] = { kind: 'not_found', value: () => undefined }
@@ -718,11 +770,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         updateSync({ pending: get().sync.pending - 1 })
         return
       }
-      // The server rejected a change that passed our own checks: this device is behind (another
-      // device changed the data). Fetch the current state once idle.
-      if (error.kind === 'not_found' || error.kind === 'conflict' || error.kind === 'validation') {
-        requestResync()
-      }
+      // Fetch the current state once idle. A refusal of a change that passed our own checks means
+      // this device is behind (another device changed the data); a failure without an answer
+      // (network, timeout, server error) leaves open whether the server applied the change, and
+      // if it did, it must show up rather than look lost (the user would make it a second time).
+      // Offline, the 'online' event refreshes instead.
+      if (!isRetryable(error) || get().sync.online) requestResync()
       let retry: RetryHandle | null = null
       if (isRetryable(error)) {
         const paths = write ? changedPaths(write.patches) : []
@@ -736,6 +789,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             epoch,
             seq,
             paths,
+            patches: write?.patches ?? spec.expected?.() ?? [],
+            error,
             stale: false,
             used: false,
             sent: false,
@@ -905,6 +960,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       preferencesStored = snapshot.preferences !== null
       workspaceLoaded = true
       let doc: Doc = { data: toWorkspaceData(snapshot), preferences }
+      withdrawAppliedFailures(doc)
       for (const write of pendingWrites) {
         const base = doc
         const applicable = write.patches.filter((patch) => canApply(base, patch))
@@ -916,6 +972,36 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         doc = next
       }
       setDoc(doc)
+    }
+
+    /**
+     * Failed writes that `stored` (a server snapshot) already holds were saved after all (their
+     * answer was lost): their Retry, toast and error are withdrawn, so nothing claims a saved
+     * change failed. Others stay.
+     */
+    function withdrawAppliedFailures(stored: Doc): void {
+      // The toast's failure too: an unrelated save took it off the Retry list, not off the toast.
+      const candidates =
+        toastRetry && !failedWrites.includes(toastRetry)
+          ? [...failedWrites, toastRetry]
+          : failedWrites
+      const applied = candidates.filter(
+        (handle) =>
+          handle.epoch === epoch &&
+          !handle.stale &&
+          !handle.used &&
+          holdsChanges(stored, handle.patches),
+      )
+      if (applied.length === 0) return
+      for (const handle of applied) handle.stale = true
+      failedWrites = failedWrites.filter((handle) => !handle.stale)
+      if (toastRetry?.stale) {
+        toastRetry = null
+        notifier.dismiss?.(SYNC_ERROR_TOAST_ID)
+      }
+      const { lastError } = get().sync
+      const cleared = applied.some((handle) => handle.error === lastError)
+      updateSync({ canRetry: hasFailedWrites(), ...(cleared ? { lastError: null } : {}) })
     }
 
     /** A successful load/refresh: the error of an earlier failed load is over. */
@@ -1971,16 +2057,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           }
         },
         // Not optimistic: the copy appears once the server stored all of it.
+        expected: () =>
+          IMPORTED_TABLES.flatMap((table) =>
+            copy[table].map((row): Patch => ({
+              op: 'add',
+              path: ['data', table, row.id],
+              value: row,
+            })),
+          ),
         afterSuccess: () => {
           setDoc(
             produce(getDoc(), (draft) => {
-              for (const table of [
-                'projects',
-                'phases',
-                'tasks',
-                'milestones',
-                'dependencies',
-              ] as const) {
+              for (const table of IMPORTED_TABLES) {
                 const target = draft.data[table] as Record<string, unknown>
                 for (const row of copy[table]) target[row.id] = row
               }
@@ -2226,7 +2314,15 @@ export function createAuthStore(options: AuthStoreOptions) {
       init() {
         initPromise ??= (async () => {
           if (options.signal?.aborted) return
-          const unsubscribe = service().onChange((user, event) => applyUser(user, event))
+          let unsubscribe: () => void
+          try {
+            unsubscribe = service().onChange((user, event) => applyUser(user, event))
+          } catch (error) {
+            // No auth client (e.g. it refused the configuration): never a splash forever.
+            console.error('[cairn] Authentication could not start.', error)
+            applyUser(null)
+            return
+          }
           options.signal?.addEventListener('abort', unsubscribe, { once: true })
           watchSessionRejections()
           await syncUser()

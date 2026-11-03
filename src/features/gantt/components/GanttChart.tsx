@@ -43,7 +43,7 @@ import { ViewBarActions } from '@/features/projects/viewBar'
 import { useHotkeys } from '@/lib/keyboard'
 import { notify } from '@/lib/notify'
 import { usePaneWidth } from '../ganttPrefs'
-import { HEADER_HEIGHT, ROW_HEIGHT, ROW_OVERSCAN } from '../model/constants'
+import { HEADER_HEIGHT, LINK_ROW_CHUNK, ROW_HEIGHT, ROW_OVERSCAN } from '../model/constants'
 import { conflictMessages, liveConflicts, type DateOverrides } from '../model/conflicts'
 import {
   hasDateChange,
@@ -321,14 +321,20 @@ export function GanttChart({
   })
 
   // ---- virtual rows --------------------------------------------------------
-  const pinnedKey = [dragView?.rowIndex, linkDraft ? (model.rowIndexByKey.get(linkDraft.rowKey) ?? -1) : null]
+  /** Row holding keyboard focus: kept mounted, so scrolling never drops focus to <body>. */
+  const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null)
+  const pinnedKey = [
+    dragView?.rowIndex,
+    linkDraft ? (model.rowIndexByKey.get(linkDraft.rowKey) ?? -1) : null,
+    focusedRowKey ? (model.rowIndexByKey.get(focusedRowKey) ?? -1) : null,
+  ]
     .filter((index): index is number => typeof index === 'number' && index >= 0)
     .join(',')
   const rangeExtractor = useCallback(
     (range: Range) => {
       const indexes = defaultRangeExtractor(range)
       if (!pinnedKey) return indexes
-      // Keep the row being dragged (or linked from) mounted while auto-scroll moves it away.
+      // Keep the row being dragged (or linked from, or focused) mounted while it scrolls away.
       const extra = pinnedKey
         .split(',')
         .map(Number)
@@ -344,11 +350,29 @@ export function GanttChart({
     estimateSize: () => ROW_HEIGHT,
     overscan: ROW_OVERSCAN,
     scrollMargin: HEADER_HEIGHT,
+    // scrollToIndex keeps a revealed row below the sticky time header, not under it.
+    scrollPaddingStart: HEADER_HEIGHT,
     rangeExtractor,
   })
   const items = virtualizer.getVirtualItems()
-  const firstRow = items.length > 0 ? items[0].index : 0
-  const lastRow = items.length > 0 ? items[items.length - 1].index : -1
+  // Links are culled to a row window snapped to LINK_ROW_CHUNK, so the SVG layer re-renders every
+  // few rows of scrolling instead of on every virtual-row change.
+  // From the visible range (+ overscan), not `items`: pinned rows far away must not widen it.
+  const visibleRange = virtualizer.range
+  const renderedFirst = visibleRange ? Math.max(0, visibleRange.startIndex - ROW_OVERSCAN) : 0
+  const renderedLast = visibleRange
+    ? Math.min(rows.length - 1, visibleRange.endIndex + ROW_OVERSCAN)
+    : items.length > 0
+      ? items[items.length - 1].index
+      : -1
+  const firstRow = Math.max(0, (Math.floor(renderedFirst / LINK_ROW_CHUNK) - 1) * LINK_ROW_CHUNK)
+  const lastRow =
+    renderedLast < 0
+      ? -1
+      : Math.min(
+          rows.length - 1,
+          (Math.floor(renderedLast / LINK_ROW_CHUNK) + 2) * LINK_ROW_CHUNK - 1,
+        )
 
   // ---- derived view data ---------------------------------------------------
   const dateOverrides = useMemo<DateOverrides>(() => {
@@ -638,7 +662,9 @@ export function GanttChart({
     return token
   }
   const releasePending = (rowKey: string, token: number) =>
-    setPending((previous) => (previous[rowKey]?.token === token ? omit(previous, rowKey) : previous))
+    setPending((previous) =>
+      previous[rowKey]?.token === token ? omit(previous, rowKey) : previous,
+    )
 
   /** Task dates go through the planner (Manual warns / Auto previews), like every other view. */
   const commitTaskDates = useEvent(
@@ -721,6 +747,14 @@ export function GanttChart({
     }
   })
 
+  // Stable toolbar callbacks (the toolbar is memoised; the chart re-renders while scrolling).
+  const onScheduleModeChange = useEvent((mode: ScheduleMode) => void changeMode(mode))
+  const onOpenConflict = useEvent((successorId: string) => {
+    revealTask(successorId)
+    openTask(successorId)
+  })
+  const onResolveAll = useEvent(() => void reviewConflicts(project.id))
+
   const removeSelected = useEvent(async () => {
     const id = selectedDep
     if (!id || !Object.hasOwn(data.dependencies, id)) return
@@ -766,8 +800,10 @@ export function GanttChart({
   })
   useHotkeys('escape', () => setSelectedDep(null), { enabled: selectedDep !== null })
   useEffect(() => {
-    if (selectedDep && !Object.hasOwn(data.dependencies, selectedDep)) setSelectedDep(null)
-  }, [selectedDep, data.dependencies])
+    // Deleted, collapsed away or scrolled out of the rendered rows: Delete must not remove a line
+    // the user can no longer see.
+    if (selectedDep && !links.some((link) => link.id === selectedDep)) setSelectedDep(null)
+  }, [selectedDep, links])
   useEffect(() => {
     if (selectedDep) removeButtonRef.current?.focus({ preventScroll: true })
   }, [selectedDep])
@@ -860,7 +896,8 @@ export function GanttChart({
         : 0
     if (dx !== 0) el.scrollLeft += dx
     if (dy !== 0) el.scrollTop += dy
-    if (it.kind === 'drag') it.state = updateDrag(it.state, sampleAt(it.clientX, it.clientY, it.rect))
+    if (it.kind === 'drag')
+      it.state = updateDrag(it.state, sampleAt(it.clientX, it.clientY, it.rect))
     else findLinkTarget(it)
     publish(it)
     if (dx !== 0 || dy !== 0) rafRef.current = requestAnimationFrame(tick)
@@ -966,7 +1003,9 @@ export function GanttChart({
 
   const dragOriginFor = (row: GanttRow, handle: string): DragOrigin | null => {
     if (row.kind === 'milestone') {
-      return handle === 'point' && row.day !== null ? { mode: 'point', start: row.day, end: null } : null
+      return handle === 'point' && row.day !== null
+        ? { mode: 'point', start: row.day, end: null }
+        : null
     }
     if (row.kind !== 'task') return null
     if (handle === 'lane') return row.drawable ? { mode: 'draw', start: null, end: null } : null
@@ -1046,7 +1085,8 @@ export function GanttChart({
     if (!it || event.pointerId !== it.pointerId) return
     it.clientX = event.clientX
     it.clientY = event.clientY
-    if (it.kind === 'drag') it.state = updateDrag(it.state, sampleAt(event.clientX, event.clientY, it.rect))
+    if (it.kind === 'drag')
+      it.state = updateDrag(it.state, sampleAt(event.clientX, event.clientY, it.rect))
     else findLinkTarget(it)
     endInteraction(false)
   })
@@ -1066,8 +1106,16 @@ export function GanttChart({
     if (!lane || !el) return
     const row = latest.current.rows[Number(lane.getAttribute('data-row-index'))]
     if (row?.kind !== 'task' || !row.drawable) return
-    const day = Math.floor(sampleAt(event.clientX, event.clientY, el.getBoundingClientRect()).dayFloat)
-    void commitTaskDates(row.task.id, row.key, { start: day, end: day }, { start: null, end: null }, 'draw')
+    const day = Math.floor(
+      sampleAt(event.clientX, event.clientY, el.getBoundingClientRect()).dayFloat,
+    )
+    void commitTaskDates(
+      row.task.id,
+      row.key,
+      { start: day, end: day },
+      { start: null, end: null },
+      'draw',
+    )
   })
 
   const onBarKeyDown = useEvent((event: ReactKeyboardEvent<HTMLElement>, row: GanttRow) => {
@@ -1123,7 +1171,8 @@ export function GanttChart({
   if (linkDraft) {
     const target = linkDraft.target
     if (!target) linkTooltip = { text: 'Drop on a task to add a dependency', tone: 'default' }
-    else if (!target.valid) linkTooltip = { text: target.message ?? "Can't link these", tone: 'danger' }
+    else if (!target.valid)
+      linkTooltip = { text: target.message ?? "Can't link these", tone: 'danger' }
     else {
       const [predecessorId, successorId] =
         linkDraft.side === 'out'
@@ -1152,15 +1201,12 @@ export function GanttChart({
           onScaleChange={changeScale}
           onToday={scrollToToday}
           scheduleMode={project.scheduleMode}
-          onScheduleModeChange={(mode) => void changeMode(mode)}
+          onScheduleModeChange={onScheduleModeChange}
           conflicts={conflicts}
           tasksById={data.tasks}
           today={today}
-          onOpenConflict={(successorId) => {
-            revealTask(successorId)
-            openTask(successorId)
-          }}
-          onResolveAll={() => void reviewConflicts(project.id)}
+          onOpenConflict={onOpenConflict}
+          onResolveAll={onResolveAll}
           unscheduledCount={model.unscheduledCount}
           onShowUnscheduled={showUnscheduled}
         />
@@ -1170,7 +1216,7 @@ export function GanttChart({
         ref={scrollerRef}
         role="region"
         aria-label="Gantt chart"
-        className="relative isolate min-h-0 flex-1 overflow-auto overscroll-contain border-t border-subtle"
+        className="relative isolate min-h-0 flex-1 overflow-auto overscroll-contain border-t border-subtle bg-(--gantt-bg)"
         onScroll={() => syncScroll()}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1178,7 +1224,10 @@ export function GanttChart({
         onLostPointerCapture={onPointerCancel}
         onDoubleClick={onDoubleClick}
       >
-        <div className="relative" style={{ width: contentWidth, height: HEADER_HEIGHT + bodyHeight }}>
+        <div
+          className="relative"
+          style={{ width: contentWidth, height: HEADER_HEIGHT + bodyHeight }}
+        >
           <TimeHeader
             tiers={tiers}
             scale={scale}
@@ -1193,6 +1242,16 @@ export function GanttChart({
             className="relative select-none"
             style={{ width: contentWidth, height: bodyHeight }}
             onPointerDown={onPointerDown}
+            onFocus={(event) => {
+              const key = (event.target as Element)
+                .closest('[data-row-key]')
+                ?.getAttribute('data-row-key')
+              setFocusedRowKey(key ?? null)
+            }}
+            onBlur={(event) => {
+              const next = event.relatedTarget as Element | null
+              if (!next || !event.currentTarget.contains(next)) setFocusedRowKey(null)
+            }}
           >
             {/* Opaque outline column below the last row (rows paint their own cells). */}
             <div
@@ -1261,7 +1320,10 @@ export function GanttChart({
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => void removeSelected()}
                 className="absolute z-[6] flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-default bg-elevated text-fg-secondary shadow-popover hover:border-strong hover:text-danger focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus"
-                style={{ left: paneWidth + selectedLink.route.mid.x, top: selectedLink.route.mid.y }}
+                style={{
+                  left: paneWidth + selectedLink.route.mid.x,
+                  top: selectedLink.route.mid.y,
+                }}
               >
                 <X className="size-3" strokeWidth={2.25} aria-hidden />
               </button>
@@ -1324,8 +1386,8 @@ export function GanttChart({
       ) : null}
 
       <p id={helpId} className="sr-only">
-        Enter opens it. Alt+Left or Alt+Right moves it by one day; Alt+Shift+Left or
-        Alt+Shift+Right changes its due date. Dependencies can also be edited in the task.
+        Enter opens it. Alt+Left or Alt+Right moves it by one day; Alt+Shift+Left or Alt+Shift+Right
+        changes its due date. Dependencies can also be edited in the task.
       </p>
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {announcement}

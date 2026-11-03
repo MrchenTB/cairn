@@ -10,7 +10,12 @@ import type { ISODate, Result, TaskPriority, TaskStatus } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { AddTaskComposer } from './AddTaskComposer'
 import { SortableBoardCard } from './BoardCard'
-import { columnDroppableId, type BoardCard, type ColumnStep } from './boardModel'
+import {
+  columnDroppableId,
+  type BoardCard,
+  type BoardDirection,
+  type ColumnStep,
+} from './boardModel'
 
 export interface BoardColumnProps {
   status: TaskStatus
@@ -23,6 +28,8 @@ export interface BoardColumnProps {
   showPhase: boolean
   today: ISODate
   onOpen: (taskId: string) => void
+  /** Arrow keys on a card (not dragging): move focus to a neighbouring card. */
+  onNavigate: (taskId: string, direction: BoardDirection) => void
   onStatusChange: (taskId: string, status: TaskStatus) => void
   onPriorityChange: (taskId: string, priority: TaskPriority) => void
   onStep: (taskId: string, step: ColumnStep) => void
@@ -46,6 +53,7 @@ export const BoardColumn = memo(function BoardColumn({
   showPhase,
   today,
   onOpen,
+  onNavigate,
   onStatusChange,
   onPriorityChange,
   onStep,
@@ -121,6 +129,7 @@ export const BoardColumn = memo(function BoardColumn({
                   isFirst={index === 0}
                   isLast={index === cards.length - 1}
                   onOpen={onOpen}
+                  onNavigate={onNavigate}
                   onStatusChange={onStatusChange}
                   onPriorityChange={onPriorityChange}
                   onStep={onStep}

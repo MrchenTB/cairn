@@ -1576,3 +1576,172 @@ describe('patches only change patchable fields', () => {
     expect(h.state().data.tasks.a).toEqual(await storedTask(h, 'a'))
   })
 })
+
+// ---------------------------------------------------------------------------
+// Third review (the findings' tests failed before their fixes; the guards beside them pin what
+// must not change: a real failure keeps its Retry, offline waits for the network)
+// ---------------------------------------------------------------------------
+
+describe('a failure without an answer', () => {
+  it('is followed by a resync, so a change the server did store shows up (no second copy)', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const insert = h.repo.insertTask.bind(h.repo)
+    vi.spyOn(h.repo, 'insertTask').mockImplementationOnce(async (task) => {
+      await insert(task) // stored…
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE) // …but the answer was lost
+    })
+    const result = await h.actions.createTask({ projectId: 'p1', title: 'Answer lost' })
+    expect(result).toMatchObject({ ok: false, error: { kind: 'network' } })
+    // Whether the server applied it is unknown: the store asks instead of showing it as missing
+    // (the user would then create it a second time).
+    await vi.waitFor(() =>
+      expect(h.state().data.tasks['new-1']).toMatchObject({ title: 'Answer lost' }),
+    )
+    // it was saved after all: the failure (its toast, error and Retry) is withdrawn
+    await vi.waitFor(() =>
+      expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false }),
+    )
+    expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    const stored = await storedSnapshot(h)
+    expect(stored.tasks.filter((t) => t.title === 'Answer lost')).toHaveLength(1)
+    expect(h.state().data.tasks['new-1']).toEqual(stored.tasks.find((t) => t.id === 'new-1'))
+  })
+
+  it('withdraws only the failures the server shows as applied', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Really failed' })).ok).toBe(false)
+    const update = h.repo.updateTask.bind(h.repo)
+    vi.spyOn(h.repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await update(id, patch)
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+    })
+    expect((await h.actions.updateTask('b', { priority: 'urgent', status: 'done' })).ok).toBe(false)
+    await vi.waitFor(() =>
+      expect(h.state().data.tasks.b).toMatchObject({ priority: 'urgent', status: 'done' }),
+    )
+    await idle(h)
+    // "b" was stored; "a" was not and keeps its Retry
+    expect(h.state().data.tasks.a.title).toBe('A')
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedTask(h, 'a'))?.title).toBe('Really failed')
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+  })
+
+  it('a delete the server shows as done counts as applied', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const remove = h.repo.deleteTask.bind(h.repo)
+    vi.spyOn(h.repo, 'deleteTask').mockImplementationOnce(async (id, options) => {
+      await remove(id, options)
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+    })
+    expect((await h.actions.deleteTask('c', { keepSubtasks: false })).ok).toBe(false)
+    await vi.waitFor(() => expect(h.state().data.tasks.c).toBeUndefined())
+    await vi.waitFor(() => expect(h.state().sync.canRetry).toBe(false))
+    expect(h.state().sync.lastError).toBeNull()
+  })
+
+  it('a change that really failed stays rolled back after the resync', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const load = vi.spyOn(h.repo, 'loadWorkspace')
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Never stored' })).ok).toBe(false)
+    await vi.waitFor(() => expect(load).toHaveBeenCalledOnce())
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('A')
+    expect(h.state().sync).toMatchObject({ canRetry: true, lastError: { kind: 'network' } })
+  })
+
+  it('offline, it waits for the browser to come back online instead of asking at once', async () => {
+    const win = new EventTarget()
+    const h = await setup({
+      rows: workspaceRows(),
+      environment: { window: win, navigator: { onLine: true } },
+    })
+    win.dispatchEvent(new Event('offline'))
+    const load = vi.spyOn(h.repo, 'loadWorkspace')
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Offline' })).ok).toBe(false)
+    await settled()
+    expect(load).not.toHaveBeenCalled()
+    win.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(load).toHaveBeenCalledOnce())
+  })
+})
+
+describe('text the database cannot store', () => {
+  it('a sort key or time zone with it is refused before any write', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const writes = [vi.spyOn(h.repo, 'updateTask'), vi.spyOn(h.repo, 'upsertPreferences')]
+    const data = h.state().data
+    for (const result of [
+      await h.actions.updateTask('a', { sortOrder: 'a0\u0000' }),
+      await h.actions.updateProject('p1', { sortOrder: '\ud800' }),
+      await h.actions.updatePhase('ph1', { sortOrder: 'a\u0000' }),
+      await h.actions.updatePreferences({ timezone: 'Asia/Taipei\u0000' }),
+    ]) {
+      expect(result).toMatchObject({ ok: false, error: { kind: 'validation' } })
+    }
+    expect(h.state().data).toBe(data)
+    for (const spy of writes) expect(spy).not.toHaveBeenCalled()
+    expect(h.notifier.error).not.toHaveBeenCalled()
+  })
+})
+
+describe('a failure without an answer, after an unrelated save', () => {
+  it('the toast of a change the server shows as applied goes away too', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const update = h.repo.updateTask.bind(h.repo)
+    vi.spyOn(h.repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await update(id, patch)
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+    })
+    h.repo.setLatency(5)
+    const lost = h.actions.updateTask('a', { title: 'Saved, answer lost' })
+    const unrelated = h.actions.updateProject('p1', { name: 'Alpha 2' }) // saved after it
+    expect((await lost).ok).toBe(false)
+    expect((await unrelated).ok).toBe(true)
+    h.notifier.dismiss.mockClear()
+    await h.actions.refresh({ silent: true })
+    expect(h.state().data.tasks.a.title).toBe('Saved, answer lost')
+    expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+  })
+})
+
+describe('an import whose answer was lost (e.g. a long import that timed out)', () => {
+  it('shows the stored copy after the failure and withdraws the failure', async () => {
+    const h = await setup({ randomId: () => crypto.randomUUID() })
+    const original = h.repo.importWorkspace.bind(h.repo)
+    vi.spyOn(h.repo, 'importWorkspace').mockImplementationOnce(async (data) => {
+      await original(data) // stored…
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE) // …but the answer never came
+    })
+    const file: BackupFile = {
+      app: 'cairn',
+      formatVersion: 1,
+      exportedAt: '2026-10-01T00:00:00.000Z',
+      preferences: null,
+      data: {
+        projects: [makeProject({ id: 'X', name: 'Imported' })],
+        phases: [],
+        tasks: [makeTask({ id: 'T', projectId: 'X', title: 'Imported task', status: 'done' })],
+        milestones: [],
+        dependencies: [],
+      },
+    }
+    expect((await h.actions.importBackup(file)).ok).toBe(false)
+    await vi.waitFor(() =>
+      expect(Object.values(h.state().data.projects).map((p) => p.name)).toEqual(['Imported']),
+    )
+    await vi.waitFor(() =>
+      expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false }),
+    )
+    expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
+    expect((await storedSnapshot(h)).projects).toHaveLength(1)
+  })
+})

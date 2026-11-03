@@ -136,12 +136,19 @@ export function createSupabaseAuthService(
       return data.session ? toAuthUser(data.session.user) : null
     },
     onChange(callback) {
+      let subscribed = true
       const { data } = auth.onAuthStateChange((event, session) => {
         const user = session ? toAuthUser(session.user) : null
         const kind = Object.hasOwn(AUTH_EVENTS, event) ? AUTH_EVENTS[event] : undefined
-        setTimeout(() => callback(user, kind), 0)
+        // An event still on its way once the subscriber left is dropped, like later ones.
+        setTimeout(() => {
+          if (subscribed) callback(user, kind)
+        }, 0)
       })
-      return () => data.subscription.unsubscribe()
+      return () => {
+        subscribed = false
+        data.subscription.unsubscribe()
+      }
     },
     async signIn(email, password) {
       const { error } = await auth.signInWithPassword({ email, password })

@@ -111,8 +111,14 @@ const FALLBACK_MESSAGES: Record<string, string> = {
   '22007': 'Dates must use the YYYY-MM-DD format.',
   '22008': 'A date is out of range.',
   '22023': 'The request was not valid. Refresh and try again.',
+  // Text Postgres cannot store (NUL, invalid UTF-8): sending it again fails the same way.
+  '22P05': 'Some text contains an unsupported character.',
+  '22021': 'Some text contains an unsupported character.',
   P0001: "That change isn't allowed.",
 }
+
+/** HTTP 413: the request body is over the server's limit (e.g. a very large import). */
+const TOO_LARGE_MESSAGE = 'This is too much data to save at once.'
 
 const VALIDATION_CODES = new Set(Object.keys(FALLBACK_MESSAGES))
 
@@ -148,10 +154,10 @@ function constraintMessage(error: PostgrestErrorLike): string | null {
 
 /**
  * Maps whatever supabase-js returned or threw to a RepositoryError:
- * fetch failures → network · 23505 → conflict · check/FK/not-null/format/raise → validation
- * (server text when readable) · P0002/PGRST116 → not_found · 42501 → permission ·
- * PGRST30x/JWT → auth · missing schema, deadlock/serialization/timeout and anything else →
- * unknown (retryable), with a message saying which.
+ * fetch failures → network · 23505 → conflict · check/FK/not-null/format/raise/unstorable text
+ * and HTTP 413 → validation (server text when readable) · P0002/PGRST116 → not_found ·
+ * 42501 → permission · PGRST30x/JWT → auth · missing schema, deadlock/serialization/timeout and
+ * anything else → unknown (retryable), with a message saying which.
  */
 export function toRepositoryError(error: unknown, status?: number): RepositoryError {
   if (error instanceof RepositoryError) return error
@@ -196,6 +202,7 @@ export function toRepositoryError(error: unknown, status?: number): RepositoryEr
   if (/^PGRST30\d$/.test(code) || /\bjwt\b/i.test(message) || status === 401) {
     return new RepositoryError('auth', 'Your session has expired. Sign in again.', error)
   }
+  if (status === 413) return new RepositoryError('validation', TOO_LARGE_MESSAGE, error)
   if (code === '42501' || status === 403) {
     return new RepositoryError(
       'permission',
@@ -353,43 +360,72 @@ export class SupabaseRepository implements Repository {
   }
 
   /**
-   * One row per user (user_id defaults to auth.uid()). `fields`: only those columns are sent, so
-   * on an existing row ON CONFLICT updates just them. `onlyIfMissing`: ON CONFLICT DO NOTHING, then
-   * the existing row is read back.
+   * One row per user (user_id defaults to auth.uid()). `fields`: an UPDATE of just those columns
+   * of the caller's row (other devices' newer values of the rest stay); when there is no row yet,
+   * it is created from the whole value. `onlyIfMissing`: ON CONFLICT DO NOTHING, then the existing
+   * row is read back. Otherwise: an upsert of every column.
    */
   async upsertPreferences(
     preferences: Preferences,
     options: UpsertPreferencesOptions = {},
   ): Promise<Preferences> {
-    const table = () => this.client.from('user_preferences')
     if (options.onlyIfMissing) {
-      const inserted = check(
-        await execute(
-          table()
-            .upsert(preferencesToRow(preferences), {
-              onConflict: 'user_id',
-              ignoreDuplicates: true,
-            })
-            .select(),
-        ),
+      const inserted = await this.insertPreferencesIfMissing(preferences)
+      if (inserted) return inserted
+      const existing = this.firstPreferences(
+        check(await execute(this.client.from('user_preferences').select('*').limit(1))),
       )
-      if (Array.isArray(inserted) && inserted.length > 0) {
-        return preferencesFromRow(inserted[0] as PreferencesRow)
-      }
-      const existing = check(await execute(table().select('*').limit(1)))
-      if (Array.isArray(existing) && existing.length > 0) {
-        return preferencesFromRow(existing[0] as PreferencesRow)
-      }
+      if (existing) return existing
       // Removed in between: store this value after all.
     }
-    const values =
-      options.fields && options.fields.length > 0
-        ? preferencesFieldsToRow(preferences, options.fields)
-        : preferencesToRow(preferences)
+    if (options.fields && options.fields.length > 0) {
+      const changes = preferencesFieldsToRow(preferences, options.fields)
+      const updated = await this.updatePreferences(changes)
+      if (updated) return updated
+      // No row yet: create it from the whole value. If another device created it in between,
+      // change just these columns on that row after all.
+      const inserted = await this.insertPreferencesIfMissing(preferences)
+      if (inserted) return inserted
+      const raced = await this.updatePreferences(changes)
+      if (raced) return raced
+      throw new RepositoryError('not_found', NOT_FOUND_MESSAGES.user_preferences)
+    }
     const result = await execute(
-      table().upsert(values, { onConflict: 'user_id' }).select().single(),
+      this.client
+        .from('user_preferences')
+        .upsert(preferencesToRow(preferences), { onConflict: 'user_id' })
+        .select()
+        .single(),
     )
     return preferencesFromRow(check(result) as PreferencesRow)
+  }
+
+  private firstPreferences(rows: unknown): Preferences | null {
+    return Array.isArray(rows) && rows.length > 0
+      ? preferencesFromRow(rows[0] as PreferencesRow)
+      : null
+  }
+
+  /** INSERT … ON CONFLICT (user_id) DO NOTHING: the stored row, or null when one existed. */
+  private async insertPreferencesIfMissing(preferences: Preferences): Promise<Preferences | null> {
+    const query = this.client
+      .from('user_preferences')
+      .upsert(preferencesToRow(preferences), { onConflict: 'user_id', ignoreDuplicates: true })
+      .select()
+    return this.firstPreferences(check(await execute(query)))
+  }
+
+  /**
+   * UPDATE of the caller's row (RLS limits it to that row; the filter is only there because
+   * PostgREST may refuse an UPDATE without one). Null when the account has no row.
+   */
+  private async updatePreferences(changes: object): Promise<Preferences | null> {
+    const query = this.client
+      .from('user_preferences')
+      .update(changes)
+      .not('user_id', 'is', null)
+      .select()
+    return this.firstPreferences(check(await execute(query)))
   }
 
   async importWorkspace(data: BackupData): Promise<ImportSummary> {
@@ -408,27 +444,29 @@ export class SupabaseRepository implements Repository {
   // -------------------------------------------------------------------------
 
   /**
-   * Every row of a table (RLS limits it to the signed-in user), paged with `.range()` in a
-   * stable order. The first page asks for the exact count, so a server `max_rows` lower than
-   * PAGE_SIZE never truncates silently.
+   * Every row of a table (RLS limits it to the signed-in user), in pages of `.range()` ordered by
+   * `orderBy`. Each page starts after the last key of the previous one (keyset paging), so rows
+   * another device adds or deletes meanwhile never shift a row out of the pages read. The first
+   * page asks for the exact count, so a server `max_rows` lower than PAGE_SIZE never truncates
+   * silently.
    */
   private async selectAll<Row>(table: TableName, orderBy = 'id'): Promise<Row[]> {
     const rows: Row[] = []
     let total: number | null = null
+    let after: unknown = null
     for (;;) {
-      const from = rows.length
+      const first = rows.length === 0
+      let query = this.client.from(table).select('*', first ? { count: 'exact' } : undefined)
+      if (!first) query = query.gt(orderBy, after)
       const result = await execute(
-        this.client
-          .from(table)
-          .select('*', from === 0 ? { count: 'exact' } : undefined)
-          .order(orderBy, { ascending: true })
-          .range(from, from + PAGE_SIZE - 1),
+        query.order(orderBy, { ascending: true }).range(0, PAGE_SIZE - 1),
       )
       const page = (check(result) ?? []) as Row[]
-      if (from === 0 && typeof result.count === 'number') total = result.count
+      if (first && typeof result.count === 'number') total = result.count
       rows.push(...page)
       if (page.length === 0) break
       if (total !== null ? rows.length >= total : page.length < PAGE_SIZE) break
+      after = (page[page.length - 1] as Record<string, unknown>)[orderBy]
     }
     return rows
   }

@@ -3,6 +3,7 @@ import {
   findContainer,
   groupContainerId,
   isGroupContainerId,
+  mayPreviewSwitch,
   moveToContainer,
   moveToGroupEnd,
   neighbours,
@@ -12,6 +13,7 @@ import {
   resolveTopLevelDrop,
   stepMove,
   subtaskContainerId,
+  SWITCH_DISTANCE,
   type Containers,
 } from './listDnd'
 
@@ -172,6 +174,26 @@ describe('resolveSubtaskDrop', () => {
     expect(resolveSubtaskDrop({ taskId: 's1', siblings: ['s1', 's2'], overId: 'other' })).toBeNull()
     expect(resolveSubtaskDrop({ taskId: 's1', siblings: ['s1', 's2'], overId: null })).toBeNull()
     expect(resolveSubtaskDrop({ taskId: 'x', siblings: ['s1', 's2'], overId: 's1' })).toBeNull()
+  })
+})
+
+describe('mayPreviewSwitch (no bouncing between groups)', () => {
+  it('allows the first switch of a drag', () => {
+    expect(mayPreviewSwitch(null, { x: 0, y: 0 })).toBe(true)
+  })
+
+  it('ignores switches the layout caused while the pointer stood still', () => {
+    // A switch moved rows under a still pointer: the next "over" change is the layout's doing.
+    expect(mayPreviewSwitch({ x: 0, y: -40 }, { x: 0, y: -40 })).toBe(false)
+    expect(mayPreviewSwitch({ x: 0, y: -40 }, { x: 2, y: -43 })).toBe(false)
+  })
+
+  it('switches again once the pointer travelled SWITCH_DISTANCE on either axis', () => {
+    expect(SWITCH_DISTANCE).toBe(4)
+    expect(mayPreviewSwitch({ x: 0, y: -40 }, { x: 0, y: -44 })).toBe(true)
+    expect(mayPreviewSwitch({ x: 0, y: -40 }, { x: 0, y: -36 })).toBe(true)
+    expect(mayPreviewSwitch({ x: 0, y: -40 }, { x: 5, y: -40 })).toBe(true)
+    expect(mayPreviewSwitch({ x: 0, y: 0 }, { x: 0, y: 3 }, 8)).toBe(false)
   })
 })
 

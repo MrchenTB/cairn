@@ -37,3 +37,13 @@ export const notify = {
     toast.dismiss(id)
   },
 }
+
+/**
+ * True when `target` is inside the toast stack. Overlays use it so that using a toast's action
+ * (Retry, Undo, Open…) never counts as a click outside that dismisses them.
+ */
+export function isToastTarget(target: EventTarget | null): boolean {
+  return typeof Element !== 'undefined' && target instanceof Element
+    ? target.closest('[data-sonner-toaster]') !== null
+    : false
+}

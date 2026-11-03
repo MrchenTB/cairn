@@ -365,6 +365,35 @@ export function keyboardTarget(
   return nearestCard(candidates, centreY, rectOf) ?? columnDroppableId(target)
 }
 
+/**
+ * Arrow-key focus movement between cards while NOT dragging: up/down = the previous/next card of
+ * the same column (null at its ends); left/right = the nearest column in that direction that has
+ * cards, at the same position (or its last card when it is shorter). Null when there is nowhere
+ * to go or the card is unknown.
+ */
+export function focusTarget(
+  columns: BoardColumnIds,
+  taskId: string,
+  direction: BoardDirection,
+): string | null {
+  const column = findColumn(columns, taskId)
+  if (!column || parseColumnDroppableId(taskId)) return null
+  const index = columns[column].indexOf(taskId)
+  if (direction === 'up' || direction === 'down') {
+    return columns[column][index + (direction === 'down' ? 1 : -1)] ?? null
+  }
+  const step = direction === 'right' ? 1 : -1
+  for (
+    let c = BOARD_COLUMNS.indexOf(column) + step;
+    c >= 0 && c < BOARD_COLUMNS.length;
+    c += step
+  ) {
+    const ids = columns[BOARD_COLUMNS[c]]
+    if (ids.length > 0) return ids[Math.min(index, ids.length - 1)]
+  }
+  return null
+}
+
 /** 1-based position of `id` in its column plus the column size (for announcements). */
 export function positionIn(
   columns: BoardColumnIds,

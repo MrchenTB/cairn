@@ -1,4 +1,4 @@
-import { memo, useId, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { memo, useId, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
@@ -41,7 +41,14 @@ import {
   type TaskStatus,
 } from '@/domain/types'
 import { cn } from '@/lib/utils'
-import { describeCard, type ColumnStep } from './boardModel'
+import { describeCard, type BoardDirection, type ColumnStep } from './boardModel'
+
+const ARROW_DIRECTIONS: Partial<Record<string, BoardDirection>> = {
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+}
 
 /** Card surface shared by the sortable card and the drag overlay (design §5.5). */
 const cardSurface = 'relative rounded-lg border border-default bg-surface px-3 py-2.5 select-none'
@@ -226,13 +233,14 @@ function CardMenu({
   )
 }
 
-export interface SortableBoardCardProps {
+interface SortableCardBodyProps {
   task: Task
   phase: Phase | null
   subtasksDone: number
   subtasksTotal: number
   showPhase: boolean
-  today: ISODate
+  /** The card is the drag placeholder (content hidden, layout kept). */
+  hidden: boolean
   isFirst: boolean
   isLast: boolean
   onOpen: (taskId: string) => void
@@ -242,10 +250,61 @@ export interface SortableBoardCardProps {
 }
 
 /**
+ * The visible card with its status and ⋯ menus, memoised apart from the sortable wrapper:
+ * dnd-kit re-renders every sortable item on each pointer move, and this keeps that work down to
+ * the wrapper's transform (the menus are the expensive part on boards with hundreds of cards).
+ */
+const SortableCardBody = memo(function SortableCardBody({
+  task,
+  phase,
+  subtasksDone,
+  subtasksTotal,
+  showPhase,
+  hidden,
+  isFirst,
+  isLast,
+  onOpen,
+  onStatusChange,
+  onPriorityChange,
+  onStep,
+}: SortableCardBodyProps) {
+  return (
+    <CardContent
+      task={task}
+      phase={phase}
+      subtasksDone={subtasksDone}
+      subtasksTotal={subtasksTotal}
+      showPhase={showPhase}
+      hidden={hidden}
+      status={
+        <StatusMenu value={task.status} onChange={(status) => onStatusChange(task.id, status)} />
+      }
+      actions={
+        <CardMenu
+          title={task.title}
+          priority={task.priority}
+          canMoveUp={!isFirst}
+          canMoveDown={!isLast}
+          onOpen={() => onOpen(task.id)}
+          onPriorityChange={(priority) => onPriorityChange(task.id, priority)}
+          onStep={(step) => onStep(task.id, step)}
+        />
+      }
+    />
+  )
+})
+
+export interface SortableBoardCardProps extends Omit<SortableCardBodyProps, 'hidden'> {
+  today: ISODate
+  onNavigate: (taskId: string, direction: BoardDirection) => void
+}
+
+/**
  * A draggable board card. The whole card is one activator (`role="button"`): click or Enter opens
- * the Task Modal, Space picks it up for keyboard dragging, a pointer drag moves it. The status
- * menu and the ⋯ menu sit above the activator as sibling controls (no nested interactive
- * elements) and never start a drag.
+ * the Task Modal, Space picks it up for keyboard dragging, a pointer drag moves it, and the arrow
+ * keys (while nothing is being dragged) move focus to the neighbouring cards. The status menu and
+ * the ⋯ menu sit above the activator as sibling controls (no nested interactive elements) and
+ * never start a drag.
  */
 export const SortableBoardCard = memo(function SortableBoardCard({
   task,
@@ -257,6 +316,7 @@ export const SortableBoardCard = memo(function SortableBoardCard({
   isFirst,
   isLast,
   onOpen,
+  onNavigate,
   onStatusChange,
   onPriorityChange,
   onStep,
@@ -269,6 +329,7 @@ export const SortableBoardCard = memo(function SortableBoardCard({
     transform,
     transition,
     isDragging,
+    isSorting,
   } = useSortable({
     id: task.id,
     data: { type: 'card' },
@@ -276,18 +337,32 @@ export const SortableBoardCard = memo(function SortableBoardCard({
     transition: SORTABLE_TRANSITION,
   })
   const descriptionId = useId()
-  const description = describeCard(
-    { task, phase, subtasks: { done: subtasksDone, total: subtasksTotal } },
-    today,
-    { showPhase },
+  const description = useMemo(
+    () =>
+      describeCard({ task, phase, subtasks: { done: subtasksDone, total: subtasksTotal } }, today, {
+        showPhase,
+      }),
+    [task, phase, subtasksDone, subtasksTotal, today, showPhase],
   )
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     listeners?.onKeyDown?.(event)
-    if (event.defaultPrevented || isDragging || event.target !== event.currentTarget) return
-    if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+    if (event.defaultPrevented || event.target !== event.currentTarget) return
+    const direction = ARROW_DIRECTIONS[event.key]
+    if (isDragging || isSorting) {
+      // The arrow keys belong to the drag (dnd-kit's keyboard sensor); never scroll the board.
+      if (direction) event.preventDefault()
+      return
+    }
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Enter') {
       event.preventDefault()
       onOpen(task.id)
+      return
+    }
+    if (direction && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      event.preventDefault() // no page scroll; focusing the target scrolls it into view
+      onNavigate(task.id, direction)
     }
   }
 
@@ -318,27 +393,19 @@ export const SortableBoardCard = memo(function SortableBoardCard({
         // Base :focus-visible ring, drawn inside the card edge (columns clip overflow).
         className={cn('absolute -inset-px rounded-lg', insetFocus)}
       />
-      <CardContent
+      <SortableCardBody
         task={task}
         phase={phase}
         subtasksDone={subtasksDone}
         subtasksTotal={subtasksTotal}
         showPhase={showPhase}
         hidden={isDragging}
-        status={
-          <StatusMenu value={task.status} onChange={(status) => onStatusChange(task.id, status)} />
-        }
-        actions={
-          <CardMenu
-            title={task.title}
-            priority={task.priority}
-            canMoveUp={!isFirst}
-            canMoveDown={!isLast}
-            onOpen={() => onOpen(task.id)}
-            onPriorityChange={(priority) => onPriorityChange(task.id, priority)}
-            onStep={(step) => onStep(task.id, step)}
-          />
-        }
+        isFirst={isFirst}
+        isLast={isLast}
+        onOpen={onOpen}
+        onStatusChange={onStatusChange}
+        onPriorityChange={onPriorityChange}
+        onStep={onStep}
       />
       {/* Hidden but referenced: read as the card's description, not again as loose text. */}
       {description ? (

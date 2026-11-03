@@ -9,6 +9,7 @@ import {
   describeCard,
   entryIndex,
   findColumn,
+  focusTarget,
   keyboardTarget,
   moveCardInColumns,
   moveForBoardDrop,
@@ -302,9 +303,9 @@ describe('entryIndex (a card dragged in from another column)', () => {
   })
 
   it('an empty column or an unknown target appends', () => {
-    expect(entryIndex([], columnDroppableId('done'), { top: 0, height: 800 }, { pointerY: 5 })).toBe(
-      0,
-    )
+    expect(
+      entryIndex([], columnDroppableId('done'), { top: 0, height: 800 }, { pointerY: 5 }),
+    ).toBe(0)
     expect(entryIndex(ids, columnDroppableId('in_progress'), null, { pointerY: 5 })).toBe(2)
     expect(entryIndex(ids, 'zz', f, { pointerY: 5 })).toBe(2)
     expect(entryIndex(ids, 'f', null, { pointerY: 5 })).toBe(2)
@@ -342,6 +343,35 @@ describe('keyboardTarget', () => {
     const moved: BoardColumnIds = { todo: ['a', 'c', 'e'], in_progress: ['b'], done: ['f'] }
     expect(keyboardTarget(moved, 'f', columnDroppableId('done'), 'down', 0, rectOf)).toBeNull()
     expect(keyboardTarget(moved, 'f', columnDroppableId('done'), 'left', 0, rectOf)).toBe('b')
+  })
+})
+
+describe('focusTarget (arrow keys between cards, not dragging)', () => {
+  it('moves up and down inside the column and stops at its ends', () => {
+    expect(focusTarget(columns, 'c', 'up')).toBe('a')
+    expect(focusTarget(columns, 'c', 'down')).toBe('e')
+    expect(focusTarget(columns, 'a', 'up')).toBeNull()
+    expect(focusTarget(columns, 'e', 'down')).toBeNull()
+  })
+
+  it('moves sideways to the same position, or the last card of a shorter column', () => {
+    expect(focusTarget(columns, 'a', 'right')).toBe('b')
+    expect(focusTarget(columns, 'e', 'right')).toBe('f')
+    expect(focusTarget(columns, 'f', 'left')).toBe('c')
+    expect(focusTarget(columns, 'a', 'left')).toBeNull()
+  })
+
+  it('skips empty columns and stops at the edge', () => {
+    const gapped: BoardColumnIds = { todo: ['a', 'c'], in_progress: [], done: ['x'] }
+    expect(focusTarget(gapped, 'c', 'right')).toBe('x')
+    expect(focusTarget(gapped, 'x', 'left')).toBe('a')
+    // Done is the last column (and In Progress is empty here).
+    expect(focusTarget(columns, 'f', 'right')).toBeNull()
+  })
+
+  it('returns null for unknown cards and column ids', () => {
+    expect(focusTarget(columns, 'zz', 'down')).toBeNull()
+    expect(focusTarget(columns, columnDroppableId('todo'), 'right')).toBeNull()
   })
 })
 
