@@ -40,9 +40,8 @@ function dateText(start: ISODate | null, due: ISODate | null, today: ISODate): s
 export function RescheduleDialogHost() {
   const active = useRescheduleStore((s) => s.active)
   // Keep the last request rendered while the dialog animates out.
-  const lastRef = useRef<ActiveReschedule | null>(null)
-  if (active) lastRef.current = active
-  const shown = active ?? lastRef.current
+  const [shown, setShown] = useState<ActiveReschedule | null>(null)
+  if (active && shown !== active) setShown(active)
   return (
     <Dialog
       open={active !== null}
@@ -58,14 +57,22 @@ export function RescheduleDialogHost() {
 function RescheduleDialogContent({ active }: { active: ActiveReschedule }) {
   const data = useWorkspaceData()
   const today = useToday()
-  const plan = useMemo(() => computeReschedulePlan(active.request, data), [active.request, data])
+  const livePlan = useMemo(
+    () => computeReschedulePlan(active.request, data),
+    [active.request, data],
+  )
   const [busy, setBusy] = useState<RescheduleDecision | null>(null)
+  // While the chosen write is in flight the optimistic update already moved the tasks, so a live
+  // recompute would show "nothing to move": keep showing exactly what is being written.
+  const [frozen, setFrozen] = useState<ReschedulePlan | null>(null)
+  const plan = frozen ?? livePlan
   const [error, setError] = useState<string | null>(null)
   const primaryRef = useRef<HTMLButtonElement>(null)
 
   const run = async (decision: RescheduleDecision) => {
     if (busy) return
     setBusy(decision)
+    setFrozen(plan)
     setError(null)
     const writes = decision === 'only' && plan.change ? [plan.change] : plan.writes
     const result = await active.execute(decision, writes)
@@ -73,6 +80,7 @@ function RescheduleDialogContent({ active }: { active: ActiveReschedule }) {
       active.settle({ status: 'written', decision })
     } else if (result.error.kind === 'validation') {
       setError(result.error.message)
+      setFrozen(null)
       setBusy(null)
     } else {
       // The store rolled the change back and showed "Couldn't save · Retry".
@@ -236,8 +244,9 @@ function summaryFor(
     if (!predecessor || !successor) return 'The dependency was removed meanwhile.'
     return `“${successor.title}” has to start after “${predecessor.title}” finishes. Auto mode can move ${plural(plan.shifts.length, 'task')} later.`
   }
-  return plan.shifts.length > 0
-    ? `${plural(plan.shifts.length, 'task')} move later so every successor starts after its predecessors finish.`
+  const count = plan.shifts.length
+  return count > 0
+    ? `${plural(count, 'task')} ${count === 1 ? 'moves' : 'move'} later so every successor starts after its predecessors finish.`
     : 'Nothing needs to move.'
 }
 

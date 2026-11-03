@@ -1,5 +1,14 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { Plus } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 import { insetFocus } from '@/components/ui/styles'
 import { cn } from '@/lib/utils'
 
@@ -25,11 +34,14 @@ export interface InlineCreateProps {
   icon?: ReactNode
   /** Keep the input open even when it is empty and loses focus (empty-state usage). */
   sticky?: boolean
+  /** Where the "Enter to add · Esc to cancel" hint goes (default: after the input). */
+  hint?: 'inline' | 'below'
 }
 
 /**
  * Quiet "+ Add …" row that turns into an input. Enter creates and keeps focus for rapid entry
- * (IME composition is respected), Esc cancels, blurring an empty input closes it.
+ * (IME composition is respected) — the input stays in view while new rows push it down —, Esc
+ * cancels, blurring an empty input closes it.
  */
 export function InlineCreate({
   label,
@@ -42,12 +54,17 @@ export function InlineCreate({
   className,
   icon,
   sticky = false,
+  hint = 'inline',
 }: InlineCreateProps) {
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
+  /** Bumped on every submit: the new row lands above the input, which then scrolls into view. */
+  const [submits, setSubmits] = useState(0)
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef(false)
   const errorId = useId()
+  const hintId = useId()
 
   useEffect(() => {
     if (!open && restoreFocus.current) {
@@ -55,6 +72,10 @@ export function InlineCreate({
       buttonRef.current?.focus()
     }
   }, [open])
+
+  useLayoutEffect(() => {
+    if (submits > 0) inputRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [submits])
 
   const close = (refocus: boolean) => {
     restoreFocus.current = refocus
@@ -73,6 +94,8 @@ export function InlineCreate({
     }
     setDraft('')
     setError(null)
+    // The optimistic row renders in this same tick; keep the input visible below it.
+    setSubmits((count) => count + 1)
     const message = await onSubmit(value)
     if (message) {
       setError(message)
@@ -116,15 +139,19 @@ export function InlineCreate({
     )
   }
 
+  const hintText = `Enter to add · Esc to ${sticky ? 'clear' : 'cancel'}`
   return (
     <div>
       <div className={cn('flex h-9 items-center gap-2', className)}>
-        <span className="flex size-4 shrink-0 items-center justify-center text-fg-tertiary" aria-hidden>
+        <span
+          className="flex size-4 shrink-0 items-center justify-center text-fg-tertiary"
+          aria-hidden
+        >
           {icon ?? <Plus className="size-4" strokeWidth={1.75} />}
         </span>
-        <input
+        <Input
+          ref={inputRef}
           autoFocus
-          type="text"
           value={draft}
           onChange={(event) => {
             setDraft(event.target.value)
@@ -137,21 +164,23 @@ export function InlineCreate({
           placeholder={placeholder}
           aria-label={inputLabel ?? label}
           aria-invalid={error ? true : undefined}
-          aria-describedby={error ? errorId : undefined}
+          aria-describedby={error ? errorId : hint === 'below' ? hintId : undefined}
           autoComplete="off"
-          className={cn(
-            'h-7 min-w-0 flex-1 rounded-md border border-input bg-surface px-2 text-ui text-fg',
-            'focus-visible:outline-2 focus-visible:outline-offset-[-1px] focus-visible:outline-focus',
-            'aria-invalid:border-danger aria-invalid:focus-visible:outline-danger',
-          )}
+          className="h-7 flex-1 px-2"
         />
-        <span className="hidden shrink-0 text-meta text-fg-tertiary sm:inline" aria-hidden>
-          Enter to add · Esc to {sticky ? 'clear' : 'cancel'}
-        </span>
+        {hint === 'inline' ? (
+          <span className="hidden shrink-0 text-meta text-fg-tertiary sm:inline" aria-hidden>
+            {hintText}
+          </span>
+        ) : null}
       </div>
       {error ? (
         <p id={errorId} role="alert" className={cn('pb-1.5 text-meta text-danger', className)}>
           <span className="pl-6">{error}</span>
+        </p>
+      ) : hint === 'below' ? (
+        <p id={hintId} className={cn('pb-1 text-meta text-fg-tertiary', className)}>
+          <span className="pl-6">{hintText}</span>
         </p>
       ) : null}
     </div>

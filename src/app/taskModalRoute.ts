@@ -23,12 +23,16 @@ export function useTaskParam(): string | null {
   return searchParams.get(TASK_PARAM) || null
 }
 
-/** Opens the Task Modal for a task on the current page (pushes history). */
+/**
+ * Opens the Task Modal for a task on the current page (pushes history). Opening the task that is
+ * already open does nothing, so Back never has to step through duplicate entries.
+ */
 export function useOpenTask(): (taskId: string) => void {
   const navigate = useNavigate()
   const { pathname, search, hash } = useLocation()
   return useCallback(
     (taskId: string) => {
+      if (!taskId || new URLSearchParams(search).get(TASK_PARAM) === taskId) return
       navigate(
         { pathname, search: withTaskParam(search, taskId), hash },
         { preventScrollReset: true },

@@ -11,6 +11,7 @@ import type { SyncState } from './contracts'
 import { DEFAULT_PREFERENCES, EMPTY_WORKSPACE } from './defaults'
 import {
   syncIndicator,
+  useAuth,
   useMilestone,
   useMilestones,
   usePhase,
@@ -20,7 +21,7 @@ import {
   useTask,
   useToday,
 } from './hooks'
-import { useWorkspaceStore } from './store'
+import { useAuthStore, useWorkspaceStore } from './store'
 
 beforeEach(() => {
   useWorkspaceStore.setState({
@@ -146,5 +147,39 @@ describe('sync indicator', () => {
     useWorkspaceStore.setState({ sync: { ...sync, lastError: error, canRetry: true } })
     const { result } = renderHook(() => useSyncIndicator())
     expect(result.current).toEqual({ indicator: 'error', canRetry: true })
+  })
+})
+
+describe('useAuth', () => {
+  it('exposes passwordRecovery (the "Set a new password" dialog reads it)', () => {
+    const initial = useAuthStore.getState()
+    const { result } = renderHook(() => useAuth())
+    expect(result.current).toMatchObject({ passwordRecovery: false, mode: initial.mode })
+    act(() => useAuthStore.setState({ passwordRecovery: true }))
+    expect(result.current.passwordRecovery).toBe(true)
+    act(() => useAuthStore.setState(initial, true))
+  })
+})
+
+describe('useToday clock', () => {
+  it('every due label shares one timer, stopped when the last one unmounts', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-02T03:00:00Z') })
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+    const clearIntervalSpy = vi.spyOn(window, 'clearInterval')
+    const hooks = Array.from({ length: 50 }, () => renderHook(() => useToday()))
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1)
+    for (const hook of hooks) hook.unmount()
+    expect(clearIntervalSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('a tab shown again (e.g. the next morning) re-checks the date at once', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-02T15:59:59Z') }) // 23:59:59 in Taipei
+    const { result } = renderHook(() => useToday())
+    expect(result.current).toBe('2026-11-02')
+    vi.setSystemTime(new Date('2026-11-03T00:30:00Z')) // timers were asleep (laptop closed)
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(result.current).toBe('2026-11-03')
   })
 })

@@ -128,9 +128,19 @@ function EditTaskFormBody({
   const allowNavigationRef = useRef(false)
   const savingRef = useRef(false)
   const latest = useRef({ task, edits, dirty })
+  // The latest onClose: a write that resolves later must not close with an old location.
+  const onCloseRef = useRef(onClose)
   useLayoutEffect(() => {
     latest.current = { task, edits, dirty }
+    onCloseRef.current = onClose
   })
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   // Focus the title with the caret at the end whenever this form appears.
   useEffect(() => {
@@ -147,8 +157,8 @@ function EditTaskFormBody({
 
   const closeNow = useCallback(() => {
     allowNavigationRef.current = true
-    onClose()
-  }, [onClose])
+    onCloseRef.current()
+  }, [])
 
   /** True when it is fine to leave this task (nothing unsaved, or the user chose Discard). */
   const confirmLeave = useCallback(async (): Promise<boolean> => {
@@ -216,6 +226,8 @@ function EditTaskFormBody({
       savingRef.current = false
       setSaving(false)
     }
+    // Closed (and maybe replaced by another task) while the write was in flight: nothing to do.
+    if (!mountedRef.current) return
     // Close unless more was typed while the write was in flight.
     const after = latest.current
     if (isUnchanged(diffTask(after.task, after.edits))) closeNow()
@@ -270,19 +282,25 @@ function EditTaskFormBody({
     }
   }
 
-  // Conflicts as they would be with the dates in the form (updates live while editing).
+  // Conflicts as they would be with the dates in the form (updates live while editing); a range
+  // that can't be saved (due before start) falls back to the saved dates.
   const tasksById = useMemo(
     () => Object.fromEntries(projectTasks.map((t) => [t.id, t])) as Record<string, Task>,
     [projectTasks],
   )
+  const datesEdited =
+    errors.dates === null &&
+    (values.startDate !== task.startDate || values.dueDate !== task.dueDate)
+  const plannedStart = datesEdited ? values.startDate : task.startDate
+  const plannedDue = datesEdited ? values.dueDate : task.dueDate
   const conflicts = useMemo(() => {
     const planned = projectTasks.map((t) =>
-      t.id === task.id ? { ...t, startDate: values.startDate, dueDate: values.dueDate } : t,
+      t.id === task.id ? { ...t, startDate: plannedStart, dueDate: plannedDue } : t,
     )
     return findConflicts(planned, dependencies).filter(
       (c) => c.successorId === task.id || c.predecessorId === task.id,
     )
-  }, [projectTasks, dependencies, task.id, values.startDate, values.dueDate])
+  }, [projectTasks, dependencies, task.id, plannedStart, plannedDue])
 
   const isSubtask = task.parentTaskId !== null
   const currentPhase = phases.find((phase) => phase.id === values.phaseId) ?? null
@@ -290,9 +308,7 @@ function EditTaskFormBody({
   const showTitleError = showErrors || edits.title !== undefined
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col"
-    >
+    <div className="flex min-h-0 flex-1 flex-col">
       <DialogTitle className="sr-only">{`Edit task: ${task.title}`}</DialogTitle>
       <ModalHeader
         onClose={() => void requestClose()}
@@ -360,7 +376,11 @@ function EditTaskFormBody({
           />
         </div>
 
-        <div role="group" aria-label="Properties" className="mt-4 flex flex-wrap items-center gap-1.5">
+        <div
+          role="group"
+          aria-label="Properties"
+          className="mt-4 flex flex-wrap items-center gap-1.5"
+        >
           <StatusMenu
             trigger="chip"
             value={values.status}
@@ -413,19 +433,28 @@ function EditTaskFormBody({
               conflicts={conflicts}
               tasksById={tasksById}
               today={today}
+              pending={datesEdited}
             />
           </div>
         ) : null}
 
-        <div className="mt-6 flex flex-col gap-5">
-          {!isSubtask ? (
-            <SubtasksSection
-              parent={task}
-              onOpenTask={openOther}
-              onDraftChange={setSubtaskDraft}
-            />
-          ) : null}
-          <DependenciesSection task={task} onOpenTask={openOther} />
+        {/* Not part of the Save form: every change below is written immediately. */}
+        <div className="mt-6 border-t border-subtle pt-3">
+          <p className="mb-2 text-meta text-fg-tertiary">
+            {isSubtask
+              ? 'Dependencies save right away.'
+              : 'Subtasks and dependencies save right away.'}
+          </p>
+          <div className="flex flex-col gap-5">
+            {!isSubtask ? (
+              <SubtasksSection
+                parent={task}
+                onOpenTask={openOther}
+                onDraftChange={setSubtaskDraft}
+              />
+            ) : null}
+            <DependenciesSection task={task} onOpenTask={openOther} />
+          </div>
         </div>
       </ModalBody>
 
@@ -434,15 +463,19 @@ function EditTaskFormBody({
           Cancel
         </Button>
         <Tooltip content="Save changes" shortcut="mod+enter" disabled={!canSave}>
-          <Button variant="primary" size="md" disabled={!canSave} loading={saving} onClick={() => void save()}>
+          <Button
+            variant="primary"
+            size="md"
+            disabled={!canSave}
+            loading={saving}
+            onClick={() => void save()}
+          >
             Save
           </Button>
         </Tooltip>
       </ModalFooter>
 
-      {dirty && exists ? (
-        <NavigationGuard taskId={task.id} allowRef={allowNavigationRef} />
-      ) : null}
+      {dirty && exists ? <NavigationGuard taskId={task.id} allowRef={allowNavigationRef} /> : null}
     </div>
   )
 }

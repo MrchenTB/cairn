@@ -14,13 +14,21 @@ export interface ConflictBannerProps {
   conflicts: readonly DependencyConflict[]
   tasksById: Record<string, Task>
   today: ISODate
+  /** The conflicts come from dates the user has not saved yet. */
+  pending?: boolean
 }
 
 /**
  * Dependency conflicts of this task with the date it (or its successor) should start, and a
  * link to the project Gantt where they can be reviewed and auto-scheduled.
  */
-export function ConflictBanner({ task, conflicts, tasksById, today }: ConflictBannerProps) {
+export function ConflictBanner({
+  task,
+  conflicts,
+  tasksById,
+  today,
+  pending = false,
+}: ConflictBannerProps) {
   if (conflicts.length === 0) return null
   const listed = conflicts.slice(0, MAX_LISTED)
   const hidden = conflicts.length - listed.length
@@ -40,6 +48,7 @@ export function ConflictBanner({ task, conflicts, tasksById, today }: ConflictBa
           {conflicts.length === 1
             ? 'Dependency conflict'
             : `${conflicts.length} dependency conflicts`}
+          {pending ? ' with these dates' : null}
         </p>
         <ul className="mt-0.5 space-y-0.5 text-fg-secondary">
           {listed.map((conflict) => {
@@ -56,8 +65,8 @@ export function ConflictBanner({ task, conflicts, tasksById, today }: ConflictBa
             const successor = tasksById[conflict.successorId]
             return (
               <li key={conflict.dependencyId}>
-                “{successor?.title ?? 'A blocked task'}” starts before this task finishes. It
-                should start on or after{' '}
+                “{successor?.title ?? 'A blocked task'}” starts before this task finishes. It should
+                start on or after{' '}
                 <span className="font-medium whitespace-nowrap text-fg">{required}</span>.
               </li>
             )

@@ -9,17 +9,10 @@ import { useAuth } from '@/data/hooks'
 import { AppSplash } from './AppSplash'
 import { AuthLayout, FormAlert } from './AuthLayout'
 import type { LoginRedirectState } from './AuthGate'
+import { safeReturnPath } from './loginRedirect'
 import { MIN_PASSWORD_LENGTH } from './passwordRules'
 
 type FormMode = 'sign-in' | 'sign-up'
-
-/** Only same-app paths are accepted as a post-login destination. */
-function safeTarget(from: string | undefined): string {
-  if (!from || !from.startsWith('/') || from.startsWith('//') || from.startsWith('/login')) {
-    return '/overview'
-  }
-  return from
-}
 
 interface Notice {
   title: string
@@ -241,7 +234,7 @@ export function LoginPage() {
   const from = (location.state as LoginRedirectState | null)?.from
 
   if (mode === 'local') return <Navigate to="/overview" replace />
-  if (status === 'signed_in') return <Navigate to={safeTarget(from)} replace />
+  if (status === 'signed_in') return <Navigate to={safeReturnPath(from)} replace />
   if (status === 'loading') return <AppSplash />
 
   return (

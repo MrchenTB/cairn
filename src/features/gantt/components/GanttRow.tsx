@@ -5,29 +5,16 @@
 import { memo, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { CalendarOff, ChevronRight } from 'lucide-react'
 import { DueLabel } from '@/components/task/DueLabel'
-import { STATUS_LABELS } from '@/components/task/labels'
 import { StatusIcon } from '@/components/task/StatusIcon'
 import { insetFocus } from '@/components/ui/styles'
 import { dueBucket } from '@/domain/buckets'
-import {
-  durationDays,
-  formatDate,
-  formatDateRange,
-  formatDateSmart,
-  fromEpochDay,
-} from '@/domain/dates'
-import type { ISODate, Task } from '@/domain/types'
+import { formatDate, formatDateRange, formatDateSmart, fromEpochDay } from '@/domain/dates'
+import type { ISODate } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { DUE_COLUMN_WIDTH, ROW_HEIGHT, SUBTASK_INDENT } from '../model/constants'
 import type { DragDates, DragMode } from '../model/dragReducer'
-import {
-  dayCenterX,
-  daySpanOf,
-  dayToX,
-  rangeRect,
-  type DaySpan,
-  type TimelineGeometry,
-} from '../model/geometry'
+import { dayCenterX, daySpanOf, dayToX, rangeRect, type TimelineGeometry } from '../model/geometry'
+import { barAriaLabel } from '../model/labels'
 import type { GanttRow, TaskRow } from '../model/rows'
 import type { DayRange } from '../model/scale'
 import {
@@ -35,7 +22,9 @@ import {
   DrawPreview,
   DueMarker,
   MilestoneDiamond,
+  PointGhost,
   RollupBracket,
+  ScheduleGhost,
   StartMarker,
   SubtaskRollupLine,
   TaskBar,
@@ -51,6 +40,12 @@ export interface RowOverride {
   origin: DragDates
 }
 
+/** Auto-schedule preview: where the open preview dialog would move this task. */
+export interface RowPreview {
+  dates: DragDates
+  deltaDays: number
+}
+
 export interface GanttRowViewProps {
   row: GanttRow
   index: number
@@ -60,9 +55,12 @@ export interface GanttRowViewProps {
   today: ISODate
   todayDay: number
   override: RowOverride | null
+  preview: RowPreview | null
   conflict: string | null
   linkState: LinkTargetState
   linkSource: boolean
+  /** The task / milestone open in the modal (row highlight). */
+  selected: boolean
   upcomingMilestone: boolean
   describedBy: string
   onToggle: (key: string) => void
@@ -81,30 +79,6 @@ function iso(day: number | null): ISODate | null {
 
 function rangeTitle(label: string, range: DayRange, today: ISODate): string {
   return `${label}: ${formatDateRange(fromEpochDay(range.start), fromEpochDay(range.end), today)}`
-}
-
-/** Accessible name of a bar/marker, e.g. "Design review, Nov 2 – Nov 5, 4 days, In Progress". */
-export function barAriaLabel(
-  task: Task,
-  span: DaySpan,
-  today: ISODate,
-  conflict: string | null,
-  overdue: boolean,
-): string {
-  const start = iso(span.start)
-  const end = iso(span.end)
-  const parts = [task.title]
-  if (span.kind === 'range' && start && end) {
-    parts.push(formatDateRange(start, end, today), plural(durationDays(start, end), 'day'))
-  } else if (span.kind === 'due_only') {
-    parts.push(formatDateRange(null, end, today), 'no start date')
-  } else if (span.kind === 'start_only') {
-    parts.push(formatDateRange(start, null, today), 'no due date')
-  }
-  parts.push(STATUS_LABELS[task.status])
-  if (overdue) parts.push('overdue')
-  if (conflict) parts.push(`dependency conflict: ${conflict}`)
-  return parts.join(', ')
 }
 
 function MilestoneGlyph({ past }: { past: boolean }) {
@@ -131,7 +105,15 @@ function MilestoneGlyph({ past }: { past: boolean }) {
   )
 }
 
+/*
+ * The outline cell sticks to the left edge over the timeline, so its base is opaque; hover and
+ * selection tint it with a background-image layer (under the content, never over the text).
+ */
 const cellBase = 'sticky left-0 z-[11] flex h-full shrink-0 items-center'
+const cellSurface =
+  'bg-(--gantt-bg) group-hover/row:bg-[linear-gradient(var(--gantt-row-hover),var(--gantt-row-hover))]'
+const cellSelected =
+  'bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))] shadow-[inset_2px_0_0_var(--accent)] group-hover/row:bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))]'
 const chevron = (open: boolean) =>
   cn(
     'size-3.5 shrink-0 text-fg-tertiary motion-safe:transition-transform motion-safe:duration-fast',
@@ -139,11 +121,12 @@ const chevron = (open: boolean) =>
   )
 
 function GanttRowViewImpl(props: GanttRowViewProps) {
-  const { row, index, paneWidth, timelineWidth } = props
+  const { row, index, paneWidth, timelineWidth, selected } = props
   const header = row.kind === 'group' || row.kind === 'unscheduled'
   return (
     <div
       data-row-index={index}
+      data-row-key={row.key}
       className="group/row absolute left-0 flex"
       style={{ top: index * ROW_HEIGHT, height: ROW_HEIGHT, width: paneWidth + timelineWidth }}
     >
@@ -153,8 +136,12 @@ function GanttRowViewImpl(props: GanttRowViewProps) {
         data-row-index={index}
         className={cn(
           'relative flex h-full shrink-0 items-center',
-          header ? 'bg-muted' : 'group-hover/row:bg-(--gantt-row-hover)',
-          row.kind === 'task' && row.drawable && 'cursor-crosshair',
+          header
+            ? 'bg-muted'
+            : selected
+              ? 'bg-(--gantt-row-selected)'
+              : 'group-hover/row:bg-(--gantt-row-hover)',
+          row.kind === 'task' && row.drawable && 'cursor-crosshair touch-none',
         )}
         style={{ width: timelineWidth }}
       >
@@ -169,6 +156,7 @@ function LeftCell({
   paneWidth,
   today,
   todayDay,
+  selected,
   onToggle,
   onOpenTask,
   onOpenMilestone,
@@ -204,7 +192,7 @@ function LeftCell({
     const past = row.day !== null && row.day < todayDay
     return (
       <div
-        className={cn(cellBase, 'gap-1.5 pr-3 group-hover/row:bg-(--gantt-row-hover)')}
+        className={cn(cellBase, 'gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
         style={{ width: paneWidth, paddingLeft: 12 }}
       >
         <span className="w-4 shrink-0" aria-hidden />
@@ -232,7 +220,7 @@ function LeftCell({
   const { task } = row
   return (
     <div
-      className={cn(cellBase, 'gap-1.5 pr-3 group-hover/row:bg-(--gantt-row-hover)')}
+      className={cn(cellBase, 'gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
       style={{ width: paneWidth, paddingLeft: 12 + row.depth * SUBTASK_INDENT }}
     >
       {row.subtaskCount > 0 ? (
@@ -265,13 +253,7 @@ function LeftCell({
         {task.title}
       </button>
       <span className="flex shrink-0 justify-end" style={{ width: DUE_COLUMN_WIDTH }}>
-        {task.dueDate ? (
-          <DueLabel dueDate={task.dueDate} status={task.status} />
-        ) : task.startDate ? (
-          <span className="truncate text-meta text-fg-tertiary tabular-nums">
-            Starts {formatDateSmart(task.startDate, today)}
-          </span>
-        ) : null}
+        <DueLabel dueDate={task.dueDate} status={task.status} />
       </span>
     </div>
   )
@@ -293,23 +275,21 @@ function Lane(props: GanttRowViewProps) {
         className="pointer-events-none sticky text-meta whitespace-nowrap text-fg-tertiary"
         style={{ left: paneWidth + 12 }}
       >
-        Drag across a row to schedule it · double-click for a one-day task
+        {row.collapsed
+          ? 'Tasks without dates'
+          : 'Drag across a row to schedule it · double-click for a one-day task'}
       </span>
     )
   }
   if (row.kind === 'milestone') {
     const day = props.override?.dates.start ?? row.day
     if (day === null) return null
-    const dragging = props.override?.mode != null
+    const moving = props.override !== null
     const origin = props.override?.origin.start ?? null
     return (
       <>
-        {dragging && origin !== null && origin !== day ? (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute z-[1] h-4 w-px border-l border-dashed border-(--gantt-drag-ghost-border)"
-            style={{ left: dayCenterX(origin, geometry), top: ROW_HEIGHT / 2 - 8 }}
-          />
+        {moving && origin !== null && origin !== day ? (
+          <PointGhost x={dayCenterX(origin, geometry)} />
         ) : null}
         <MilestoneDiamond
           milestoneId={row.milestone.id}
@@ -320,7 +300,7 @@ function Lane(props: GanttRowViewProps) {
           describedBy={props.describedBy}
           past={day < props.todayDay}
           upcoming={props.upcomingMilestone}
-          dragging={dragging}
+          dragging={props.override?.mode != null}
           onKeyDown={(event) => props.onBarKeyDown(event, row)}
         />
       </>
@@ -329,8 +309,22 @@ function Lane(props: GanttRowViewProps) {
   return <TaskLane {...props} row={row} />
 }
 
+function sameDates(a: DragDates, b: DragDates): boolean {
+  return a.start === b.start && a.end === b.end
+}
+
+/** Dashed outline where the task was before a drag (or a drop that awaits the planner). */
+function OriginGhost({ origin, geometry }: { origin: DragDates; geometry: TimelineGeometry }) {
+  if (origin.start !== null && origin.end !== null) {
+    return <DragGhost rect={rangeRect(origin.start, origin.end, geometry)} />
+  }
+  if (origin.end !== null) return <PointGhost x={dayCenterX(origin.end, geometry)} />
+  if (origin.start !== null) return <PointGhost x={dayToX(origin.start, geometry)} />
+  return null
+}
+
 function TaskLane(props: GanttRowViewProps & { row: TaskRow }) {
-  const { row, geometry, today, override, conflict, paneWidth } = props
+  const { row, geometry, today, override, preview, conflict, paneWidth } = props
   const { task } = row
   const span = override ? daySpanOf(override.dates) : row.span
   const dragging = override?.mode != null
@@ -349,10 +343,9 @@ function TaskLane(props: GanttRowViewProps & { row: TaskRow }) {
     onKeyDown,
   }
 
-  const origin = override?.origin
   const ghost =
-    dragging && origin && origin.start !== null && origin.end !== null ? (
-      <DragGhost rect={rangeRect(origin.start, origin.end, geometry)} />
+    override && override.mode !== 'draw' && !sameDates(override.origin, override.dates) ? (
+      <OriginGhost origin={override.origin} geometry={geometry} />
     ) : null
 
   let visual: ReactNode = null
@@ -363,7 +356,12 @@ function TaskLane(props: GanttRowViewProps & { row: TaskRow }) {
     )
   } else if (span.kind === 'range' && span.start !== null && span.end !== null) {
     visual = (
-      <TaskBar {...common} task={task} rect={rangeRect(span.start, span.end, geometry)} overdue={overdue} />
+      <TaskBar
+        {...common}
+        task={task}
+        rect={rangeRect(span.start, span.end, geometry)}
+        overdue={overdue}
+      />
     )
   } else if (span.kind === 'due_only' && span.end !== null) {
     visual = (
@@ -403,10 +401,23 @@ function TaskLane(props: GanttRowViewProps & { row: TaskRow }) {
     )
   }
 
+  let scheduleGhost: ReactNode = null
+  if (preview) {
+    const { start, end: previewEnd } = preview.dates
+    const label = `+${preview.deltaDays}d`
+    if (start !== null && previewEnd !== null) {
+      scheduleGhost = <ScheduleGhost rect={rangeRect(start, previewEnd, geometry)} label={label} />
+    } else if (start !== null || previewEnd !== null) {
+      const day = (previewEnd ?? start) as number
+      scheduleGhost = <ScheduleGhost rect={rangeRect(day, day, geometry)} label={label} />
+    }
+  }
+
   return (
     <>
       {ghost}
       {visual}
+      {scheduleGhost}
       {row.subtaskRollup && span.kind !== 'unscheduled' ? (
         <SubtaskRollupLine
           rect={rangeRect(row.subtaskRollup.start, row.subtaskRollup.end, geometry)}

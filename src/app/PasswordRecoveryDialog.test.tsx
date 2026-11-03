@@ -1,5 +1,6 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ConfirmHost } from '@/components/ui/confirm'
 import type { AuthState } from '@/data/contracts'
 import { useAuthStore } from '@/data/store'
 import type { Result } from '@/domain/types'
@@ -166,5 +167,54 @@ describe('PasswordRecoveryDialog', () => {
     act(() => useAuthStore.setState({ passwordRecovery: true }))
     await user.click(await screen.findByRole('button', { name: 'Not now' }))
     expect(actions.dismissPasswordRecovery).toHaveBeenCalledTimes(2)
+  })
+
+  it('asks before Esc discards a typed password', async () => {
+    const { user } = renderUI(
+      <>
+        <PasswordRecoveryDialog />
+        <ConfirmHost />
+      </>,
+    )
+    await user.type(screen.getByLabelText('New password'), 'sunrise')
+    await user.keyboard('{Escape}')
+    const ask = await screen.findByRole('alertdialog', { name: 'Discard the new password?' })
+    expect(actions.dismissPasswordRecovery).not.toHaveBeenCalled()
+
+    await user.click(within(ask).getByRole('button', { name: 'Keep editing' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog', { name: 'Set a new password' })).toBeInTheDocument()
+    expect(screen.getByLabelText('New password')).toHaveValue('sunrise')
+    await waitFor(() => expect(screen.getByLabelText('New password')).toHaveFocus())
+
+    await user.keyboard('{Escape}')
+    await user.click(await screen.findByRole('button', { name: 'Discard' }))
+    expect(actions.dismissPasswordRecovery).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('ignores Esc while the new password is being saved', async () => {
+    let finish: (result: Result) => void = () => {}
+    vi.mocked(actions.updatePassword).mockImplementationOnce(
+      () => new Promise<Result>((resolve) => (finish = resolve)),
+    )
+    const { user } = renderUI(
+      <>
+        <PasswordRecoveryDialog />
+        <ConfirmHost />
+      </>,
+    )
+    await user.type(screen.getByLabelText('New password'), 'sunrise-42')
+    await user.type(screen.getByLabelText('Confirm new password'), 'sunrise-42{Enter}')
+    expect(screen.getByRole('button', { name: 'Update password' })).toHaveAttribute('aria-busy')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Set a new password' })).toBeInTheDocument()
+    expect(actions.dismissPasswordRecovery).not.toHaveBeenCalled()
+
+    await act(async () =>
+      finish({ ok: false, error: { kind: 'network', message: 'You appear to be offline.' } }),
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('You appear to be offline.')
   })
 })

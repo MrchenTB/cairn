@@ -11,6 +11,7 @@ import {
   SquareArrowOutUpRight,
 } from 'lucide-react'
 import { DueLabel } from '@/components/task/DueLabel'
+import { PRIORITY_LABELS } from '@/components/task/labels'
 import { PriorityIcon } from '@/components/task/PriorityIcon'
 import { StatusIcon } from '@/components/task/StatusIcon'
 import { StatusMenu } from '@/components/task/StatusMenu'
@@ -20,13 +21,25 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { insetFocus } from '@/components/ui/styles'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { ISODate, Phase, Task, TaskStatus } from '@/domain/types'
+import {
+  TASK_PRIORITIES,
+  type ISODate,
+  type Phase,
+  type Task,
+  type TaskPriority,
+  type TaskStatus,
+} from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { describeCard, type ColumnStep } from './boardModel'
 
@@ -111,14 +124,27 @@ function CardContent({
 
 interface CardMenuProps {
   title: string
+  priority: TaskPriority
   canMoveUp: boolean
   canMoveDown: boolean
   onOpen: () => void
+  onPriorityChange: (priority: TaskPriority) => void
   onStep: (step: ColumnStep) => void
 }
 
-/** ⋯ menu: open the task, or reorder it in its column without dragging (WCAG 2.5.7). */
-function CardMenu({ title, canMoveUp, canMoveDown, onOpen, onStep }: CardMenuProps) {
+/**
+ * ⋯ menu: open the task, set its priority, or reorder it in its column without dragging
+ * (WCAG 2.5.7). The status — the card's column — has its own menu on the card.
+ */
+function CardMenu({
+  title,
+  priority,
+  canMoveUp,
+  canMoveDown,
+  onOpen,
+  onPriorityChange,
+  onStep,
+}: CardMenuProps) {
   // Opening the Task Modal moves focus into the dialog; don't pull it back to this trigger.
   const opening = useRef(false)
   return (
@@ -153,6 +179,30 @@ function CardMenu({ title, canMoveUp, canMoveDown, onOpen, onStep }: CardMenuPro
           Open task
           <DropdownMenuShortcut aria-hidden>↵</DropdownMenuShortcut>
         </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <PriorityIcon priority={priority} decorative />
+            Priority
+            <span className="ml-auto pl-3 text-meta text-fg-tertiary">
+              {PRIORITY_LABELS[priority]}
+            </span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-48">
+            <DropdownMenuRadioGroup
+              value={priority}
+              onValueChange={(next) => {
+                if (next !== priority) onPriorityChange(next as TaskPriority)
+              }}
+            >
+              {TASK_PRIORITIES.map((option) => (
+                <DropdownMenuRadioItem key={option} value={option}>
+                  <PriorityIcon priority={option} decorative />
+                  {PRIORITY_LABELS[option]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Move in column</DropdownMenuLabel>
         <DropdownMenuItem disabled={!canMoveUp} onSelect={() => onStep('top')}>
@@ -187,6 +237,7 @@ export interface SortableBoardCardProps {
   isLast: boolean
   onOpen: (taskId: string) => void
   onStatusChange: (taskId: string, status: TaskStatus) => void
+  onPriorityChange: (taskId: string, priority: TaskPriority) => void
   onStep: (taskId: string, step: ColumnStep) => void
 }
 
@@ -207,6 +258,7 @@ export const SortableBoardCard = memo(function SortableBoardCard({
   isLast,
   onOpen,
   onStatusChange,
+  onPriorityChange,
   onStep,
 }: SortableBoardCardProps) {
   const {
@@ -279,15 +331,18 @@ export const SortableBoardCard = memo(function SortableBoardCard({
         actions={
           <CardMenu
             title={task.title}
+            priority={task.priority}
             canMoveUp={!isFirst}
             canMoveDown={!isLast}
             onOpen={() => onOpen(task.id)}
+            onPriorityChange={(priority) => onPriorityChange(task.id, priority)}
             onStep={(step) => onStep(task.id, step)}
           />
         }
       />
+      {/* Hidden but referenced: read as the card's description, not again as loose text. */}
       {description ? (
-        <span id={descriptionId} className="sr-only">
+        <span id={descriptionId} hidden>
           {description}
         </span>
       ) : null}

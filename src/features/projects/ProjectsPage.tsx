@@ -43,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Input } from '@/components/ui/input'
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/segmented-control'
 import { insetFocus } from '@/components/ui/styles'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -276,7 +277,7 @@ function FilterInput({
         className="pointer-events-none absolute left-2 size-3.5 text-fg-tertiary"
         strokeWidth={1.75}
       />
-      <input
+      <Input
         ref={inputRef}
         type="search"
         value={value}
@@ -285,12 +286,8 @@ function FilterInput({
         placeholder="Filter projects…"
         aria-label="Filter projects by name or description"
         aria-keyshortcuts="/"
-        className={cn(
-          'h-7 w-52 rounded-md border border-input bg-surface pr-7 pl-7 text-ui text-fg',
-          'transition-[border-color] duration-fast hover:border-strong',
-          'focus-visible:outline-2 focus-visible:outline-offset-[-1px] focus-visible:outline-focus',
-          '[&::-webkit-search-cancel-button]:hidden',
-        )}
+        autoComplete="off"
+        className="h-7 w-40 pr-7 pl-7 lg:w-52 [&::-webkit-search-cancel-button]:hidden"
       />
       {value ? (
         <button
@@ -552,7 +549,14 @@ function ProjectRow({
               isDragging && 'opacity-0',
             )}
           >
-            {dates || <span className="text-fg-tertiary">—</span>}
+            {dates || (
+              <>
+                <span className="text-fg-tertiary" aria-hidden>
+                  —
+                </span>
+                <span className="sr-only">No dates</span>
+              </>
+            )}
           </div>
           <div
             role="cell"
@@ -562,13 +566,21 @@ function ProjectRow({
             )}
           >
             {total === 0 ? (
-              <span className="text-fg-tertiary" aria-label="No tasks">
-                —
-              </span>
+              <>
+                <span className="text-fg-tertiary" aria-hidden>
+                  —
+                </span>
+                <span className="sr-only">No tasks</span>
+              </>
             ) : (
-              <span aria-label={`${open} open of ${plural(total, 'task')}`}>
-                <span className="text-fg-secondary">{open}</span>
-                <span className="text-fg-tertiary"> / {total}</span>
+              <span title={`${open} open of ${plural(total, 'task')} (subtasks included)`}>
+                <span className="sr-only">
+                  {open} open of {plural(total, 'task')}, subtasks included
+                </span>
+                <span aria-hidden>
+                  <span className="text-fg-secondary">{open}</span>
+                  <span className="text-fg-tertiary"> / {total}</span>
+                </span>
               </span>
             )}
           </div>

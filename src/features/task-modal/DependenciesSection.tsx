@@ -11,13 +11,7 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  useActions,
-  useDependencies,
-  usePhases,
-  useProject,
-  useProjectTasks,
-} from '@/data/hooks'
+import { useActions, useDependencies, usePhases, useProject, useProjectTasks } from '@/data/hooks'
 import { buildProjectOutline } from '@/domain/hierarchy'
 import { validateNewDependency, type DependencyValidation } from '@/domain/scheduling'
 import { searchWorkspace } from '@/domain/search'
@@ -27,19 +21,18 @@ import { FieldError, SectionHeading } from './fields'
 
 type Direction = 'blockedBy' | 'blocking'
 
-const LABELS: Record<Direction, { row: string; add: string; remove: (title: string) => string }> =
-  {
-    blockedBy: {
-      row: 'Blocked by',
-      add: 'Add a task that blocks this one',
-      remove: (title) => `Remove “${title}” from Blocked by`,
-    },
-    blocking: {
-      row: 'Blocking',
-      add: 'Add a task this one blocks',
-      remove: (title) => `Remove “${title}” from Blocking`,
-    },
-  }
+const LABELS: Record<Direction, { row: string; add: string; remove: (title: string) => string }> = {
+  blockedBy: {
+    row: 'Blocked by',
+    add: 'Add a task that blocks this one',
+    remove: (title) => `Remove “${title}” from Blocked by`,
+  },
+  blocking: {
+    row: 'Blocking',
+    add: 'Add a task this one blocks',
+    remove: (title) => `Remove “${title}” from Blocking`,
+  },
+}
 
 export interface DependenciesSectionProps {
   task: Task
@@ -244,7 +237,13 @@ function DependencyPicker({
         projectTasks.filter((other) => !excluded.has(other.id)).map((other) => [other.id, other]),
       )
       const results = searchWorkspace(
-        { projects: { [project.id]: project }, phases: {}, tasks: pool, milestones: {}, dependencies: {} },
+        {
+          projects: { [project.id]: project },
+          phases: {},
+          tasks: pool,
+          milestones: {},
+          dependencies: {},
+        },
         trimmed,
         { limit: 50 },
       )

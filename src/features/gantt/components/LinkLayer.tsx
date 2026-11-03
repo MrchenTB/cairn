@@ -10,31 +10,46 @@ import { cn } from '@/lib/utils'
 import type { Point } from '../model/geometry'
 import type { LinkView } from '../model/links'
 
+/** The region of the timeline (timeline px, body px) the SVG covers: the rendered rows × days. */
+export interface LinkBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface LinkLayerProps {
   links: LinkView[]
   selectedId: string | null
   /** Task whose links are emphasised (being dragged). */
   emphasizedTaskId: string | null
-  left: number
-  width: number
-  height: number
+  /** Left edge of the timeline inside the body (the outline pane width). */
+  offsetLeft: number
+  /**
+   * The SVG only spans the rendered window (a full-width SVG on a long Day timeline would be
+   * hundreds of thousands of px wide); paths keep timeline coordinates through the viewBox, and
+   * parts outside the box (off screen anyway) still paint thanks to overflow: visible.
+   */
+  box: LinkBox
 }
 
 export const LinkLayer = memo(function LinkLayer({
   links,
   selectedId,
   emphasizedTaskId,
-  left,
-  width,
-  height,
+  offsetLeft,
+  box,
 }: LinkLayerProps) {
+  const width = Math.max(1, box.width)
+  const height = Math.max(1, box.height)
   return (
     <svg
       aria-hidden
-      className="pointer-events-none absolute top-0 z-[1] overflow-visible"
-      style={{ left, width, height }}
+      className="pointer-events-none absolute z-[1] overflow-visible"
+      style={{ left: offsetLeft + box.x, top: box.y, width, height }}
       width={width}
       height={height}
+      viewBox={`${box.x} ${box.y} ${width} ${height}`}
     >
       {links.map((link) => {
         const selected = link.id === selectedId
@@ -74,7 +89,9 @@ export const LinkLayer = memo(function LinkLayer({
               fill="none"
               stroke="transparent"
               strokeWidth={10}
-              className="pointer-events-[stroke] cursor-pointer"
+              // Hit-testable along the (invisible, 10px) stroke only; the SVG itself is not.
+              style={{ pointerEvents: 'stroke' }}
+              className="cursor-pointer"
             />
           </g>
         )

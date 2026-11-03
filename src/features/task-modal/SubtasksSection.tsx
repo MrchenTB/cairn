@@ -1,9 +1,12 @@
 import { useEffect, useId, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { DueLabel } from '@/components/task/DueLabel'
+import { STATUS_LABELS } from '@/components/task/labels'
+import { StatusIcon } from '@/components/task/StatusIcon'
 import { StatusMenu } from '@/components/task/StatusMenu'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { hoverFade } from '@/components/ui/styles'
+import { hoverFade, insetFocus } from '@/components/ui/styles'
 import { useActions, useSubtasks } from '@/data/hooks'
 import { computeProgress } from '@/domain/progress'
 import type { Task } from '@/domain/types'
@@ -67,17 +70,32 @@ export function SubtasksSection({ parent, onOpenTask, onDraftChange }: SubtasksS
           {subtasks.map((subtask) => (
             <li
               key={subtask.id}
-              className={cn('flex h-8 items-center gap-1.5 rounded-md px-1 hover:bg-hover', hoverFade)}
+              className={cn(
+                'flex h-8 items-center gap-1.5 rounded-md px-1 hover:bg-hover',
+                hoverFade,
+              )}
             >
+              {/* Saves right away (not part of the Save form). The remote-failure toast and
+                  rollback come from the store. */}
               <StatusMenu
                 value={subtask.status}
                 onChange={(status) => void updateTask(subtask.id, { status })}
-              />
+              >
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Status of “${subtask.title}”: ${STATUS_LABELS[subtask.status]}`}
+                  className={insetFocus}
+                >
+                  <StatusIcon status={subtask.status} decorative />
+                </Button>
+              </StatusMenu>
               <button
                 type="button"
                 onClick={() => onOpenTask(subtask.id)}
                 className={cn(
-                  'h-7 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-ui focus-visible:outline-offset-[-2px]',
+                  'h-7 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-ui',
+                  insetFocus,
                   subtask.status === 'done' ? 'text-fg-tertiary' : 'text-fg',
                 )}
               >
@@ -90,7 +108,11 @@ export function SubtasksSection({ parent, onOpenTask, onDraftChange }: SubtasksS
       ) : null}
       <div className="-mx-1.5 flex h-8 items-center gap-1.5 rounded-md px-1 focus-within:shadow-[inset_0_0_0_1px_var(--focus-ring)]">
         <span className="flex size-6 shrink-0 items-center justify-center text-fg-tertiary">
-          {adding > 0 ? <Spinner label="Adding subtask" /> : <Plus className="size-4" aria-hidden />}
+          {adding > 0 ? (
+            <Spinner label="Adding subtask" />
+          ) : (
+            <Plus className="size-4" aria-hidden />
+          )}
         </span>
         <input
           type="text"

@@ -28,7 +28,7 @@ export function PhaseFilter({ value, phases, onChange }: PhaseFilterProps) {
   const valueId = useId()
   return (
     <div className="flex items-center gap-0.5">
-      <span id={labelId} className="sr-only">
+      <span id={labelId} hidden>
         Phase filter
       </span>
       <Select value={value} onValueChange={onChange}>

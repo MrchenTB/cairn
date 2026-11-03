@@ -8,6 +8,7 @@
  * time. Destructive confirmations focus Cancel first (design §5.8); others focus the action.
  */
 import { useRef, useSyncExternalStore, type ReactNode } from 'react'
+import { getFocusReturnTarget } from '@/lib/focus'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,13 +64,7 @@ interface ConfirmRequest {
  * closes), so its menu's trigger is used instead.
  */
 function focusToRestore(): HTMLElement | null {
-  if (typeof document === 'undefined') return null
-  const active = document.activeElement
-  if (!(active instanceof HTMLElement) || active === document.body) return null
-  const menu = active.closest('[role="menu"]')
-  const triggerId = menu?.getAttribute('aria-labelledby')
-  const trigger = triggerId ? document.getElementById(triggerId) : null
-  return trigger ?? active
+  return typeof document === 'undefined' ? null : getFocusReturnTarget()
 }
 
 /** Matches the dialog exit animation so the panel keeps its content while fading out. */

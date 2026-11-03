@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  closestCenter,
   DndContext,
   DragOverlay,
-  getFirstCollision,
   KeyboardSensor,
   MeasuringStrategy,
   PointerSensor,
-  pointerWithin,
-  rectIntersection,
   defaultDropAnimationSideEffects,
   useSensor,
   useSensors,
@@ -27,12 +23,14 @@ import { STATUS_LABELS } from '@/components/task/labels'
 import { useUIStore } from '@/app/uiStore'
 import { useOpenTask } from '@/app/taskModalRoute'
 import { useActions } from '@/data/hooks'
-import type { ISODate, MoveTaskInput, TaskStatus } from '@/domain/types'
+import type { ISODate, MoveTaskInput, TaskPriority, TaskStatus } from '@/domain/types'
 import { notify } from '@/lib/notify'
 import { BoardCardOverlay } from './BoardCard'
 import { BoardColumn } from './BoardColumn'
+import { createCollisionMemory, detectBoardCollision } from './boardCollision'
 import {
   BOARD_COLUMNS,
+  entryIndex,
   findColumn,
   keyboardTarget,
   moveCardInColumns,
@@ -110,8 +108,8 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
   const [dragColumns, setDragColumns] = useState<BoardColumnIds | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const dragRef = useRef<BoardColumnIds | null>(null)
-  const lastOverId = useRef<string | null>(null)
-  const movedToNewColumn = useRef(false)
+  /** Collision detection's memory for the current drag (last target, pointer, column switch). */
+  const collision = useRef(createCollisionMemory())
   const lastDrop = useRef<{ column: TaskStatus; position: number; count: number } | null>(null)
 
   // Latest values for the drag handlers / sensors (they outlive a render).
@@ -132,7 +130,7 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
   useEffect(() => {
     // After a card switched columns the layout shifts for a frame; see collisionDetection.
     const frame = requestAnimationFrame(() => {
-      movedToNewColumn.current = false
+      collision.current.movedToNewColumn = false
     })
     return () => cancelAnimationFrame(frame)
   }, [dragColumns])
@@ -180,6 +178,17 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
     [actions, focusCard],
   )
 
+  const onPriorityChange = useCallback(
+    async (taskId: string, priority: TaskPriority) => {
+      const result = await actions.updateTask(taskId, { priority })
+      // Remote failures were rolled back and toasted (with Retry) by the store.
+      if (!result.ok && result.error.kind === 'validation') {
+        notify.error("Couldn't change priority", { description: result.error.message })
+      }
+    },
+    [actions],
+  )
+
   const onStep = useCallback(
     (taskId: string, step: ColumnStep) => {
       const { baseColumns: columns, model: current } = latest.current
@@ -220,17 +229,31 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
       event.preventDefault()
       if (!active || !collisionRect) return undefined
       const activeKey = String(active.id)
+      const columns = currentColumns()
       const targetId = keyboardTarget(
-        currentColumns(),
+        columns,
         activeKey,
         String(over?.id ?? activeKey),
         direction,
         collisionRect.top + collisionRect.height / 2,
         (id) => droppableRects.get(id) ?? null,
       )
-      const rect = targetId ? droppableRects.get(targetId) : undefined
+      if (!targetId) return undefined
+      // An empty column: where its first card goes (the top of its list), not over its header.
+      const emptyColumn = parseColumnDroppableId(targetId)
+      const list = emptyColumn
+        ? rootRef.current?.querySelector(`[data-board-list="${emptyColumn}"]`)
+        : null
+      const rect = list ? list.getBoundingClientRect() : droppableRects.get(targetId)
       if (!rect) return undefined
-      return { x: rect.left, y: rect.top }
+      // A card below the dragged one (same column) slides up when passed and the dragged card
+      // takes the slot that ends where that card ended: line the bottoms up (as sortable does).
+      const activeColumn = findColumn(columns, activeKey)
+      const ids = activeColumn ? columns[activeColumn] : []
+      const passesDown =
+        !emptyColumn && ids.includes(activeKey) && ids.indexOf(targetId) > ids.indexOf(activeKey)
+      const y = passesDown ? rect.top + rect.height - collisionRect.height : rect.top
+      return { x: rect.left, y }
     },
     [currentColumns],
   )
@@ -244,45 +267,16 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
     useSensor(KeyboardSensor, keyboardOptions),
   )
 
-  /**
-   * Pointer first (what is under the cursor), else rectangle overlap (keyboard). A column hit is
-   * narrowed to its closest card so the drop index follows the pointer; an empty column stays a
-   * valid target. When nothing matches (layout shifting after a column switch) the last target
-   * is kept, which prevents flicker between columns.
-   */
+  /** See `detectBoardCollision`: pointer-only for pointer drags (no column flip-flop). */
   const collisionDetection = useCallback<CollisionDetection>(
-    (args) => {
-      const pointerHits = pointerWithin(args)
-      const hits = pointerHits.length > 0 ? pointerHits : rectIntersection(args)
-      let overId = getFirstCollision(hits, 'id')
-      if (overId != null) {
-        const column = parseColumnDroppableId(overId)
-        if (column) {
-          const ids = currentColumns()[column]
-          if (ids.length > 0) {
-            const closest = closestCenter({
-              ...args,
-              droppableContainers: args.droppableContainers.filter((container) =>
-                ids.includes(String(container.id)),
-              ),
-            })
-            overId = closest[0]?.id ?? overId
-          }
-        }
-        lastOverId.current = String(overId)
-        return [{ id: overId }]
-      }
-      if (movedToNewColumn.current) lastOverId.current = String(args.active.id)
-      return lastOverId.current ? [{ id: lastOverId.current }] : []
-    },
+    (args) => detectBoardCollision(args, currentColumns(), collision.current),
     [currentColumns],
   )
 
   const resetDrag = useCallback(() => {
     setDrag(null)
     setActiveId(null)
-    lastOverId.current = null
-    movedToNewColumn.current = false
+    collision.current = createCollisionMemory()
   }, [setDrag])
 
   const onDragStart = useCallback(
@@ -304,15 +298,15 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
       const to = findColumn(columns, overKey)
       // Same column: the sortable strategy previews the reorder with transforms.
       if (!from || !to || from === to) return
-      const target = columns[to]
-      let index = target.length
-      if (!parseColumnDroppableId(overKey)) {
-        const overIndex = target.indexOf(overKey)
-        const dragged = active.rect.current.translated
-        const below = dragged ? dragged.top > over.rect.top + over.rect.height / 2 : false
-        if (overIndex >= 0) index = overIndex + (below ? 1 : 0)
-      }
-      movedToNewColumn.current = true
+      const { pointer } = collision.current
+      const dragged = active.rect.current.translated
+      const index = entryIndex(
+        columns[to],
+        overKey,
+        over.rect,
+        pointer ? { pointerY: pointer.y } : { draggedTop: dragged?.top ?? over.rect.top },
+      )
+      collision.current.movedToNewColumn = true
       setDrag(moveCardInColumns(columns, activeKey, to, index))
     },
     [setDrag],
@@ -431,7 +425,8 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
       onDragCancel={resetDrag}
     >
       <div ref={rootRef} className="min-h-0 flex-1 overflow-x-auto px-6 pt-2 pb-4">
-        <div className="grid h-full min-h-72 grid-cols-[repeat(3,minmax(280px,440px))] gap-3">
+        {/* Fixed three columns sharing the width, never narrower than 280px (design §5.5). */}
+        <div className="grid h-full min-h-72 grid-cols-[repeat(3,minmax(280px,1fr))] gap-3">
           {BOARD_COLUMNS.map((status) => (
             <BoardColumn
               key={status}
@@ -443,6 +438,7 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
               today={today}
               onOpen={onOpen}
               onStatusChange={onStatusChange}
+              onPriorityChange={onPriorityChange}
               onStep={onStep}
               onCreate={onCreate}
               onNewTask={onNewTask}

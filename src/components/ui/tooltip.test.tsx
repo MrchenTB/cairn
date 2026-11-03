@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { getInputModality } from '@/lib/inputModality'
 import { renderUI } from '@/test/render'
 import { Button } from './button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './dropdown-menu'
 import { Tooltip } from './tooltip'
 
 function setup() {
@@ -40,6 +46,32 @@ describe('Tooltip', () => {
     await user.unhover(trigger)
     fireEvent.keyDown(document, { key: 'Shift' })
     expect(getInputModality()).toBe('keyboard')
+  })
+
+  it('keeps the open state of a menu trigger it wraps (data-state is not overwritten)', async () => {
+    const { user } = renderUI(
+      <DropdownMenu>
+        <Tooltip content="More actions">
+          <DropdownMenuTrigger asChild>
+            <Button aria-label="More">…</Button>
+          </DropdownMenuTrigger>
+        </Tooltip>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Rename</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    )
+    const trigger = screen.getByRole('button', { name: 'More' })
+    await user.tab()
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('More actions')
+    expect(trigger).toHaveAttribute('data-state', 'closed')
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('menu')).toBeInTheDocument()
+    expect(trigger).toHaveAttribute('data-state', 'open')
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(trigger).toHaveAttribute('data-state', 'closed'))
+    expect(trigger).toHaveFocus()
   })
 
   it('renders nothing extra when disabled or empty', async () => {

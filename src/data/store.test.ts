@@ -11,9 +11,13 @@ import type {
   BackupFile,
   Dependency,
   Milestone,
+  MilestonePatch,
   Phase,
+  PhasePatch,
   Project,
+  ProjectPatch,
   Task,
+  TaskPatch,
   WorkspaceSnapshot,
 } from '@/domain/types'
 import { parseBackupFile } from '@/domain/validation'
@@ -1345,5 +1349,230 @@ describe('import retries', () => {
     const child = tasks.find((t) => t.title === 'child') as Task
     expect(child.phaseId).toBe(parent.phaseId)
     expect((await storedTask(h, child.id))?.phaseId).toBe(parent.phaseId)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Second review (each test failed before its fix)
+// ---------------------------------------------------------------------------
+
+type ToastAction = { action?: { onClick: () => void } }
+const lastToastAction = (h: Harness) =>
+  (h.notifier.error.mock.calls.at(-1)?.[1] as ToastAction | undefined)?.action
+const settled = () => new Promise((resolve) => setTimeout(resolve, 10))
+
+describe('Retry never overwrites newer changes', () => {
+  it("a failed change's toast Retry does nothing once a newer change of that field was saved", async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Old attempt' })
+    const retry = lastToastAction(h)
+    expect(retry).toBeDefined()
+    expect(await h.actions.updateTask('a', { title: 'Newer' })).toEqual(OK)
+    // the superseded failure's toast goes away instead of offering a harmful Retry
+    expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
+    retry?.onClick()
+    await settled()
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('Newer')
+    expect((await storedTask(h, 'a'))?.title).toBe('Newer')
+  })
+
+  it('retryLastFailed skips a failed change that a newer, still pending change replaced', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Old attempt' })
+    expect(h.state().sync.canRetry).toBe(true)
+    h.repo.setLatency(20)
+    const newer = h.actions.updateTask('a', { title: 'Newer' })
+    expect(h.state().sync.canRetry).toBe(false)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    expect(await newer).toEqual(OK)
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('Newer')
+    expect((await storedTask(h, 'a'))?.title).toBe('Newer')
+  })
+
+  it('an unrelated change keeps the toast Retry of a failed one working', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.applySchedule([{ taskId: 'a', startDate: '2026-11-02', dueDate: '2026-11-03' }])
+    const retry = lastToastAction(h)
+    await h.actions.applySchedule([{ taskId: 'b', startDate: '2026-11-05', dueDate: '2026-11-06' }])
+    retry?.onClick()
+    await vi.waitFor(async () =>
+      expect(await storedTask(h, 'a')).toMatchObject({ startDate: '2026-11-02' }),
+    )
+    await idle(h)
+    expect(h.state().data.tasks.a).toMatchObject({ startDate: '2026-11-02', dueDate: '2026-11-03' })
+    expect(await storedTask(h, 'b')).toMatchObject({ startDate: '2026-11-05' })
+  })
+})
+
+describe('Retry after several failures in a row', () => {
+  it('re-sends every change that failed since the last save, in order', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(3)
+    expect((await h.actions.createTask({ projectId: 'p1', title: 'Offline task' })).ok).toBe(false)
+    expect((await h.actions.updateTask('b', { priority: 'high' })).ok).toBe(false)
+    expect((await h.actions.updatePreferences({ weekStartsOn: 0 })).ok).toBe(false)
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    const stored = await storedSnapshot(h)
+    expect(stored.tasks.find((t) => t.id === 'new-1')).toMatchObject({ title: 'Offline task' })
+    expect(stored.tasks.find((t) => t.id === 'b')?.priority).toBe('high')
+    expect(stored.preferences?.weekStartsOn).toBe(0)
+    expect(h.state().data.tasks['new-1']).toBeDefined()
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+  })
+
+  it('a change that depends on an earlier failed one is saved after it', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(5)
+    h.repo.failNextWrites(2)
+    // made back to back: the edit was already on its way when the create failed
+    const created = h.actions.createTask({ projectId: 'p1', title: 'Draft' })
+    const edited = h.actions.updateTask('new-1', { title: 'Final' })
+    expect((await created).ok).toBe(false)
+    expect((await edited).ok).toBe(false)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect(await storedTask(h, 'new-1')).toMatchObject({ title: 'Final' })
+    expect(h.state().data.tasks['new-1']).toMatchObject({ title: 'Final' })
+  })
+
+  it('stops at a change that fails again and continues from it next time', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(2)
+    await h.actions.updateTask('a', { title: 'First' })
+    await h.actions.updateTask('b', { title: 'Second' })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.retryLastFailed()).ok).toBe(false)
+    expect((await storedTask(h, 'b'))?.title).toBe('B') // not sent before "First" is saved
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect([(await storedTask(h, 'a'))?.title, (await storedTask(h, 'b'))?.title]).toEqual([
+      'First',
+      'Second',
+    ])
+  })
+
+  it('starting a Retry dismisses the failure toast', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'x' })
+    h.notifier.dismiss.mockClear()
+    await h.actions.retryLastFailed()
+    expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
+  })
+
+  it('a failure a newer pending change of the same field replaced offers no Retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(10)
+    h.repo.failNextWrites(1)
+    const older = h.actions.updateTask('a', { title: 'Older' })
+    const newer = h.actions.updateTask('a', { title: 'Newer' })
+    expect((await older).ok).toBe(false)
+    expect(lastToastAction(h)).toBeUndefined()
+    expect(h.state().sync.canRetry).toBe(false)
+    expect(await newer).toEqual(OK)
+    expect((await storedTask(h, 'a'))?.title).toBe('Newer')
+  })
+
+  it('says why when a retried change no longer fits; a failure on the way reports itself', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Edited offline' })
+    // meanwhile the task was deleted on another device (and this device refreshed)
+    await new LocalRepository({ storage: h.storage }).deleteTask('a', { keepSubtasks: false })
+    await h.actions.refresh({ silent: true })
+    h.notifier.error.mockClear()
+    expect(await h.actions.retryLastFailed()).toMatchObject({
+      ok: false,
+      error: { kind: 'not_found' },
+    })
+    expect(h.notifier.error).toHaveBeenCalledOnce()
+    expect(h.notifier.error.mock.calls[0][0]).toBe("Couldn't retry")
+
+    h.repo.failNextWrites(2)
+    await h.actions.updateTask('b', { title: 'Twice' })
+    h.notifier.error.mockClear()
+    expect((await h.actions.retryLastFailed()).ok).toBe(false)
+    expect(h.notifier.error).toHaveBeenCalledOnce()
+    expect(h.notifier.error.mock.calls[0][0]).toBe("Couldn't update task")
+    expect(lastToastAction(h)).toBeDefined() // still retryable
+  })
+})
+
+describe('creates whose answer was lost', () => {
+  it('retrying a create the server already stored succeeds instead of failing as a duplicate', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const insert = h.repo.insertTask.bind(h.repo)
+    vi.spyOn(h.repo, 'insertTask').mockImplementationOnce(async (task) => {
+      await insert(task) // stored…
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE) // …but the answer never arrived
+    })
+    expect((await h.actions.createTask({ projectId: 'p1', title: 'Saved once' })).ok).toBe(false)
+    h.notifier.error.mockClear()
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    expect(h.state().sync.lastError).toBeNull()
+    expect(h.state().data.tasks['new-1']).toMatchObject({ title: 'Saved once' })
+    const stored = await storedSnapshot(h)
+    expect(stored.tasks.filter((t) => t.title === 'Saved once')).toHaveLength(1)
+  })
+
+  it('adding a dependency another device already added succeeds quietly', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    await new LocalRepository({ storage: h.storage }).insertDependency(
+      makeDependency({ id: 'remote', projectId: 'p1', predecessorId: 'a', successorId: 'b' }),
+    )
+    const result = await h.actions.addDependency('a', 'b')
+    expect(result).toMatchObject({ ok: true, value: { predecessorId: 'a', successorId: 'b' } })
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(Object.keys(h.state().data.dependencies)).toEqual(['remote']))
+  })
+})
+
+describe('patches only change patchable fields', () => {
+  it('rejects moving a row to another project or changing its id, before any write', async () => {
+    const h = await setup({
+      rows: {
+        ...workspaceRows(),
+        milestones: [makeMilestone({ id: 'm1', projectId: 'p1', date: '2026-12-01' })],
+      },
+    })
+    const writes = ['updateTask', 'updateProject', 'updatePhase', 'updateMilestone'] as const
+    const spies = writes.map((method) => vi.spyOn(h.repo, method))
+    const data = h.state().data
+    const results = [
+      await h.actions.updateTask('a', { title: 'X', projectId: 'p2' } as TaskPatch),
+      await h.actions.updateTask('a', { id: 'a2' } as TaskPatch),
+      await h.actions.updateProject('p1', { id: 'p9' } as ProjectPatch),
+      await h.actions.updatePhase('ph1', { projectId: 'p2' } as PhasePatch),
+      await h.actions.updateMilestone('m1', { projectId: 'p2' } as MilestonePatch),
+    ]
+    for (const result of results)
+      expect(result).toMatchObject({ ok: false, error: { kind: 'validation' } })
+    expect(h.state().data).toBe(data)
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled()
+    expect(h.notifier.error).not.toHaveBeenCalled()
+  })
+
+  it('ignores fields outside the patch type (e.g. a whole row passed as the patch)', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const update = vi.spyOn(h.repo, 'updateTask')
+    const task = h.state().data.tasks.a
+    const stale = { ...task, title: 'Renamed', createdAt: 'x', updatedAt: 'y', completedAt: 'z' }
+    expect(await h.actions.updateTask('a', stale as TaskPatch)).toEqual(OK)
+    expect(update).toHaveBeenLastCalledWith('a', { title: 'Renamed' })
+    expect(
+      await h.actions.updateTask('a', { title: 'Again', bogus: 1 } as unknown as TaskPatch),
+    ).toEqual(OK)
+    expect(h.state().data.tasks.a).not.toHaveProperty('bogus')
+    expect(h.state().data.tasks.a).toEqual(await storedTask(h, 'a'))
   })
 })

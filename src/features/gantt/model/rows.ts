@@ -19,7 +19,9 @@ export const NO_PHASE_KEY = 'group:none'
 
 export const taskRowKey = (taskId: string) => `task:${taskId}`
 export const milestoneRowKey = (milestoneId: string) => `milestone:${milestoneId}`
-export const groupRowKey = (phase: Phase | null) => (phase ? `group:${phase.id}` : NO_PHASE_KEY)
+export const groupKeyForPhaseId = (phaseId: string | null) =>
+  phaseId ? `group:${phaseId}` : NO_PHASE_KEY
+export const groupRowKey = (phase: Phase | null) => groupKeyForPhaseId(phase ? phase.id : null)
 
 export interface GroupRow {
   kind: 'group'
@@ -76,6 +78,8 @@ export interface GanttRowModel {
   rows: GanttRow[]
   /** Row index of every task that currently has a row (collapsed ones are absent). */
   taskRowIndex: Map<string, number>
+  /** Row index by row key (`task:…`, `milestone:…`, `group:…`, `unscheduled`). */
+  rowIndexByKey: Map<string, number>
   /** Tasks (any level) in the Unscheduled group, collapsed or not. */
   unscheduledCount: number
   /** Tasks with at least one date. */
@@ -191,5 +195,6 @@ export function buildGanttRows(
     if (!isCollapsed) for (const item of unscheduledItems) pushOutlineTask(item, true)
   }
 
-  return { rows, taskRowIndex, unscheduledCount, scheduledTaskCount }
+  const rowIndexByKey = new Map(rows.map((row, index) => [row.key, index]))
+  return { rows, taskRowIndex, rowIndexByKey, unscheduledCount, scheduledTaskCount }
 }

@@ -1,7 +1,9 @@
 import type { ComponentProps } from 'react'
 import { AlertDialog as AlertDialogPrimitive } from 'radix-ui'
+import { useFocusReturn } from '@/lib/focus'
 import { cn } from '@/lib/utils'
 import { buttonVariants, type ButtonVariantProps } from './button-variants'
+import { FocusReturnRecorder } from './focus-return'
 import { dialogMotion, overlayClass } from './styles'
 
 export const AlertDialog = AlertDialogPrimitive.Root
@@ -9,12 +11,16 @@ export const AlertDialogTrigger = AlertDialogPrimitive.Trigger
 
 /**
  * Confirmation panel (420px, centred). Unlike Dialog it does not close on outside click and
- * focuses Cancel first. Prefer the `confirm()` helper from ./confirm for simple yes/no flows.
+ * focuses Cancel first. Focus returns like DialogContent's. Prefer the `confirm()` helper from
+ * ./confirm for simple yes/no flows.
  */
 export function AlertDialogContent({
   className,
+  onCloseAutoFocus,
+  children,
   ...props
 }: ComponentProps<typeof AlertDialogPrimitive.Content>) {
+  const focusReturn = useFocusReturn(onCloseAutoFocus)
   return (
     <AlertDialogPrimitive.Portal>
       <AlertDialogPrimitive.Overlay className={overlayClass} />
@@ -26,8 +32,12 @@ export function AlertDialogContent({
           dialogMotion,
           className,
         )}
+        onCloseAutoFocus={focusReturn.onCloseAutoFocus}
         {...props}
-      />
+      >
+        <FocusReturnRecorder targetRef={focusReturn.targetRef} />
+        {children}
+      </AlertDialogPrimitive.Content>
     </AlertDialogPrimitive.Portal>
   )
 }

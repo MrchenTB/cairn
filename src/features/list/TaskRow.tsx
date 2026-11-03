@@ -69,6 +69,8 @@ export interface TaskRowProps {
   handleRef?: (element: HTMLElement | null) => void
   /** The row is being dragged: it renders as the drop indicator. */
   placeholder?: boolean
+  /** Show the 2px drop line in the placeholder (off while a collapsed group is the target). */
+  dropLine?: boolean
   commands: TaskCommands
   menu: TaskMenuContext
 }
@@ -86,6 +88,7 @@ export function TaskRow({
   handle,
   handleRef,
   placeholder = false,
+  dropLine = true,
   commands,
   menu,
 }: TaskRowProps) {
@@ -106,9 +109,11 @@ export function TaskRow({
           className={cn(
             'group/row relative flex h-9 items-center pr-3 pl-1 text-ui',
             'transition-colors duration-fast hover:bg-hover hover:duration-instant data-[state=open]:bg-hover',
+            // A status / priority / date / ⋯ menu of this row is open: keep the row marked.
+            'has-[[data-state=open]]:bg-hover',
           )}
         >
-          {placeholder ? (
+          {placeholder && dropLine ? (
             <span
               aria-hidden
               className="pointer-events-none absolute inset-x-6 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-accent"
@@ -328,12 +333,26 @@ function TaskMenuItems({
 }
 
 /** Floating copy of a row while it is dragged (DragOverlay). */
-export function TaskRowPreview({ task, subtaskCount }: { task: Task; subtaskCount: number }) {
+export function TaskRowPreview({
+  task,
+  subtaskCount,
+  depth = 0,
+}: {
+  task: Task
+  subtaskCount: number
+  /** 1 = a subtask: indented like its row. */
+  depth?: 0 | 1
+}) {
+  // Same column widths as TaskRow, so the lifted row lines up with the rows around it.
   return (
-    <div className="flex h-9 cursor-grabbing items-center gap-2 rounded-md bg-elevated pr-3 pl-1.5 text-ui shadow-drag">
-      <GripVertical className="size-3.5 shrink-0 text-fg-tertiary" aria-hidden />
-      <span className="w-5 shrink-0" aria-hidden />
-      <StatusIcon status={task.status} decorative />
+    <div className="flex h-9 cursor-grabbing items-center rounded-md bg-elevated pr-3 pl-1 text-ui shadow-drag">
+      <span className="grid h-6 w-5 shrink-0 place-items-center text-fg-tertiary" aria-hidden>
+        <GripVertical className="size-3.5" />
+      </span>
+      <span className={cn('shrink-0', depth === 1 ? 'w-10' : 'w-5')} aria-hidden />
+      <span className="grid size-6 shrink-0 place-items-center" aria-hidden>
+        <StatusIcon status={task.status} size={14} decorative />
+      </span>
       <span
         className={cn(
           'truncate px-1.5',
@@ -343,7 +362,7 @@ export function TaskRowPreview({ task, subtaskCount }: { task: Task; subtaskCoun
         {task.title}
       </span>
       {subtaskCount > 0 ? (
-        <span className="ml-auto shrink-0 text-meta text-fg-tertiary">
+        <span className="ml-auto shrink-0 pl-3 text-meta text-fg-tertiary">
           + {subtaskCount} {subtaskCount === 1 ? 'subtask' : 'subtasks'}
         </span>
       ) : null}

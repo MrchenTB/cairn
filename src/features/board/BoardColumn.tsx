@@ -6,7 +6,7 @@ import { StatusIcon } from '@/components/task/StatusIcon'
 import { STATUS_LABELS } from '@/components/task/labels'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { ISODate, Result, TaskStatus } from '@/domain/types'
+import type { ISODate, Result, TaskPriority, TaskStatus } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { AddTaskComposer } from './AddTaskComposer'
 import { SortableBoardCard } from './BoardCard'
@@ -24,6 +24,7 @@ export interface BoardColumnProps {
   today: ISODate
   onOpen: (taskId: string) => void
   onStatusChange: (taskId: string, status: TaskStatus) => void
+  onPriorityChange: (taskId: string, priority: TaskPriority) => void
   onStep: (taskId: string, step: ColumnStep) => void
   onCreate: (status: TaskStatus, title: string) => Promise<Result<unknown>>
   /** Header "+": the full Task Modal pre-set to this column. */
@@ -46,6 +47,7 @@ export const BoardColumn = memo(function BoardColumn({
   today,
   onOpen,
   onStatusChange,
+  onPriorityChange,
   onStep,
   onCreate,
   onNewTask,
@@ -69,7 +71,10 @@ export const BoardColumn = memo(function BoardColumn({
   }, [])
 
   return (
+    // The whole column (header included) is the drop target; a hit on it is aimed at its nearest
+    // card, and an empty column takes the card as is.
     <section
+      ref={setNodeRef}
       aria-labelledby={headingId}
       data-column={status}
       className={cn('flex min-h-0 min-w-0 flex-col rounded-lg bg-muted', isDropTarget && dropTint)}
@@ -99,12 +104,11 @@ export const BoardColumn = memo(function BoardColumn({
           </Button>
         </Tooltip>
       </header>
+      {/* Cards scroll inside the column; dnd-kit auto-scrolls it while a card is over its cards. */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto rounded-b-lg">
-        {/* The droppable fills the scroller (empty columns and the space below the last card
-            accept drops; being inside the scroller lets dnd-kit auto-scroll it). */}
-        <div ref={setNodeRef} className="flex min-h-full flex-col px-2">
+        <div className="flex min-h-full flex-col px-2">
           <SortableContext id={status} items={ids} strategy={verticalListSortingStrategy}>
-            <ul role="list" className="flex flex-col gap-2 pt-0.5">
+            <ul role="list" data-board-list={status} className="flex flex-col gap-2 pt-0.5">
               {cards.map((card, index) => (
                 <SortableBoardCard
                   key={card.task.id}
@@ -118,6 +122,7 @@ export const BoardColumn = memo(function BoardColumn({
                   isLast={index === cards.length - 1}
                   onOpen={onOpen}
                   onStatusChange={onStatusChange}
+                  onPriorityChange={onPriorityChange}
                   onStep={onStep}
                 />
               ))}

@@ -17,15 +17,21 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useActions } from '@/data/hooks'
+import { SYNC_ERROR_TOAST_ID } from '@/data/store'
 import { NAME_MAX_LENGTH } from '@/domain/types'
 import { validateName } from '@/domain/validation'
+import { notify } from '@/lib/notify'
 import { usePhaseDialog } from './phaseDialogStore'
 
 export function PhaseDialogHost() {
   const projectId = usePhaseDialog((s) => s.projectId)
+  const session = usePhaseDialog((s) => s.session)
   const close = usePhaseDialog((s) => s.close)
-  const [shown, setShown] = useState(projectId)
-  if (projectId !== null && projectId !== shown) setShown(projectId)
+  // Keep rendering the last form while the dialog animates out.
+  const [shown, setShown] = useState(projectId ? { projectId, session } : null)
+  if (projectId !== null && (shown?.projectId !== projectId || shown.session !== session)) {
+    setShown({ projectId, session })
+  }
 
   return (
     <Dialog
@@ -34,7 +40,13 @@ export function PhaseDialogHost() {
         if (!open) close()
       }}
     >
-      {shown ? <PhaseForm key={shown} projectId={shown} onDone={close} /> : null}
+      {shown ? (
+        <PhaseForm
+          key={`${shown.projectId}:${shown.session}`}
+          projectId={shown.projectId}
+          onDone={close}
+        />
+      ) : null}
     </Dialog>
   )
 }
@@ -63,7 +75,11 @@ function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => voi
     setSubmitting(false)
     if (result.ok) onDone()
     else if (result.error.kind === 'validation') setError(result.error.message)
-    else setFailed(true)
+    else {
+      // Rolled back and toasted by the store; the form keeps the name and owns the retry.
+      notify.dismiss(SYNC_ERROR_TOAST_ID)
+      setFailed(true)
+    }
   }
 
   const onSubmit = (event: FormEvent) => {

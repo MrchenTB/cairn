@@ -42,12 +42,23 @@ function allowParam(name: string, allowed: readonly string[], fallback: string) 
   }
 }
 
-/** Lazy route definition loading the module's named page component. */
+/**
+ * Lazy route definition loading the module's named page component. When a chunk of an older
+ * deploy is gone, the preload-error handler (./preloadRecovery) reloads the page and Vite then
+ * resolves the import with `undefined`: keep the navigation pending until the reload replaces
+ * the page, instead of flashing an error.
+ */
 function page<M extends Record<K, ComponentType>, K extends string>(
   load: () => Promise<M>,
   name: K,
 ) {
-  return { Component: async () => (await load())[name] }
+  return {
+    Component: async () => {
+      const module: M | undefined = await load()
+      if (!module) return new Promise<never>(() => {})
+      return module[name]
+    },
+  }
 }
 
 const handle = (crumb: RouteHandle['crumb']): RouteHandle => ({ crumb })
@@ -117,7 +128,7 @@ export const routes: RouteObject[] = [
                         children: [
                           redirectIndex(
                             ({ params }) =>
-                              `/projects/${params.projectId}/${getProjectView(params.projectId ?? '')}`,
+                              `/projects/${encodeURIComponent(params.projectId ?? '')}/${getProjectView(params.projectId ?? '')}`,
                           ),
                           {
                             path: 'list',

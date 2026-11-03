@@ -110,9 +110,14 @@ export function CreateTaskForm({
   useLayoutEffect(() => {
     latest.current = { values, projectId, dirty }
   })
+  const mountedRef = useRef(true)
 
   useEffect(() => {
+    mountedRef.current = true
     titleRef.current?.focus({ preventScroll: true })
+    return () => {
+      mountedRef.current = false
+    }
   }, [])
 
   const setField = <K extends keyof TaskFormValues>(key: K, value: TaskFormValues[K]) => {
@@ -163,7 +168,9 @@ export function CreateTaskForm({
       return
     }
     setLastProjectId(current.projectId)
-    onClose()
+    // Closed meanwhile (perhaps a new "New task" is open now): leave the modal alone, still
+    // confirm the task was created.
+    if (mountedRef.current) onClose()
     onCreated(result.value)
   }
   useLayoutEffect(() => {
@@ -184,9 +191,7 @@ export function CreateTaskForm({
   const showPhase = project !== null && (phases.length > 0 || values.phaseId !== null)
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col"
-    >
+    <div className="flex min-h-0 flex-1 flex-col">
       <ModalHeader onClose={() => void requestClose()}>
         {parent && preset ? (
           <>
@@ -306,11 +311,7 @@ export function CreateTaskForm({
 
       <ModalFooter
         meta={
-          noProjects
-            ? null
-            : project?.status === 'archived'
-              ? 'This project is archived.'
-              : null
+          noProjects ? null : project?.status === 'archived' ? 'This project is archived.' : null
         }
       >
         <Button variant="secondary" size="md" onClick={() => void requestClose()}>

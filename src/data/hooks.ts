@@ -47,12 +47,17 @@ export function usePreferences(): Preferences {
 export function useSyncState(): SyncState {
   return useWorkspaceStore((s) => s.sync)
 }
+/**
+ * Session state and auth actions. `passwordRecovery` = the user arrived through a password-reset
+ * link and should choose a new password (`actions.updatePassword` / `dismissPasswordRecovery`).
+ */
 export function useAuth() {
   const status = useAuthStore((s) => s.status)
   const user = useAuthStore((s) => s.user)
   const mode = useAuthStore((s) => s.mode)
+  const passwordRecovery = useAuthStore((s) => s.passwordRecovery)
   const actions = useAuthStore((s) => s.actions)
-  return { status, user, mode, actions }
+  return { status, user, mode, passwordRecovery, actions }
 }
 
 /** Projects sorted by sortOrder. Archived projects excluded unless includeArchived. */
@@ -162,14 +167,46 @@ export function useDependencies(projectId: string | null | undefined): Dependenc
   )
 }
 
+const CLOCK_TICK_MS = 30_000
+const clockListeners = new Set<() => void>()
+let stopClock: (() => void) | null = null
+
+function tickClock(): void {
+  for (const listener of [...clockListeners]) listener()
+}
+
+function onVisibilityChange(): void {
+  if (document.visibilityState !== 'hidden') tickClock()
+}
+
+/**
+ * One shared clock for every `useToday` (a list renders hundreds of due labels): a 30 s tick,
+ * plus a tick when the tab is shown again (timers sleep with the laptop). Stops with the last
+ * subscriber.
+ */
 function subscribeToClock(onTick: () => void): () => void {
-  const id = window.setInterval(onTick, 30_000)
-  return () => window.clearInterval(id)
+  clockListeners.add(onTick)
+  if (!stopClock) {
+    const id = window.setInterval(tickClock, CLOCK_TICK_MS)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    stopClock = () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }
+  return () => {
+    clockListeners.delete(onTick)
+    if (clockListeners.size === 0 && stopClock) {
+      stopClock()
+      stopClock = null
+    }
+  }
 }
 
 /**
  * Today's calendar date in the user's configured time zone (Preferences.timezone).
- * Re-evaluates every 30 s so views roll over at midnight; re-renders only when the date changes.
+ * Re-evaluates every 30 s (and when the tab is shown again) so views roll over at midnight;
+ * re-renders only when the date changes.
  */
 export function useToday(): ISODate {
   const timeZone = useWorkspaceStore((s) => s.preferences.timezone)

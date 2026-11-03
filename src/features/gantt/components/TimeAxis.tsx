@@ -2,30 +2,44 @@
  * Sticky two-tier time header, the background grid (CSS gradients + a few boundary lines, no
  * per-day nodes) and the today line. Only cells inside the render window exist in the DOM.
  */
-import { memo, type CSSProperties } from 'react'
+import { memo, useSyncExternalStore, type CSSProperties } from 'react'
 import type { GanttScale } from '@/app/viewPrefs'
 import { cn } from '@/lib/utils'
 import { DUE_COLUMN_WIDTH, HEADER_HEIGHT } from '../model/constants'
+import type { TimelineGeometry } from '../model/geometry'
 import type { GridBackgroundStyle, GridLine, HeaderTiers } from '../model/scale'
+import type { ScrollPosition } from '../model/scrollPosition'
+import { measureLabelWidth } from './measure'
 
 export interface TimeHeaderProps {
   tiers: HeaderTiers
   scale: GanttScale
+  geometry: TimelineGeometry
   paneWidth: number
   timelineWidth: number
   /** Centre of today in timeline px (null when outside the range). */
   todayX: number | null
   todayLabel: string
+  scroll: ScrollPosition
 }
 
 export const TimeHeader = memo(function TimeHeader({
   tiers,
   scale,
+  geometry,
   paneWidth,
   timelineWidth,
   todayX,
   todayLabel,
+  scroll,
 }: TimeHeaderProps) {
+  // The first visible day: a top-tier label sticks to the pane edge while its unit scrolls out,
+  // and is hidden once the visible rest of the unit is too narrow to hold it.
+  const firstVisibleDay = useSyncExternalStore(
+    scroll.subscribe,
+    () => geometry.originDay + Math.floor(scroll.get() / geometry.dayWidth),
+    () => geometry.originDay,
+  )
   return (
     <div
       className="sticky top-0 z-20 flex border-b border-default bg-(--gantt-header-bg)"
@@ -43,22 +57,29 @@ export const TimeHeader = memo(function TimeHeader({
         </div>
       </div>
       <div aria-hidden className="relative shrink-0 select-none" style={{ width: timelineWidth }}>
-        {tiers.top.map((cell) => (
-          <div
-            key={cell.key}
-            title={cell.title}
-            className="absolute top-0 flex h-6 items-center border-l border-(--gantt-grid-strong)"
-            style={{ left: cell.x, width: cell.width }}
-          >
-            {/* Sticks to the pane edge so a partly scrolled-off month keeps its label. */}
-            <span
-              className="sticky truncate px-2 text-meta font-medium text-fg-secondary"
-              style={{ left: paneWidth }}
+        {tiers.top.map((cell) => {
+          const visibleDays = cell.endDay - Math.max(cell.startDay, firstVisibleDay) + 1
+          const fits = visibleDays * geometry.dayWidth >= measureLabelWidth(cell.label) + 16
+          return (
+            <div
+              key={cell.key}
+              title={cell.title}
+              className="absolute top-0 flex h-6 items-center border-l border-(--gantt-grid-strong)"
+              style={{ left: cell.x, width: cell.width }}
             >
-              {cell.label}
-            </span>
-          </div>
-        ))}
+              {/* Sticks to the pane edge so a partly scrolled-off month keeps its label (no
+                  overflow clipping on the cell: that would make the cell the sticky container). */}
+              {fits ? (
+                <span
+                  className="sticky px-2 text-meta font-medium whitespace-nowrap text-fg-secondary"
+                  style={{ left: paneWidth }}
+                >
+                  {cell.label}
+                </span>
+              ) : null}
+            </div>
+          )
+        })}
         {tiers.bottom.map((cell) => (
           <div
             key={cell.key}

@@ -52,4 +52,17 @@ describe('task modal URL state', () => {
     setup('/overview?task=abc')
     expect(screen.getByLabelText('task')).toHaveTextContent('abc')
   })
+
+  it('treats an empty ?task= as no task', () => {
+    setup('/overview?task=&group=phase')
+    expect(screen.getByLabelText('task')).toHaveTextContent('none')
+  })
+
+  it('does not push a duplicate entry when the task is already open', () => {
+    const router = setup('/projects/p1/board?task=t-42')
+    const before = router.state.location.key
+    act(() => screen.getByText('open').click())
+    expect(router.state.location.key).toBe(before)
+    expect(router.state.location.search).toBe('?task=t-42')
+  })
 })

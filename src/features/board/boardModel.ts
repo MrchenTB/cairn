@@ -262,16 +262,76 @@ export function stepDrop(
 }
 
 // ---------------------------------------------------------------------------
-// Keyboard dragging
+// Drag geometry (pointer and keyboard)
 // ---------------------------------------------------------------------------
-
-export type BoardDirection = 'up' | 'down' | 'left' | 'right'
 
 /** Vertical geometry of a droppable (client coordinates). */
 export interface VerticalRect {
   top: number
   height: number
 }
+
+/**
+ * The card of `ids` whose vertical centre is nearest to `y` (first one on ties), or null when
+ * none of them is measured. Used to aim at a card when the pointer is over a column but not over
+ * a card (gaps, the space below the last card, the header).
+ */
+export function nearestCard(
+  ids: readonly string[],
+  y: number,
+  rectOf: (id: string) => VerticalRect | null,
+): string | null {
+  let best: string | null = null
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const id of ids) {
+    const rect = rectOf(id)
+    if (!rect) continue
+    const distance = Math.abs(rect.top + rect.height / 2 - y)
+    if (distance < bestDistance) {
+      best = id
+      bestDistance = distance
+    }
+  }
+  return best
+}
+
+/** What decides the side of the target card a card dragged into another column enters on. */
+export type EntryProbe =
+  /** Pointer drags: the pointer's y. */
+  | { pointerY: number }
+  /** Keyboard drags (the card is placed onto its target): the dragged card's top. */
+  | { draggedTop: number }
+
+/**
+ * Index (among the destination column's cards `ids`, without the dragged card) at which a card
+ * dragged in from ANOTHER column enters:
+ * - over the column itself (an empty column) → the end;
+ * - over a card → before it, or after it when the probe says the card is above: the pointer is
+ *   below the card's bottom edge (it was aimed at from the space below or between cards — while
+ *   the pointer is ON a card, the card under it takes that card's place, like sortable does), or
+ *   the dragged card's top is below the card's middle (keyboard).
+ * Unknown targets → the end.
+ */
+export function entryIndex(
+  ids: readonly string[],
+  overId: string,
+  overRect: VerticalRect | null,
+  probe: EntryProbe,
+): number {
+  const index = ids.indexOf(overId)
+  if (index < 0 || !overRect) return ids.length
+  const below =
+    'pointerY' in probe
+      ? probe.pointerY > overRect.top + overRect.height
+      : probe.draggedTop > overRect.top + overRect.height / 2
+  return index + (below ? 1 : 0)
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard dragging
+// ---------------------------------------------------------------------------
+
+export type BoardDirection = 'up' | 'down' | 'left' | 'right'
 
 /**
  * Keyboard drag: the droppable to move the dragged card over next, or null to stay.
@@ -302,18 +362,7 @@ export function keyboardTarget(
   const target = BOARD_COLUMNS[BOARD_COLUMNS.indexOf(column) + (direction === 'right' ? 1 : -1)]
   if (!target) return null
   const candidates = columns[target].filter((id) => id !== activeId)
-  let best: string | null = null
-  let bestDistance = Number.POSITIVE_INFINITY
-  for (const id of candidates) {
-    const rect = rectOf(id)
-    if (!rect) continue
-    const distance = Math.abs(rect.top + rect.height / 2 - centreY)
-    if (distance < bestDistance) {
-      best = id
-      bestDistance = distance
-    }
-  }
-  return best ?? columnDroppableId(target)
+  return nearestCard(candidates, centreY, rectOf) ?? columnDroppableId(target)
 }
 
 /** 1-based position of `id` in its column plus the column size (for announcements). */

@@ -3,7 +3,7 @@
  * name, count, + add task, ⋯ phase menu, inline rename), its sortable top-level tasks (each with
  * its expandable subtasks), its milestones and the inline "Add task" row.
  */
-import { useId, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -18,6 +18,7 @@ import {
   Trash,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +32,7 @@ import type { OutlineGroup, OutlineTask } from '@/domain/hierarchy'
 import { computeProgress } from '@/domain/progress'
 import { NAME_MAX_LENGTH, TITLE_MAX_LENGTH, type Task } from '@/domain/types'
 import { validateName } from '@/domain/validation'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { InlineCreate } from './InlineCreate'
 import { addRowKey, useListContext } from './listContext'
@@ -40,6 +42,8 @@ import { TaskRow } from './TaskRow'
 import type { ListDragData } from './useListDnd'
 
 const validateTitle = (value: string) => validateName(value, TITLE_MAX_LENGTH, 'Task title')?.message ?? null
+
+const taskCountLabel = (count: number) => `${count} ${count === 1 ? 'task' : 'tasks'}`
 
 export interface ListGroupProps {
   group: OutlineGroup
@@ -91,7 +95,7 @@ export function ListGroup({
   return (
     <section
       ref={setNodeRef}
-      aria-label={showHeader ? `${name}, ${group.tasks.length} tasks` : undefined}
+      aria-label={showHeader ? `${name}, ${taskCountLabel(group.tasks.length)}` : undefined}
       className="relative"
     >
       {showHeader ? (
@@ -175,7 +179,22 @@ function GroupHeader({
   const ctx = useListContext()
   const phase = group.phase
   const [renaming, setRenaming] = useState(false)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  /** Enter / Esc ended the rename: focus goes back to the header (a click elsewhere keeps it). */
+  const refocusToggle = useRef(false)
   const count = group.tasks.length
+
+  useEffect(() => {
+    if (!renaming && refocusToggle.current) {
+      refocusToggle.current = false
+      toggleRef.current?.focus()
+    }
+  }, [renaming])
+
+  const finishRename = (refocus: boolean) => {
+    refocusToggle.current = refocus
+    setRenaming(false)
+  }
 
   return (
     <div
@@ -189,22 +208,24 @@ function GroupHeader({
       {renaming && phase ? (
         <RenameInput
           initial={phase.name}
-          onCancel={() => setRenaming(false)}
-          onSave={async (next) => {
-            const error = await ctx.phaseCommands.rename(phase, next)
-            if (!error) setRenaming(false)
-            return error
+          onCancel={finishRename}
+          onSave={(next, refocus) => {
+            // Optimistic: the header shows the new name at once; a failed save is rolled back
+            // and toasted (with Retry) by the store.
+            finishRename(refocus)
+            void ctx.phaseCommands.rename(phase, next).then((message) => {
+              if (message) notify.error('Couldn’t rename the phase', { description: message })
+            })
           }}
         />
       ) : (
         <button
+          ref={toggleRef}
           type="button"
+          aria-label={`${name}, ${taskCountLabel(count)}`}
           aria-expanded={!collapsed}
           aria-controls={collapsed ? undefined : bodyId}
           onClick={() => onCollapsedChange(!collapsed)}
-          onDoubleClick={() => {
-            if (phase) setRenaming(true)
-          }}
           className={cn(
             '-ml-1 flex h-6 min-w-0 items-center gap-1.5 rounded-md pr-1.5 pl-1 text-meta',
             'transition-colors duration-fast hover:bg-hover hover:duration-instant',
@@ -219,10 +240,8 @@ function GroupHeader({
             )}
           />
           <span className="truncate font-semibold text-fg-secondary">{name}</span>
-          <span className="text-fg-tertiary tabular-nums">
-            <span className="sr-only">, </span>
+          <span className="text-fg-tertiary tabular-nums" aria-hidden>
             {count}
-            <span className="sr-only"> {count === 1 ? 'task' : 'tasks'}</span>
           </span>
         </button>
       )}
@@ -303,19 +322,22 @@ function RenameInput({
   onCancel,
 }: {
   initial: string
-  onSave: (name: string) => Promise<string | null>
-  onCancel: () => void
+  /** `refocus`: the rename ended from the keyboard (Enter), so focus returns to the header. */
+  onSave: (name: string, refocus: boolean) => void
+  onCancel: (refocus: boolean) => void
 }) {
   const [value, setValue] = useState(initial)
   const [error, setError] = useState<string | null>(null)
-  const saving = useRef(false)
+  const done = useRef(false)
   const errorId = useId()
 
-  const save = async () => {
-    if (saving.current) return
+  /** Saves a valid change (an unchanged name just closes); an invalid one stays with its error. */
+  const save = (refocus: boolean) => {
+    if (done.current) return
     const next = value.trim()
     if (next === initial.trim()) {
-      onCancel()
+      done.current = true
+      onCancel(refocus)
       return
     }
     const invalid = validateName(next, NAME_MAX_LENGTH, 'Phase name')
@@ -323,27 +345,26 @@ function RenameInput({
       setError(invalid.message)
       return
     }
-    saving.current = true
-    const message = await onSave(next)
-    saving.current = false
-    if (message) setError(message)
+    done.current = true
+    onSave(next, refocus)
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Enter') {
       event.preventDefault()
-      void save()
+      save(true)
     } else if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
-      onCancel()
+      done.current = true
+      onCancel(true)
     }
   }
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
-      <input
+      <Input
         autoFocus
         value={value}
         onChange={(event) => {
@@ -353,18 +374,20 @@ function RenameInput({
         onFocus={(event) => event.currentTarget.select()}
         onKeyDown={onKeyDown}
         onBlur={() => {
+          if (done.current) return
           // Blur saves a valid change and drops an invalid one.
-          if (validateName(value, NAME_MAX_LENGTH, 'Phase name')) onCancel()
-          else void save()
+          if (validateName(value, NAME_MAX_LENGTH, 'Phase name')) {
+            done.current = true
+            onCancel(false)
+          } else {
+            save(false)
+          }
         }}
         aria-label="Phase name"
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
-        className={cn(
-          'h-6 w-64 max-w-full min-w-0 rounded-md border border-input bg-surface px-1.5 text-meta font-semibold text-fg',
-          'focus-visible:outline-2 focus-visible:outline-offset-[-1px] focus-visible:outline-focus',
-          'aria-invalid:border-danger',
-        )}
+        autoComplete="off"
+        className="h-6 w-64 max-w-full px-1.5 text-meta font-semibold"
       />
       {error ? (
         <span id={errorId} role="alert" className="truncate text-meta text-danger">
@@ -401,6 +424,7 @@ function TopLevelItem({ entry, containerId }: { entry: OutlineTask; containerId:
         handle={{ attributes, listeners }}
         handleRef={setActivatorNodeRef}
         placeholder={isDragging}
+        dropLine={!(ctx.drag?.kind === 'task' && ctx.drag.overCollapsed)}
         commands={ctx.commands}
         menu={ctx.menuFor(task)}
       />

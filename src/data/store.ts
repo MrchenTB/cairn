@@ -19,6 +19,10 @@
  *   change's rollback value to the stored one instead;
  * - a full load reads behind the writes already sent (same queue) and re-applies the writes made
  *   meanwhile on top of the snapshot, so it never reverts or loses them.
+ *
+ * Retry re-sends the retryable failures not followed by a successful write, in the order they
+ * were made (an edit of a task whose creation failed goes after the creation). A newer change of
+ * the same fields withdraws an older failure's Retry, so a Retry never overwrites newer work.
  */
 import {
   applyPatches,
@@ -212,12 +216,47 @@ interface PendingWrite {
   patches: Patch[]
   /** Inverse patches of THIS write; their paths are the paths the write touched. */
   inverse: Patch[]
+  /** When the change was made (see RetryHandle.seq). */
+  seq: number
 }
 
-/** A Retry offered for a failed write; only valid in the session (epoch) that made it. */
+/**
+ * A failed write that Retry can send again. Only valid in the session (epoch) that made it, and
+ * only until a newer change of the same fields replaces it: re-sending it then would overwrite
+ * that newer change with an older value.
+ */
 interface RetryHandle {
   run: () => Promise<Result<unknown>>
   epoch: number
+  /** When the original change was made (a Retry that fails again keeps its place in line). */
+  seq: number
+  /** The fields it changes (bookkeeping fields left out), as Immer paths. */
+  paths: readonly Path[]
+  /** A newer change replaced it. */
+  stale: boolean
+  /** Already re-sent by a Retry. */
+  used: boolean
+  /** The re-sent change reached the write pipeline (which reported its outcome). */
+  sent: boolean
+}
+
+/** Fields every write of an entity sets as a side effect; they never make two changes overlap. */
+const BOOKKEEPING_FIELDS: ReadonlySet<string | number> = new Set(['updatedAt', 'completedAt'])
+
+/** The paths of `patches` without bookkeeping fields (['data', table, id, field]). */
+function changedPaths(patches: readonly Patch[]): Path[] {
+  return patches
+    .map((patch) => patch.path)
+    .filter((path) => !(path.length === 4 && BOOKKEEPING_FIELDS.has(path[3])))
+}
+
+/**
+ * True when a change of `newer` replaces some value `older` changed: the same field, or a whole
+ * entity containing it. Editing a field of an entity `older` created or deleted does not replace
+ * it (that edit depends on it).
+ */
+function replaces(newer: readonly Path[], older: readonly Path[]): boolean {
+  return older.some((path) => newer.some((candidate) => isPrefix(candidate, path)))
 }
 
 /** A stored row to merge into the state at `path` (['data', table, id] or ['preferences']). */
@@ -346,6 +385,77 @@ function isEmpty(value: object): boolean {
   return Object.keys(value).length === 0
 }
 
+// The fields each patch type may change. Callers sometimes pass more (a whole row spread into the
+// patch); everything else is ignored so it can never reach the optimistic state or the server.
+const PROJECT_PATCH_FIELDS = keysOf<ProjectPatch>({
+  name: true,
+  description: true,
+  status: true,
+  color: true,
+  startDate: true,
+  dueDate: true,
+  scheduleMode: true,
+  sortOrder: true,
+})
+const PHASE_PATCH_FIELDS = keysOf<PhasePatch>({ name: true, sortOrder: true })
+const TASK_PATCH_FIELDS = keysOf<TaskPatch>({
+  title: true,
+  description: true,
+  status: true,
+  priority: true,
+  startDate: true,
+  dueDate: true,
+  phaseId: true,
+  parentTaskId: true,
+  sortOrder: true,
+})
+const MILESTONE_PATCH_FIELDS = keysOf<MilestonePatch>({ name: true, date: true, phaseId: true })
+const PREFERENCE_FIELDS = keysOf<Preferences>({
+  theme: true,
+  sidebarCollapsed: true,
+  timezone: true,
+  weekStartsOn: true,
+})
+
+/** The keys of an exhaustive `{ field: true }` map (a new patch field must be listed). */
+function keysOf<T extends object>(fields: Record<keyof T, true>): readonly (keyof T)[] {
+  return Object.keys(fields) as (keyof T)[]
+}
+
+/** Only the patchable fields of `patch`. */
+function pickPatch<T extends object>(patch: T, fields: readonly (keyof T)[]): T {
+  const picked: Partial<T> = {}
+  for (const field of fields) {
+    if (Object.hasOwn(patch, field)) picked[field] = patch[field]
+  }
+  return picked as T
+}
+
+/**
+ * The database never lets these columns change (tg_immutable_columns): a patch that tries is
+ * refused before any optimistic change, like the server would. Equal values are fine (a whole
+ * row passed as the patch).
+ */
+function immutableError(
+  patch: object,
+  current: object,
+  fields: readonly string[],
+): AppError | null {
+  for (const field of fields) {
+    if (!Object.hasOwn(patch, field)) continue
+    const value = (patch as Record<string, unknown>)[field]
+    if (value === undefined || value === (current as Record<string, unknown>)[field]) continue
+    return {
+      kind: 'validation',
+      message:
+        field === 'projectId'
+          ? 'Moving items to another project is not supported.'
+          : "An item's id can't be changed.",
+    }
+  }
+  return null
+}
+
 /** The fields of `patch` that are set (undefined = not part of it). */
 function definedFields<T extends object>(patch: Partial<T>): Partial<T> {
   const fields: Partial<T> = {}
@@ -404,11 +514,24 @@ interface WriteSpec<T> {
   /** Background housekeeping: never toasts and never touches lastError / lastSavedAt. */
   background?: boolean
   /**
-   * Deletes: the server no longer has the row (deleted on another device, or by an earlier
-   * attempt whose answer was lost), so the user's intent is already true — keep the optimistic
-   * removal and resync instead of rolling back.
+   * The server's refusal means the change is already in place, so the optimistic change is kept
+   * and the server state fetched instead of rolling back; the action then resolves with
+   * `value()`. `not_found` for deletes (deleted on another device, or by an earlier attempt whose
+   * answer was lost); `conflict` for creates the server already has (a retried create whose first
+   * answer was lost, a dependency another device added).
    */
-  missingIsDone?: boolean
+  alreadyDone?: { kind: 'not_found' | 'conflict'; value: () => T }
+}
+
+/** Deletes: a row that is already gone is deleted. */
+const DELETED: WriteSpec<void>['alreadyDone'] = { kind: 'not_found', value: () => undefined }
+
+/**
+ * Creates: when the attempt is a Retry (`retrying`), a duplicate means the first attempt was
+ * stored although its answer was lost.
+ */
+function storedIfDuplicate<T>(retrying: boolean, row: T): WriteSpec<T>['alreadyDone'] {
+  return retrying ? { kind: 'conflict', value: () => row } : undefined
 }
 
 /** Creates an independent workspace store (the app uses `useWorkspaceStore`; tests make their own). */
@@ -444,7 +567,14 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
   /** Preference changes made before the workspace loaded: saved on top of the stored values. */
   let deferredPreferences: Partial<Preferences> = {}
   let deferredWaiters: ((result: Result) => void)[] = []
-  let lastFailedRetry: RetryHandle | null = null
+  /** Retryable failures not followed by a successful write, oldest first: what Retry re-sends. */
+  let failedWrites: RetryHandle[] = []
+  /** The failure whose error toast (with its Retry button) was posted last. */
+  let toastRetry: RetryHandle | null = null
+  /** The failure being re-sent right now (its write keeps the original place in line). */
+  let retrying: RetryHandle | null = null
+  /** Retries run one after another. */
+  let retryChain: Promise<unknown> = Promise.resolve()
   /** sync.lastError came from a load/refresh (a later successful load clears it). */
   let lastErrorFromLoad = false
   let lastRefreshAt = 0
@@ -543,7 +673,45 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       setDoc(next)
     }
 
-    function onWriteFailed<T>(spec: WriteSpec<T>, error: AppError): void {
+    /** Whether Retry has failed writes to send (superseded ones are dropped from the list). */
+    function hasFailedWrites(): boolean {
+      return failedWrites.length > 0
+    }
+
+    /**
+     * A new change (`paths`, made at `seq`) replaces older failed changes of the same fields:
+     * their Retry would now overwrite it with an older value, so it is withdrawn (and the toast
+     * offering it goes away — the newer change is what counts now).
+     */
+    function supersedeFailures(paths: readonly Path[], seq: number): void {
+      if (paths.length === 0) return
+      const replaced = (handle: RetryHandle) =>
+        !handle.stale && !handle.used && handle.seq < seq && replaces(paths, handle.paths)
+      let withdrawn = false
+      for (const handle of failedWrites) {
+        if (replaced(handle)) {
+          handle.stale = true
+          withdrawn = true
+        }
+      }
+      if (toastRetry && (toastRetry.stale || replaced(toastRetry))) {
+        toastRetry.stale = true
+        toastRetry = null
+        notifier.dismiss?.(SYNC_ERROR_TOAST_ID)
+      }
+      if (withdrawn) {
+        failedWrites = failedWrites.filter((handle) => !handle.stale)
+        updateSync({ canRetry: hasFailedWrites() })
+      }
+    }
+
+    function onWriteFailed<T>(
+      spec: WriteSpec<T>,
+      error: AppError,
+      write: PendingWrite | null,
+      later: readonly PendingWrite[],
+      seq: number,
+    ): void {
       spec.onFailure?.(error)
       if (!spec.background) userWritesPending -= 1
       if (spec.background) {
@@ -555,31 +723,61 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       if (error.kind === 'not_found' || error.kind === 'conflict' || error.kind === 'validation') {
         requestResync()
       }
-      const retryable = isRetryable(error)
-      const retry: RetryHandle | null = retryable ? { run: once(spec.retry), epoch } : null
-      lastFailedRetry = retry
+      let retry: RetryHandle | null = null
+      if (isRetryable(error)) {
+        const paths = write ? changedPaths(write.patches) : []
+        // A newer change of the same fields is already on its way: that one counts, not this.
+        const superseded = later.some(
+          (other) => other.seq > seq && replaces(changedPaths(other.patches), paths),
+        )
+        if (!superseded) {
+          retry = {
+            run: once(spec.retry),
+            epoch,
+            seq,
+            paths,
+            stale: false,
+            used: false,
+            sent: false,
+          }
+          failedWrites = [...failedWrites, retry].sort((a, b) => a.seq - b.seq)
+        }
+      }
+      toastRetry = retry
       lastErrorFromLoad = false
-      updateSync({ pending: get().sync.pending - 1, lastError: error, canRetry: retryable })
+      updateSync({
+        pending: get().sync.pending - 1,
+        lastError: error,
+        canRetry: hasFailedWrites(),
+      })
+      const handle = retry
       notifier.error(`Couldn't ${spec.label}`, {
         id: SYNC_ERROR_TOAST_ID,
         description: error.message,
-        action: retry ? { label: 'Retry', onClick: () => void runRetry(retry) } : undefined,
+        action: handle
+          ? {
+              label: 'Retry',
+              // Everything that failed since the last save, or (after an unrelated save) this.
+              onClick: () => void runRetry([...failedWrites, handle]),
+            }
+          : undefined,
       })
     }
 
-    function onWriteSucceeded<T>(spec: WriteSpec<T>): void {
+    function onWriteSucceeded<T>(spec: WriteSpec<T>, seq: number): void {
       if (!spec.background) userWritesPending -= 1
       if (spec.background) {
         updateSync({ pending: get().sync.pending - 1 })
         return
       }
-      lastFailedRetry = null
+      // A save ends the failures made before it (contract: lastError is cleared by a success).
+      failedWrites = failedWrites.filter((handle) => handle.seq > seq)
       lastErrorFromLoad = false
       updateSync({
         pending: get().sync.pending - 1,
         lastSavedAt: now(),
         lastError: null,
-        canRetry: false,
+        canRetry: hasFailedWrites(),
       })
     }
 
@@ -587,13 +785,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     function write<T>(spec: WriteSpec<T>): Promise<Result<T>> {
       const startEpoch = epoch
       writeSeq += 1
+      // A Retry re-sends an older change: it keeps that change's place among the failures.
+      const retryOf = retrying
+      if (retryOf) retryOf.sent = true
+      const seq = retryOf?.seq ?? writeSeq
       let pending: PendingWrite | null = null
       if (spec.recipe) {
         const [next, patches, inverse] = produceWithPatches(getDoc(), spec.recipe)
         if (patches.length > 0) {
-          pending = { patches, inverse }
+          pending = { patches, inverse, seq }
           pendingWrites.push(pending)
           setDoc(next)
+          if (!spec.background) supersedeFailures(changedPaths(patches), seq)
         }
       }
       if (!spec.background) userWritesPending += 1
@@ -606,19 +809,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           value = await spec.persist(repository())
         } catch (thrown) {
           const error = toAppError(thrown)
-          if (spec.missingIsDone && error.kind === 'not_found') {
-            // Already gone on the server: the deletion the user asked for is in place.
+          const { alreadyDone } = spec
+          if (alreadyDone && alreadyDone.kind === error.kind) {
+            // What the user asked for is already true on the server: keep it, fetch the truth.
             if (startEpoch === epoch) {
               settle(pending)
               requestResync()
-              onWriteSucceeded(spec)
+              onWriteSucceeded(spec, seq)
             }
-            return { ok: true, value: undefined as T }
+            return { ok: true, value: alreadyDone.value() }
           }
           if (startEpoch === epoch) {
             const later = settle(pending)
             if (pending && later) safely(() => rollback(pending, later))
-            onWriteFailed(spec, error)
+            onWriteFailed(spec, error, pending, later ?? [], seq)
           }
           return failed(error)
         }
@@ -632,28 +836,60 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             const { afterSuccess } = spec
             safely(() => afterSuccess(value))
           }
-          onWriteSucceeded(spec)
+          onWriteSucceeded(spec, seq)
         }
         return { ok: true, value }
       })
     }
 
-    async function runRetry(retry: RetryHandle): Promise<Result> {
+    /**
+     * Re-sends failed writes in the order they were made, one at a time (a change that depends on
+     * an earlier one — an edit of a task whose creation failed — is sent after it). Stops at the
+     * first that fails again; the rest stay for the next Retry. Retries never overlap.
+     */
+    function runRetry(handles: readonly RetryHandle[]): Promise<Result> {
+      const run = retryChain.then(() => retryInOrder(handles))
+      retryChain = run.catch(() => undefined)
+      return run
+    }
+
+    async function retryInOrder(handles: readonly RetryHandle[]): Promise<Result> {
+      const startEpoch = epoch
       // A Retry from before a sign-out (perhaps another account now) must never run.
-      if (retry.epoch !== epoch) return OK
-      if (lastFailedRetry === retry) {
-        lastFailedRetry = null
-        updateSync({ canRetry: false })
+      const batch = [...new Set(handles)]
+        .filter((handle) => handle.epoch === startEpoch && !handle.stale && !handle.used)
+        .sort((a, b) => a.seq - b.seq)
+      if (batch.length === 0) return OK
+      // The failure is being handled; a new toast follows if it fails again.
+      notifier.dismiss?.(SYNC_ERROR_TOAST_ID)
+      if (toastRetry && batch.includes(toastRetry)) toastRetry = null
+      for (const handle of batch) {
+        if (epoch !== startEpoch) return failed(SIGNED_OUT_ERROR)
+        if (handle.stale || handle.used) continue // a newer change replaced it meanwhile
+        handle.used = true
+        failedWrites = failedWrites.filter((other) => other !== handle)
+        updateSync({ canRetry: hasFailedWrites() })
+        retrying = handle
+        let running: Promise<Result<unknown>>
+        try {
+          running = handle.run()
+        } finally {
+          retrying = null
+        }
+        const result = await running
+        if (!result.ok) {
+          if (!handle.sent && epoch === startEpoch) {
+            // Refused before sending (it no longer fits the current data); nothing else says so.
+            toastRetry = null
+            notifier.error("Couldn't retry", {
+              id: SYNC_ERROR_TOAST_ID,
+              description: result.error.message,
+            })
+          }
+          return toVoid(result)
+        }
       }
-      const result = await retry.run()
-      if (!result.ok && result.error.kind === 'validation') {
-        // The retried change no longer fits the current data; there is no form to show it.
-        notifier.error("Couldn't retry", {
-          id: SYNC_ERROR_TOAST_ID,
-          description: result.error.message,
-        })
-      }
-      return toVoid(result)
+      return OK
     }
 
     // -- loading ---------------------------------------------------------------
@@ -782,12 +1018,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         if (token !== loadToken) return OK
         if (!silent) {
           // A failed write awaiting Retry stays the error reported.
-          const keepWriteError = lastFailedRetry !== null
+          const keepWriteError = hasFailedWrites()
           if (!keepWriteError) lastErrorFromLoad = true
           set((state) => ({
             status: 'ready',
             sync: keepWriteError ? state.sync : { ...state.sync, lastError: error },
           }))
+          toastRetry = null // this toast replaces the failure toast (same id)
           notifier.error("Couldn't refresh", {
             id: SYNC_ERROR_TOAST_ID,
             description: error.message,
@@ -803,7 +1040,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       loadToken += 1
       pendingWrites.length = 0
       userWritesPending = 0
-      lastFailedRetry = null
+      failedWrites = []
+      toastRetry = null
+      retrying = null
       lastErrorFromLoad = false
       preferencesSeeded = false
       preferencesStored = false
@@ -874,13 +1113,17 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertProject(project),
         reconcile: (row) => [tableRow('projects', row)],
+        alreadyDone: storedIfDuplicate(presetId !== undefined, project),
         retry: () => createProject(input, project.id),
       })
     }
 
-    async function updateProject(id: string, patch: ProjectPatch): Promise<Result> {
+    async function updateProject(id: string, input: ProjectPatch): Promise<Result> {
       const current = own(get().data.projects, id)
       if (!current) return missing('project')
+      const immutable = immutableError(input, current, ['id'])
+      if (immutable) return failed(immutable)
+      const patch = pickPatch(input, PROJECT_PATCH_FIELDS)
       const proposed: ProjectPatch = { ...patch }
       if (patch.name !== undefined) proposed.name = trimmed(patch.name)
       if (patch.description !== undefined)
@@ -927,7 +1170,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             }
           },
           persist: (repo) => repo.deleteProject(id),
-          missingIsDone: true,
+          alreadyDone: DELETED,
           retry: () => deleteProject(id),
         }),
       )
@@ -982,13 +1225,17 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertPhase(phase),
         reconcile: (row) => [tableRow('phases', row)],
+        alreadyDone: storedIfDuplicate(presetId !== undefined, phase),
         retry: () => createPhase(input, phase.id),
       })
     }
 
-    async function updatePhase(id: string, patch: PhasePatch): Promise<Result> {
+    async function updatePhase(id: string, input: PhasePatch): Promise<Result> {
       const current = own(get().data.phases, id)
       if (!current) return missing('phase')
+      const immutable = immutableError(input, current, ['id', 'projectId'])
+      if (immutable) return failed(immutable)
+      const patch = pickPatch(input, PHASE_PATCH_FIELDS)
       const proposed: PhasePatch = { ...patch }
       if (patch.name !== undefined) proposed.name = trimmed(patch.name)
       const error =
@@ -1028,7 +1275,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             }
           },
           persist: (repo) => repo.deletePhase(id),
-          missingIsDone: true,
+          alreadyDone: DELETED,
           retry: () => deletePhase(id),
         }),
       )
@@ -1186,6 +1433,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertTask(task),
         reconcile: (row) => [tableRow('tasks', row)],
+        alreadyDone: storedIfDuplicate(presetId !== undefined, task),
         retry: () => createTask(input, task.id),
       })
     }
@@ -1196,10 +1444,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
      * top-level task's phase change also moves its subtasks. A subtask's phase always follows its
      * parent (a different `phaseId` for a subtask is ignored, like the database does).
      */
-    async function updateTask(id: string, patch: TaskPatch): Promise<Result> {
+    async function updateTask(id: string, input: TaskPatch): Promise<Result> {
       const data = get().data
       const task = own(data.tasks, id)
       if (!task) return missing('task')
+      const immutable = immutableError(input, task, ['id', 'projectId'])
+      if (immutable) return failed(immutable)
+      const patch = pickPatch(input, TASK_PATCH_FIELDS)
       const proposed: TaskPatch = { ...patch }
       if (patch.title !== undefined) proposed.title = trimmed(patch.title)
       if (patch.description !== undefined)
@@ -1344,7 +1595,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
                 ? { keepSubtasks: true, promotedSortOrders: promoted }
                 : { keepSubtasks: false },
             ),
-          missingIsDone: true,
+          alreadyDone: DELETED,
           retry: () => deleteTask(id, options),
         }),
       )
@@ -1383,14 +1634,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertMilestone(milestone),
         reconcile: (row) => [tableRow('milestones', row)],
+        alreadyDone: storedIfDuplicate(presetId !== undefined, milestone),
         retry: () => createMilestone(input, milestone.id),
       })
     }
 
-    async function updateMilestone(id: string, patch: MilestonePatch): Promise<Result> {
+    async function updateMilestone(id: string, input: MilestonePatch): Promise<Result> {
       const data = get().data
       const current = own(data.milestones, id)
       if (!current) return missing('milestone')
+      const immutable = immutableError(input, current, ['id', 'projectId'])
+      if (immutable) return failed(immutable)
+      const patch = pickPatch(input, MILESTONE_PATCH_FIELDS)
       const proposed: MilestonePatch = { ...patch }
       if (patch.name !== undefined) proposed.name = trimmed(patch.name)
       const error =
@@ -1426,7 +1681,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             delete draft.data.milestones[id]
           },
           persist: (repo) => repo.deleteMilestone(id),
-          missingIsDone: true,
+          alreadyDone: DELETED,
           retry: () => deleteMilestone(id),
         }),
       )
@@ -1462,6 +1717,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertDependency(dependency),
         reconcile: (row) => [tableRow('dependencies', row)],
+        // The server already has this link (another device added it, or a first attempt whose
+        // answer was lost): the user's intent holds; the resync brings the stored row.
+        alreadyDone: { kind: 'conflict', value: () => dependency },
         retry: () => addDependency(predecessorId, successorId, dependency.id),
       })
     }
@@ -1475,7 +1733,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             delete draft.data.dependencies[id]
           },
           persist: (repo) => repo.deleteDependency(id),
-          missingIsDone: true,
+          alreadyDone: DELETED,
           retry: () => removeDependency(id),
         }),
       )
@@ -1520,7 +1778,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
 
     // -- preferences -----------------------------------------------------------
 
-    async function updatePreferences(patch: Partial<Preferences>): Promise<Result> {
+    async function updatePreferences(input: Partial<Preferences>): Promise<Result> {
+      const patch = pickPatch(input, PREFERENCE_FIELDS)
       const error =
         enumError(patch.theme, THEME_PREFERENCES, 'theme') ??
         (patch.sidebarCollapsed === undefined || typeof patch.sidebarCollapsed === 'boolean'
@@ -1732,10 +1991,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       })
     }
 
-    async function retryLastFailed(): Promise<Result> {
-      const retry = lastFailedRetry
-      if (!retry) return OK
-      return runRetry(retry)
+    /** Re-sends every failed write not followed by a successful one, in order (see runRetry). */
+    function retryLastFailed(): Promise<Result> {
+      return runRetry(failedWrites)
     }
 
     const actions: WorkspaceActions = {
@@ -2000,14 +2258,16 @@ export function createAuthStore(options: AuthStoreOptions) {
       async signOut() {
         // Changes made just before signing out are still saved (they would be dropped by the reset).
         await whenWritesSaved(options.workspace, flushTimeoutMs)
+        let failure: AppError | null = null
         try {
           await service().signOut()
-          return OK
         } catch (error) {
-          return failed(toAppError(error))
-        } finally {
-          await syncUser()
+          failure = toAppError(error)
         }
+        await syncUser()
+        // Telling the server can fail (offline) after this device already dropped its session:
+        // the user is signed out here, which is what they asked for.
+        return failure && get().status !== 'signed_out' ? failed(failure) : OK
       },
       async sendPasswordReset(email) {
         const problem = credentialsError(email)

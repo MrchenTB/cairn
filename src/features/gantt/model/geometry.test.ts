@@ -97,12 +97,17 @@ describe('spanAnchors', () => {
     })
   })
 
-  it('start only: at the start tick; unscheduled: none', () => {
+  it('start only: in at the start tick, out at the end of the start day; unscheduled: none', () => {
     const x = dayToX(d('2026-11-04'), day)
     expect(spanAnchors({ kind: 'start_only', start: d('2026-11-04'), end: null }, day)).toEqual({
       inX: x - 1,
-      outX: x + MARKER_HALF_WIDTH,
+      outX: x + 36,
     })
+    // Narrow days still leave room for the connector.
+    const mx = dayToX(d('2026-11-04'), month)
+    expect(
+      spanAnchors({ kind: 'start_only', start: d('2026-11-04'), end: null }, month)?.outX,
+    ).toBe(mx + MARKER_HALF_WIDTH * 2)
     expect(spanAnchors({ kind: 'unscheduled', start: null, end: null }, day)).toBeNull()
   })
 })

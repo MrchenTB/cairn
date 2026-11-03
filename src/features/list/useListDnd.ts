@@ -3,7 +3,9 @@
  *
  * - Top-level tasks: one sortable container per outline group; while the pointer crosses into
  *   another (expanded) group the task is previewed there (multi-container pattern). Dropping on
- *   a collapsed group's header puts it at the end of that group.
+ *   a collapsed group's header puts it at the end of that group (the header is highlighted and
+ *   the preview keeps its place, without a drop line, so the layout never shifts under the
+ *   pointer).
  * - Subtasks: reordered among their siblings only (no cross-parent drag in V1).
  * - Keyboard (Space/Enter, arrows, Space/Enter, Esc): reorders within the current container;
  *   moving to another phase uses the row menu ("Move to phase").
@@ -56,6 +58,8 @@ export type ListDragState =
       current: Containers
       /** The group the pointer is over (drop target highlight). */
       overContainer: string | null
+      /** That group is collapsed: the task goes to its end (no drop line in the preview). */
+      overCollapsed: boolean
     }
   | { kind: 'subtask'; activeId: string; parentId: string; siblings: readonly string[] }
 
@@ -202,6 +206,7 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
         initial: containers,
         current: containers,
         overContainer: containerId,
+        overCollapsed: false,
       })
     }
   }
@@ -212,10 +217,15 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
     const overId = over ? String(over.id) : null
     const from = findContainer(state.current, state.activeId)
     const to = findContainer(state.current, overId)
-    if (to !== state.overContainer) {
-      commit({ ...state, overContainer: to })
+    // Over a collapsed group the preview stays put (moving the row would shift the header away
+    // from the pointer); the header is the drop highlight and the row's drop line is hidden.
+    const overCollapsed = to !== null && to !== from && options.current.isCollapsed(to)
+    let next = state
+    if (to !== state.overContainer || overCollapsed !== state.overCollapsed) {
+      next = { ...state, overContainer: to, overCollapsed }
+      commit(next)
     }
-    if (!over || !overId || !from || !to || from === to || options.current.isCollapsed(to)) return
+    if (!over || !overId || !from || !to || from === to || overCollapsed) return
     const overIsGroup = overId === to
     const dragged = active.rect.current.translated
     const placeAfter =
@@ -224,9 +234,8 @@ export function useListDnd({ containers, subtaskIds, isCollapsed, onMove }: UseL
       dragged.top + dragged.height / 2 > over.rect.top + over.rect.height / 2
     recentlyMoved.current = true
     commit({
-      ...state,
-      overContainer: to,
-      current: moveToContainer(state.current, state.activeId, to, overIsGroup ? null : overId, placeAfter),
+      ...next,
+      current: moveToContainer(next.current, next.activeId, to, overIsGroup ? null : overId, placeAfter),
     })
   }
 

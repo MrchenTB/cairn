@@ -3,6 +3,7 @@ import { Outlet, useMatch } from 'react-router'
 import { ErrorState } from '@/components/layout/ErrorState'
 import { LoadingState } from '@/components/layout/LoadingState'
 import { useProject } from '@/data/hooks'
+import { RescheduleDialogHost } from '@/features/gantt/RescheduleDialog'
 import { MilestoneDialogHost } from '@/features/milestones/MilestoneDialogHost'
 import { ProjectDialogHost } from '@/features/projects/ProjectDialogHost'
 import { SearchOverlay } from '@/features/search/SearchOverlay'
@@ -88,6 +89,7 @@ export function AppShell() {
           <SearchOverlay />
           <ProjectDialogHost />
           <MilestoneDialogHost />
+          <RescheduleDialogHost />
         </>
       ) : null}
     </div>

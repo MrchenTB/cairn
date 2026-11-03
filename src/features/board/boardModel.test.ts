@@ -7,10 +7,12 @@ import {
   buildBoard,
   columnDroppableId,
   describeCard,
+  entryIndex,
   findColumn,
   keyboardTarget,
   moveCardInColumns,
   moveForBoardDrop,
+  nearestCard,
   parseColumnDroppableId,
   phaseIdForNewTask,
   positionIn,
@@ -254,6 +256,58 @@ describe('column helpers', () => {
   it('reports 1-based positions', () => {
     expect(positionIn(columns, 'e')).toEqual({ column: 'todo', position: 3, count: 3 })
     expect(positionIn(columns, 'zz')).toBeNull()
+  })
+})
+
+describe('nearestCard', () => {
+  const rects: Record<string, { top: number; height: number }> = {
+    a: { top: 0, height: 60 },
+    c: { top: 70, height: 80 },
+    e: { top: 160, height: 60 },
+  }
+  const rectOf = (id: string) => rects[id] ?? null
+
+  it('picks the card whose vertical centre is nearest', () => {
+    expect(nearestCard(['a', 'c', 'e'], -50, rectOf)).toBe('a')
+    expect(nearestCard(['a', 'c', 'e'], 100, rectOf)).toBe('c')
+    expect(nearestCard(['a', 'c', 'e'], 500, rectOf)).toBe('e')
+    // Tie (a's centre 30, c's centre 110, y = 70): the first one wins.
+    expect(nearestCard(['a', 'c'], 70, rectOf)).toBe('a')
+  })
+
+  it('skips unmeasured cards and returns null when there is nothing to aim at', () => {
+    expect(nearestCard(['zz', 'e'], 0, rectOf)).toBe('e')
+    expect(nearestCard(['zz'], 0, rectOf)).toBeNull()
+    expect(nearestCard([], 0, rectOf)).toBeNull()
+  })
+})
+
+describe('entryIndex (a card dragged in from another column)', () => {
+  const ids = ['b', 'f']
+  const f = { top: 100, height: 60 } // f spans 100–160, middle 130
+
+  it('enters before the card under the pointer, wherever on it the pointer is', () => {
+    expect(entryIndex(ids, 'f', f, { pointerY: 101 })).toBe(1)
+    expect(entryIndex(ids, 'f', f, { pointerY: 155 })).toBe(1)
+  })
+
+  it('enters after a card the pointer is below (space under the last card, gaps)', () => {
+    expect(entryIndex(ids, 'f', f, { pointerY: 170 })).toBe(2)
+    expect(entryIndex(ids, 'b', { top: 0, height: 60 }, { pointerY: 64 })).toBe(1)
+  })
+
+  it('keyboard: before the target unless the dragged card is below its middle', () => {
+    expect(entryIndex(ids, 'f', f, { draggedTop: 100 })).toBe(1)
+    expect(entryIndex(ids, 'f', f, { draggedTop: 131 })).toBe(2)
+  })
+
+  it('an empty column or an unknown target appends', () => {
+    expect(entryIndex([], columnDroppableId('done'), { top: 0, height: 800 }, { pointerY: 5 })).toBe(
+      0,
+    )
+    expect(entryIndex(ids, columnDroppableId('in_progress'), null, { pointerY: 5 })).toBe(2)
+    expect(entryIndex(ids, 'zz', f, { pointerY: 5 })).toBe(2)
+    expect(entryIndex(ids, 'f', null, { pointerY: 5 })).toBe(2)
   })
 })
 

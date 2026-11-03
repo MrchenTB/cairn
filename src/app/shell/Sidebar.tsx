@@ -112,6 +112,10 @@ function useMyTasksAttention() {
   }, [data, today])
 }
 
+/**
+ * Visible count + a spoken phrase. (aria-label on a plain span is not allowed by ARIA and is
+ * dropped by some screen readers, so the phrase is real, visually hidden text.)
+ */
 function MyTasksBadge({ overdue, total }: { overdue: number; total: number }) {
   return (
     <span
@@ -119,14 +123,14 @@ function MyTasksBadge({ overdue, total }: { overdue: number; total: number }) {
         'shrink-0 text-meta tabular-nums',
         overdue > 0 ? 'text-danger' : 'text-fg-tertiary',
       )}
-      // Leading comma: read as a pause after "My Tasks" (inline text is joined without spaces).
-      aria-label={
-        overdue > 0
-          ? `, ${total} due today or overdue (${overdue} overdue)`
-          : `, ${total} due today`
-      }
     >
-      {total}
+      <span aria-hidden>{total}</span>
+      {/* Leading comma: read as a pause after "My Tasks". */}
+      <span className="sr-only">
+        {overdue > 0
+          ? `, ${total} due today or overdue (${overdue} overdue)`
+          : `, ${total} due today`}
+      </span>
     </span>
   )
 }

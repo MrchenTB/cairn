@@ -31,7 +31,7 @@ function BoardSkeleton() {
     <div
       role="status"
       aria-busy="true"
-      className="grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(280px,440px))] gap-3 overflow-hidden px-6 pt-2 pb-4 motion-safe:animate-fade-in-delayed"
+      className="grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(280px,1fr))] gap-3 overflow-hidden px-6 pt-2 pb-4 motion-safe:animate-fade-in-delayed"
     >
       <span className="sr-only">Loading board…</span>
       {BOARD_COLUMNS.map((status, column) => (

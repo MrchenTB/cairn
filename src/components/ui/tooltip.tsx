@@ -6,7 +6,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react'
-import { Tooltip as TooltipPrimitive } from 'radix-ui'
+import { Slot, Tooltip as TooltipPrimitive } from 'radix-ui'
 import { getInputModality, installInputModality } from '@/lib/inputModality'
 import { cn } from '@/lib/utils'
 import { Shortcut } from './kbd'
@@ -57,6 +57,18 @@ export function TooltipContent({
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
   )
+}
+
+/**
+ * Radix's tooltip trigger stamps its own `data-state` (closed / delayed-open) on the child. When
+ * the child is a menu or popover trigger, that overwrites its `data-state="open"` and breaks
+ * `data-[state=open]:` styles. This slot forwards every other prop (handlers, ref, aria).
+ */
+function TooltipTriggerSlot({
+  'data-state': _tooltipState,
+  ...props
+}: ComponentProps<typeof Slot.Root> & { 'data-state'?: string }) {
+  return <Slot.Root {...props} />
 }
 
 export interface TooltipProps {
@@ -116,7 +128,7 @@ export function Tooltip({
           pointerInside.current = false
         }}
       >
-        {children}
+        <TooltipTriggerSlot>{children}</TooltipTriggerSlot>
       </TooltipPrimitive.Trigger>
       {inactive ? null : (
         <TooltipContent side={side} align={align}>

@@ -39,11 +39,11 @@ import {
   type Task,
 } from '@/domain/types'
 import { validateName } from '@/domain/validation'
-import { planScheduleChange } from '@/features/gantt/planner'
+import { planScheduleChangeDetailed } from '@/features/gantt/planner'
 import { SCREEN_READER_INSTRUCTIONS, useDropAnimation } from '@/features/projects/dnd'
 import { usePhaseDialog } from '@/features/projects/phaseDialogStore'
 import { stepAfterId } from '@/features/projects/projectOrder'
-import { plural } from '@/features/projects/projectStats'
+import { deletePhaseDescription, phaseContents, plural } from '@/features/projects/projectStats'
 import { ViewBarActions } from '@/features/projects/viewBar'
 import { notify } from '@/lib/notify'
 import { InlineCreate } from './InlineCreate'
@@ -204,8 +204,17 @@ function ProjectList({ project }: { project: Project }) {
       open: openTask,
       setStatus: (task, status) => void report(actions.updateTask(task.id, { status })),
       setPriority: (task, priority) => void report(actions.updateTask(task.id, { priority })),
-      setDates: (task, dates) =>
-        void planScheduleChange({ taskId: task.id, ...dates }, { source: 'list' }),
+      setDates: (task, dates) => {
+        // Dates always go through the planner (Manual warns about conflicts, Auto previews the
+        // shifts). Remote failures are toasted by the store; a rejected range is reported here.
+        void planScheduleChangeDetailed({ taskId: task.id, ...dates }, { source: 'list' }).then(
+          (outcome) => {
+            if (outcome.status === 'invalid') {
+              notify.error('Couldn’t change the dates', { description: outcome.error.message })
+            }
+          },
+        )
+      },
       addSubtask: (taskId) => {
         setTasksExpanded([taskId], true)
         setEditingRow(addRowKey.subtask(taskId))
@@ -238,11 +247,9 @@ function ProjectList({ project }: { project: Project }) {
         if (afterId !== undefined) void report(actions.movePhase(phase.id, afterId), 'Couldn’t move the phase')
       },
       async remove(phase) {
-        const taskCount = tasks.filter((task) => task.phaseId === phase.id).length
-        const milestoneCount = milestones.filter((m) => m.phaseId === phase.id).length
         const confirmed = await confirm({
           title: `Delete phase “${phase.name}”?`,
-          description: `Its ${plural(taskCount, 'task')} and ${plural(milestoneCount, 'milestone')} become ungrouped (No phase). Nothing else is deleted.`,
+          description: deletePhaseDescription(phaseContents(phase.id, tasks, milestones)),
           confirmLabel: 'Delete phase',
           destructive: true,
         })
@@ -354,7 +361,6 @@ function ProjectList({ project }: { project: Project }) {
             variant="ghost"
             size="sm"
             onClick={() => setTasksExpanded(parentIds, !allExpanded)}
-            aria-label={allExpanded ? 'Collapse all subtasks' : 'Expand all subtasks'}
           >
             {allExpanded ? <ChevronsDownUp /> : <ChevronsUpDown />}
             {allExpanded ? 'Collapse subtasks' : 'Expand subtasks'}
@@ -368,13 +374,14 @@ function ProjectList({ project }: { project: Project }) {
             title="No tasks yet"
             description="Add your first task — a name is enough. Phases are optional: add them later if you want to group tasks."
             action={
-              <div className="w-80 max-w-full text-left">
+              <div className="w-[22rem] max-w-full text-left">
                 <InlineCreate
                   label="Add your first task"
-                  placeholder="Add your first task"
+                  placeholder="Task name, then Enter"
                   inputLabel="Add your first task"
                   open
                   sticky
+                  hint="below"
                   onOpenChange={() => {}}
                   validate={validateTitle}
                   onSubmit={(title) => {
@@ -382,7 +389,6 @@ function ProjectList({ project }: { project: Project }) {
                     setEditingRow(addRowKey.group(NO_PHASE_CONTAINER))
                     return createTask({ title, phaseId: null, parentTaskId: null, afterId: null })
                   }}
-                  className="rounded-md"
                 />
               </div>
             }
@@ -442,7 +448,12 @@ function ProjectList({ project }: { project: Project }) {
             {activeTask ? (
               <TaskRowPreview
                 task={activeTask}
-                subtaskCount={dnd.drag?.kind === 'task' ? (entries.get(activeTask.id)?.subtasks.length ?? 0) : 0}
+                depth={dnd.drag?.kind === 'subtask' ? 1 : 0}
+                subtaskCount={
+                  dnd.drag?.kind === 'task'
+                    ? (entries.get(activeTask.id)?.subtasks.length ?? 0)
+                    : 0
+                }
               />
             ) : null}
           </DragOverlay>

@@ -58,7 +58,9 @@ function Breadcrumbs({ className }: { className?: string }) {
 
 /**
  * 44px location bar at the top of the main panel: breadcrumb on the left; Search (⌘K), theme
- * and the primary "New task" action on the right. Its bottom hairline is the only header line.
+ * and a global "New task" on the right. Everything here is quiet (ghost): the page's own header
+ * owns its primary action, so the location bar never competes with it (design §5.2/§5.3).
+ * Its bottom hairline is the only header line.
  */
 export function TopBar() {
   const searchOpen = useUIStore((s) => s.searchOpen)
@@ -85,12 +87,13 @@ export function TopBar() {
       <ThemeMenu />
       <Tooltip content="New task" shortcut={SHORTCUTS.newTask} side="bottom">
         <Button
-          variant="primary"
+          variant="ghost"
           size="sm"
-          className="ml-1"
+          aria-keyshortcuts="C"
+          className="gap-1.5 pr-2.5 pl-2"
           onClick={() => openNewTask(projectId ? { projectId } : {})}
         >
-          <Plus strokeWidth={2} />
+          <Plus strokeWidth={1.75} />
           New task
         </Button>
       </Tooltip>

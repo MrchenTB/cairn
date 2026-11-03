@@ -10,7 +10,7 @@ import { StatusIcon } from '@/components/task/StatusIcon'
 import type { Task } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { BAR_HEIGHT, BAR_TOP, ROW_HEIGHT } from '../model/constants'
-import { resizeHandleWidth, type BarRect } from '../model/geometry'
+import { resizeHandleWidth, startMarkerOutOffset, type BarRect } from '../model/geometry'
 import { measureLabelWidth } from './measure'
 
 /** Highlight while a dependency is being drawn over this task. */
@@ -19,9 +19,10 @@ export type LinkTargetState = 'valid' | 'invalid' | null
 const focusRing =
   'outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus'
 
+/** Box-shadow ring (not an outline, which the focus styles own) on a link drop target. */
 function linkRing(state: LinkTargetState): string | false {
-  if (state === 'valid') return 'outline-2 outline-offset-1 outline-accent'
-  if (state === 'invalid') return 'cursor-not-allowed outline-2 outline-offset-1 outline-danger'
+  if (state === 'valid') return 'ring-2 ring-accent'
+  if (state === 'invalid') return 'cursor-not-allowed ring-2 ring-danger'
   return false
 }
 
@@ -36,17 +37,22 @@ interface InteractiveProps {
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void
 }
 
-/** Dependency handle: a 16px hot zone glued to the bar edge with an 8px dot, shown on hover. */
+/**
+ * Dependency handle: a 16px hot zone glued to the bar edge with an 8px dot, shown on hover (and
+ * while this bar is the source of a link being drawn). `left` places it explicitly (start marker).
+ */
 function Connector({
   side,
   taskId,
   rowIndex,
   visible,
+  left,
 }: {
   side: 'in' | 'out'
   taskId: string
   rowIndex: number
   visible: boolean
+  left?: number
 }) {
   return (
     <span
@@ -55,11 +61,12 @@ function Connector({
       data-row-index={rowIndex}
       aria-hidden
       className={cn(
-        'absolute top-1/2 flex h-5 w-4 -translate-y-1/2 cursor-crosshair items-center justify-center',
+        'absolute top-1/2 flex h-5 w-4 -translate-y-1/2 cursor-crosshair touch-none items-center justify-center',
         'opacity-0 group-hover/bar:opacity-100 motion-safe:transition-opacity motion-safe:duration-fast',
-        side === 'in' ? '-left-4' : '-right-4',
+        left === undefined && (side === 'in' ? '-left-4' : '-right-4'),
         visible && 'opacity-100',
       )}
+      style={left === undefined ? undefined : { left }}
     >
       <span className="size-2 rounded-full border-[1.5px] border-accent-text bg-main" />
     </span>
@@ -107,7 +114,7 @@ export function TaskBar({
         title={conflict ?? undefined}
         onKeyDown={onKeyDown}
         className={cn(
-          'group/bar absolute z-[2] flex items-center rounded-sm border text-meta font-medium select-none',
+          'group/bar absolute z-[2] flex touch-none items-center rounded-sm border text-meta font-medium select-none',
           dragging ? 'cursor-grabbing shadow-drag' : 'cursor-grab',
           done
             ? 'border-(--gantt-bar-border-done) bg-(--gantt-bar-fill-done) text-(--gantt-bar-text-done)'
@@ -237,7 +244,7 @@ export function DueMarker({
         title={conflict ?? 'No start date'}
         onKeyDown={onKeyDown}
         className={cn(
-          'group/bar absolute z-[2] rounded-sm select-none',
+          'group/bar absolute z-[2] touch-none rounded-sm select-none',
           dragging ? 'cursor-grabbing' : 'cursor-grab',
           focusRing,
           linkRing(linkState),
@@ -314,7 +321,7 @@ export function StartMarker({
       title={conflict ?? 'No due date'}
       onKeyDown={onKeyDown}
       className={cn(
-        'group/bar absolute z-[2] flex items-center rounded-l-sm border-l-2 bg-linear-to-r to-transparent pl-1.5 text-meta select-none',
+        'group/bar absolute z-[2] flex touch-none items-center rounded-l-sm border-l-2 bg-linear-to-r to-transparent pl-1.5 text-meta select-none',
         task.status === 'done'
           ? 'border-(--gantt-bar-border-done) from-(--gantt-bar-fill-done)'
           : 'border-(--gantt-bar-border) from-(--gantt-bar-fill-active)',
@@ -334,6 +341,13 @@ export function StartMarker({
         <span className="text-fg-tertiary">{task.title}</span>
       </span>
       <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+      <Connector
+        side="out"
+        taskId={task.id}
+        rowIndex={rowIndex}
+        visible={linkSource}
+        left={startMarkerOutOffset(dayWidth)}
+      />
     </div>
   )
 }
@@ -378,7 +392,7 @@ export function MilestoneDiamond({
         aria-keyshortcuts="Enter Alt+ArrowLeft Alt+ArrowRight"
         onKeyDown={onKeyDown}
         className={cn(
-          'absolute z-[2] flex items-center justify-center rounded-sm select-none',
+          'absolute z-[2] flex touch-none items-center justify-center rounded-sm select-none',
           dragging ? 'cursor-grabbing' : 'cursor-grab',
           focusRing,
         )}
@@ -440,6 +454,33 @@ export function DragGhost({ rect }: { rect: BarRect }) {
       className="pointer-events-none absolute z-[1] rounded-sm border border-dashed border-(--gantt-drag-ghost-border) bg-(--gantt-drag-ghost)"
       style={{ left: rect.left, width: rect.width, top: BAR_TOP, height: BAR_HEIGHT }}
     />
+  )
+}
+
+/** Dashed tick at the original date of a point (due flag, start tick, milestone) being moved. */
+export function PointGhost({ x }: { x: number }) {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute z-[1] h-4 w-px border-l border-dashed border-(--gantt-drag-ghost-border)"
+      style={{ left: x, top: ROW_HEIGHT / 2 - 8 }}
+    />
+  )
+}
+
+/**
+ * Where the Auto-schedule preview would move this task (dashed accent outline + Δ days), shown
+ * while the preview dialog is open — nothing is written until the user confirms.
+ */
+export function ScheduleGhost({ rect, label }: { rect: BarRect; label: string }) {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute z-[3] flex items-center justify-end rounded-sm border border-dashed border-accent bg-(--gantt-drag-ghost) px-1 text-micro font-medium whitespace-nowrap text-accent-text tabular-nums"
+      style={{ left: rect.left, width: Math.max(rect.width, 8), top: BAR_TOP, height: BAR_HEIGHT }}
+    >
+      {rect.width >= 34 ? label : null}
+    </span>
   )
 }
 

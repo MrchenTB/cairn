@@ -1,5 +1,6 @@
-import { useId, useRef, useState, type FormEvent } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
+import { confirm as askToConfirm } from '@/components/ui/confirm'
 import {
   Dialog,
   DialogBody,
@@ -12,11 +13,17 @@ import {
 import { Label } from '@/components/ui/label'
 import { PasswordInput } from '@/components/ui/password-input'
 import { useAuth } from '@/data/hooks'
-import { useAuthStore } from '@/data/store'
 import type { Result } from '@/domain/types'
 import { notify } from '@/lib/notify'
 import { FormAlert } from './AuthLayout'
 import { MIN_PASSWORD_LENGTH, validateNewPassword, type NewPasswordErrors } from './passwordRules'
+
+export interface SetNewPasswordFormStatus {
+  /** Something was typed in either field. */
+  dirty: boolean
+  /** A save is waiting for the server's answer. */
+  saving: boolean
+}
 
 export interface SetNewPasswordFormProps {
   /** Saves the password; resolves with the store's Result (never throws). */
@@ -25,6 +32,8 @@ export interface SetNewPasswordFormProps {
   onSuccess?: () => void
   /** "Not now": leave without changing the password. */
   onCancel: () => void
+  /** Reports dirty / saving changes (the dialog uses it to guard Esc). */
+  onStatusChange?: (status: SetNewPasswordFormStatus) => void
 }
 
 /**
@@ -33,7 +42,12 @@ export interface SetNewPasswordFormProps {
  * after the save resolved OK. Focus moves to the first invalid field. Renders the dialog body
  * and footer, so it lives inside a DialogContent.
  */
-export function SetNewPasswordForm({ onSubmit, onSuccess, onCancel }: SetNewPasswordFormProps) {
+export function SetNewPasswordForm({
+  onSubmit,
+  onSuccess,
+  onCancel,
+  onStatusChange,
+}: SetNewPasswordFormProps) {
   const ids = useId()
   const passwordRef = useRef<HTMLInputElement>(null)
   const confirmRef = useRef<HTMLInputElement>(null)
@@ -42,6 +56,15 @@ export function SetNewPasswordForm({ onSubmit, onSuccess, onCancel }: SetNewPass
   const [attempted, setAttempted] = useState(false)
   const [saving, setSaving] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
+  const dirty = password !== '' || confirm !== ''
+
+  const onStatusChangeRef = useRef(onStatusChange)
+  useLayoutEffect(() => {
+    onStatusChangeRef.current = onStatusChange
+  })
+  useLayoutEffect(() => {
+    onStatusChangeRef.current?.({ dirty, saving })
+  }, [dirty, saving])
 
   const errors: NewPasswordErrors = attempted ? validateNewPassword(password, confirm) : {}
 
@@ -138,11 +161,25 @@ export function SetNewPasswordForm({ onSubmit, onSuccess, onCancel }: SetNewPass
 /**
  * Shown over the app after the user opened a password-reset link (Supabase mode: they are
  * signed in and `passwordRecovery` is true). A click outside never dismisses it — only
- * "Not now" or Esc (an explicit choice) does; a successful update closes it with a toast.
+ * "Not now" or Esc (an explicit choice) does. Esc asks first once something was typed, and
+ * waits while a save is running (so a failure is never hidden); a successful update closes it
+ * with a toast.
  */
 export function PasswordRecoveryDialog() {
-  const passwordRecovery = useAuthStore((s) => s.passwordRecovery)
-  const { user, actions } = useAuth()
+  const { user, passwordRecovery, actions } = useAuth()
+  const statusRef = useRef<SetNewPasswordFormStatus>({ dirty: false, saving: false })
+
+  const confirmDiscard = async () => {
+    const discard = await askToConfirm({
+      title: 'Discard the new password?',
+      description:
+        'Your password stays as it is. You can request another reset link from the sign-in page.',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep editing',
+      destructive: true,
+    })
+    if (discard) actions.dismissPasswordRecovery()
+  }
 
   return (
     <Dialog
@@ -157,6 +194,12 @@ export function PasswordRecoveryDialog() {
         showClose={false}
         onPointerDownOutside={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => {
+          const { dirty, saving } = statusRef.current
+          if (!dirty && !saving) return // nothing typed: Esc is "Not now"
+          event.preventDefault()
+          if (!saving) void confirmDiscard()
+        }}
       >
         <DialogHeader className="pr-5">
           <DialogTitle>Set a new password</DialogTitle>
@@ -174,6 +217,9 @@ export function PasswordRecoveryDialog() {
             })
           }
           onCancel={() => actions.dismissPasswordRecovery()}
+          onStatusChange={(status) => {
+            statusRef.current = status
+          }}
         />
       </DialogContent>
     </Dialog>

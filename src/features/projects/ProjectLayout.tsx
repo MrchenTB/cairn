@@ -53,6 +53,7 @@ import { PhaseDialogHost } from './PhaseDialog'
 import { usePhaseDialog } from './phaseDialogStore'
 import { ProjectMenuItems } from './ProjectMenuItems'
 import { useProjectCommands } from './projectCommands'
+import { contentsOf } from './projectStats'
 import { ViewBarSlotProvider } from './viewBar'
 
 interface ViewTab {
@@ -134,7 +135,8 @@ function ProjectFrame({ project }: { project: Project }) {
               aria-label="Project progress"
             />
             {dates ? (
-              <span className="inline-flex items-center gap-1.5 text-meta text-fg-tertiary tabular-nums">
+              // Narrow windows keep the room for the name (the dates are in Edit project…).
+              <span className="hidden items-center gap-1.5 text-meta text-fg-tertiary tabular-nums lg:inline-flex">
                 <CalendarRange className="size-3.5" aria-hidden />
                 <span>
                   <span className="sr-only">Dates: </span>
@@ -171,11 +173,9 @@ function ProjectFrame({ project }: { project: Project }) {
                   project={project}
                   commands={commands}
                   onDelete={() =>
-                    void commands.remove(
-                      project,
-                      { tasks: tasks.length, phases: phases.length, milestones: milestones.length },
-                      { leave: true },
-                    )
+                    void commands.remove(project, contentsOf(tasks, phases, milestones), {
+                      leave: true,
+                    })
                   }
                 >
                   <DropdownMenuItem onSelect={() => openPhaseDialog(project.id)}>

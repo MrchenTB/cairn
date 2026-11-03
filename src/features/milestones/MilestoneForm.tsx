@@ -14,15 +14,16 @@ import { DateField } from '@/components/task/DateField'
 import { ProjectDot } from '@/components/task/ProjectDot'
 import { Button } from '@/components/ui/button'
 import { confirm } from '@/components/ui/confirm'
-import {
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useActions, useMilestone, usePhases, useProject } from '@/data/hooks'
 import { formatDate } from '@/domain/dates'
 import {
@@ -112,6 +113,13 @@ export function MilestoneForm({ state, controlsRef, onClose, onDeleting }: Miles
   useLayoutEffect(() => {
     latest.current = { values, dirty }
   })
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const nameId = useId()
   const dateId = useId()
@@ -183,7 +191,8 @@ export function MilestoneForm({ state, controlsRef, onClose, onDeleting }: Miles
       }
       return
     }
-    onClose()
+    // Closed meanwhile (perhaps another milestone is open now): leave that dialog alone.
+    if (mountedRef.current) onClose()
     if (state.mode === 'create') notify.success('Milestone created')
   }
 

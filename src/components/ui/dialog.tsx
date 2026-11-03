@@ -1,8 +1,10 @@
 import type { ComponentProps } from 'react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { X } from 'lucide-react'
+import { useFocusReturn } from '@/lib/focus'
 import { cn } from '@/lib/utils'
 import { Button } from './button'
+import { FocusReturnRecorder } from './focus-return'
 import { dialogMotion, overlayClass } from './styles'
 
 export const Dialog = DialogPrimitive.Root
@@ -44,8 +46,11 @@ export interface DialogContentProps extends ComponentProps<typeof DialogPrimitiv
 }
 
 /**
- * Centred modal panel: overlay, focus trap, Esc / outside click to close and focus return are
- * handled by Radix. Always render a <DialogTitle> (visually hidden if needed).
+ * Centred modal panel: overlay, focus trap, Esc / outside click to close are handled by Radix.
+ * On close, focus returns to the Trigger — or, for dialogs opened without one (a shortcut, app
+ * state, the URL), to the element that had focus when it opened. A custom `onCloseAutoFocus`
+ * runs first and can take over with `event.preventDefault()`. Always render a <DialogTitle>
+ * (visually hidden if needed).
  */
 export function DialogContent({
   className,
@@ -53,9 +58,11 @@ export function DialogContent({
   position = 'center',
   showClose = true,
   overlayClassName,
+  onCloseAutoFocus,
   children,
   ...props
 }: DialogContentProps) {
+  const focusReturn = useFocusReturn(onCloseAutoFocus)
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay className={overlayClassName} />
@@ -69,8 +76,10 @@ export function DialogContent({
           dialogMotion,
           className,
         )}
+        onCloseAutoFocus={focusReturn.onCloseAutoFocus}
         {...props}
       >
+        <FocusReturnRecorder targetRef={focusReturn.targetRef} />
         {children}
         {showClose ? (
           <DialogPrimitive.Close asChild>

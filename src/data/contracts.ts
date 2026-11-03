@@ -246,7 +246,12 @@ export interface WorkspaceActions {
   /** Imports as NEW copies (fresh ids); never modifies or deletes existing data. */
   importBackup(file: BackupFile): Promise<Result<ImportSummary>>
 
-  /** Re-runs the most recent failed write. */
+  /**
+   * Re-runs the failed writes not followed by a successful one (usually just the most recent;
+   * several after an outage), one at a time in the order they were made, stopping at the first
+   * that fails again. A failed write that a newer change of the same fields replaced is never
+   * re-sent (it would overwrite that newer change).
+   */
   retryLastFailed(): Promise<Result>
 }
 

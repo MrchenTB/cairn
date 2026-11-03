@@ -79,6 +79,10 @@ export function toAuthError(error: unknown): RepositoryError {
   if (e.name === 'AuthRetryableFetchError' || e.status === 0) {
     return new RepositoryError('network', NETWORK_ERROR_MESSAGE, error)
   }
+  // No session to act on (signed out meanwhile, or a reset link opened too long ago).
+  if (e.name === 'AuthSessionMissingError') {
+    return new RepositoryError('auth', 'Your session has expired. Sign in again.', error)
+  }
   const known = typeof e.code === 'string' ? AUTH_ERRORS[e.code] : undefined
   if (known) {
     const [kind, message] = known

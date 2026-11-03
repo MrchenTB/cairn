@@ -1,6 +1,6 @@
 /**
  * Project actions shared by the Projects page rows and the project header menu: edit, status
- * changes (with Undo for the ones that hide the project from the active views) and the delete
+ * changes (confirmed with a toast + Undo — the row may leave the current filter) and the delete
  * flow (confirm with exact counts → optional navigation away → delete → forget view prefs).
  * Writes go through the store; failures are toasted and rolled back there.
  */
@@ -40,9 +40,11 @@ export function statusActions(status: ProjectStatus): StatusAction[] {
   }
 }
 
-const STATUS_TOASTS: Partial<Record<ProjectStatus, string>> = {
-  completed: 'Project marked completed',
-  archived: 'Project archived',
+/** Confirmation after a status change (the row may leave the current Projects filter). */
+export function statusChangeMessage(previous: ProjectStatus, next: ProjectStatus): string {
+  if (next === 'completed') return 'Project marked completed'
+  if (next === 'archived') return 'Project archived'
+  return previous === 'archived' ? 'Project unarchived' : 'Project reopened'
 }
 
 export interface ProjectCommands {
@@ -75,16 +77,13 @@ export function useProjectCommands(): ProjectCommands {
           if (result.error.kind === 'validation') notify.error(result.error.message)
           return false
         }
-        const message = STATUS_TOASTS[next]
-        if (message) {
-          notify.success(message, {
-            description: project.name,
-            action: {
-              label: 'Undo',
-              onClick: () => void actions.updateProject(project.id, { status: previous }),
-            },
-          })
-        }
+        notify.success(statusChangeMessage(previous, next), {
+          description: project.name,
+          action: {
+            label: 'Undo',
+            onClick: () => void actions.updateProject(project.id, { status: previous }),
+          },
+        })
         return true
       },
       async remove(project, contents, options = {}) {

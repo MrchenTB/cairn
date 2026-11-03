@@ -8,6 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useUIStore, type MilestoneDialogState } from '@/app/uiStore'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useMilestone, useWorkspaceStatus } from '@/data/hooks'
+import { ignorePointerDownOnToasts } from '@/features/task-modal/dialogGuards'
 import { notify } from '@/lib/notify'
 import { MilestoneForm, type MilestoneFormControls } from './MilestoneForm'
 
@@ -84,8 +85,8 @@ export function MilestoneDialogHost() {
       {current ? (
         <DialogContent
           size="sm"
-          showClose={false}
           className="max-w-[460px]"
+          onPointerDownOutside={ignorePointerDownOnToasts}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             restoreFocus()

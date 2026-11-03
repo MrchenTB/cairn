@@ -3,8 +3,9 @@
  * Shell smoke test — runs in LOCAL data mode against the dev server (playwright.config.ts).
  *
  * Covers the app frame only: boot without console errors, sidebar navigation, redirects and the
- * NotFound page, sidebar collapse + theme persistence (theme applied before React mounts), and
- * the ⌘/Ctrl+K search toggle with Esc. Pages inside the shell belong to feature slices, so the
+ * NotFound page, sidebar collapse + theme persistence (theme applied before React mounts), the
+ * ⌘/Ctrl+K search toggle with Esc, the shortcuts help, and keyboard basics (skip link, focus
+ * return, no shortcuts while typing). Pages inside the shell belong to feature slices, so the
  * assertions stick to shell contracts: URL, document title, breadcrumb, aria-current,
  * aria-expanded, the data-collapsed / .dark state and the stored preferences.
  */
@@ -12,6 +13,7 @@ import { expect, test as base, type Locator, type Page } from '@playwright/test'
 
 const UI_PREFS_KEY = 'cairn:ui-prefs'
 const LOCAL_WORKSPACE_KEY = 'cairn:local:workspace:v1'
+const PROJECT_VIEWS_KEY = 'cairn:project-views'
 
 /** Every test fails if the page logs a console error or throws. */
 const test = base.extend<{ consoleErrors: string[] }>({
@@ -37,8 +39,14 @@ function currentCrumb(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Breadcrumb' }).locator('[aria-current="page"]')
 }
 
+/**
+ * The top-bar Search button. While a modal overlay is open Radix hides the rest of the app from
+ * assistive tech (aria-hidden), so the lookup must include hidden elements.
+ */
 function searchButton(page: Page): Locator {
-  return page.getByRole('banner').getByRole('button', { name: /^Search/ })
+  return page
+    .getByRole('banner', { includeHidden: true })
+    .getByRole('button', { name: /^Search/, includeHidden: true })
 }
 
 /** Waits until the shell is mounted and the workspace has finished loading. */
@@ -121,8 +129,8 @@ test.describe('app shell (local mode)', () => {
   test('redirects keep the query string; unknown routes show NotFound', async ({ page }) => {
     await openApp(page, '/my-tasks')
     await expect(page).toHaveURL(/\/my-tasks\/today$/)
-    await page.goto('/my-tasks/someday')
-    await expect(page).toHaveURL(/\/my-tasks\/today$/)
+    await page.goto('/my-tasks/someday?ref=smoke')
+    await expect(page).toHaveURL(/\/my-tasks\/today\?ref=smoke$/)
     await page.goto('/settings')
     await expect(page).toHaveURL(/\/settings\/account$/)
     await page.goto('/settings/nope')
@@ -131,6 +139,18 @@ test.describe('app shell (local mode)', () => {
     await expect(page).toHaveURL(/\/overview$/) // local mode has no sign-in page
     await page.goto('/?ref=smoke')
     await expect(page).toHaveURL(/\/overview\?ref=smoke$/)
+
+    // /projects/:id opens the project's last used view on this device (default: list).
+    await page.evaluate(
+      (key) => localStorage.setItem(key, JSON.stringify({ 'p-smoke': 'board' })),
+      PROJECT_VIEWS_KEY,
+    )
+    await page.goto('/projects/p-smoke?ref=smoke')
+    await expect(page).toHaveURL(/\/projects\/p-smoke\/board\?ref=smoke$/)
+    await page.goto('/projects/p-other')
+    await expect(page).toHaveURL(/\/projects\/p-other\/list$/)
+    await page.goto('/projects/a%2Fb') // an encoded id stays one path segment
+    await expect(page).toHaveURL(/\/projects\/a%2Fb\/list$/)
 
     await page.goto('/definitely/not-a-page')
     await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible()
@@ -230,7 +250,7 @@ test.describe('app shell (local mode)', () => {
     await expect(button).toHaveAttribute('aria-expanded', 'false')
     await expect(page.getByRole('dialog')).toHaveCount(0)
 
-    // ⌘K toggles; the top-bar button opens it too.
+    // ⌘K toggles; the top-bar button opens it too, and Esc gives focus back to that button.
     await page.keyboard.press(`${mod}+k`)
     await expect(button).toHaveAttribute('aria-expanded', 'true')
     await page.keyboard.press(`${mod}+k`)
@@ -239,6 +259,35 @@ test.describe('app shell (local mode)', () => {
     await expect(button).toHaveAttribute('aria-expanded', 'true')
     await page.keyboard.press('Escape')
     await expect(button).toHaveAttribute('aria-expanded', 'false')
+    await expect(button).toBeFocused()
+  })
+
+  test('"?" opens the shortcuts help: focus stays inside, Esc returns it', async ({ page }) => {
+    await openApp(page, '/overview')
+    const button = searchButton(page)
+    await button.focus()
+    await page.keyboard.press('?')
+    const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
+    await expect(help).toBeVisible()
+    await expect(help.getByText('Go to Timeline')).toBeVisible()
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('Tab')
+      expect(await help.evaluate((node) => node.contains(document.activeElement))).toBe(true)
+    }
+    await page.keyboard.press('Escape')
+    await expect(help).toHaveCount(0)
+    await expect(button).toBeFocused()
+  })
+
+  test('the skip link moves keyboard focus to the main content', async ({ page }) => {
+    await openApp(page, '/overview')
+    await page.keyboard.press('Tab')
+    const skip = page.getByRole('link', { name: 'Skip to content' })
+    await expect(skip).toBeFocused()
+    await expect(skip).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('main')).toBeFocused()
+    await expect(page).toHaveURL(/\/overview$/) // no #main added to the URL
   })
 
   test('single-key shortcuts navigate, but never while typing', async ({ page }) => {
@@ -255,8 +304,10 @@ test.describe('app shell (local mode)', () => {
     })
     const field = page.getByRole('textbox', { name: 'Scratch field' })
     await field.click()
-    await page.keyboard.type('gt')
-    await expect(field).toHaveValue('gt')
+    await page.keyboard.type('gt[?')
+    await expect(field).toHaveValue('gt[?')
     await expect(page).toHaveURL(/\/projects$/)
+    await expect(sidebar(page)).toHaveAttribute('data-collapsed', 'false')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
   })
 })

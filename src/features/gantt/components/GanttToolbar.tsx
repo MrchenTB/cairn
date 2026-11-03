@@ -1,9 +1,10 @@
 /**
  * Gantt controls rendered into the project view bar (via <ViewBarActions>): conflicts chip
- * (hidden at zero), dependency mode (Manual / Auto), Today (T) and Day / Week / Month.
+ * (hidden at zero), Unscheduled (n) (hidden at zero), dependency mode (Manual / Auto), Today (T)
+ * and Day / Week / Month.
  */
 import { useState } from 'react'
-import { ArrowRight, ChevronDown, TriangleAlert, Workflow } from 'lucide-react'
+import { ArrowRight, CalendarOff, ChevronDown, TriangleAlert, Workflow } from 'lucide-react'
 import type { GanttScale } from '@/app/viewPrefs'
 import { Button } from '@/components/ui/button'
 import {
@@ -46,12 +47,24 @@ export interface GanttToolbarProps {
   today: ISODate
   onOpenConflict: (successorId: string) => void
   onResolveAll: () => void
+  /** Tasks (any level) in the Unscheduled group. */
+  unscheduledCount: number
+  onShowUnscheduled: () => void
 }
 
 export function GanttToolbar(props: GanttToolbarProps) {
   return (
     <>
       <ConflictsChip {...props} />
+      {props.unscheduledCount > 0 ? (
+        <Tooltip content="Jump to the tasks without dates">
+          <Button variant="ghost" size="sm" onClick={props.onShowUnscheduled}>
+            <CalendarOff aria-hidden />
+            Unscheduled
+            <span className="text-fg-tertiary tabular-nums">{props.unscheduledCount}</span>
+          </Button>
+        </Tooltip>
+      ) : null}
       <ScheduleModeMenu mode={props.scheduleMode} onChange={props.onScheduleModeChange} />
       <Tooltip content="Scroll to today" shortcut="t">
         <Button variant="ghost" size="sm" onClick={props.onToday}>

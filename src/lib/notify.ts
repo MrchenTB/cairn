@@ -14,8 +14,9 @@ export const notify = {
   success(message: string, options?: { description?: string; action?: NotifyAction }) {
     return toast.success(message, options)
   },
+  /** Neutral information (with the info icon, like every other toast type). */
   info(message: string, options?: { description?: string; action?: NotifyAction }) {
-    return toast(message, options)
+    return toast.info(message, options)
   },
   warning(message: string, options?: { description?: string; action?: NotifyAction }) {
     return toast.warning(message, options)

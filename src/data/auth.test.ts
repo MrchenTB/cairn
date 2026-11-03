@@ -218,6 +218,20 @@ describe('toAuthError', () => {
     expect(toAuthError(error).kind).toBe(kind)
   })
 
+  it('a missing session (e.g. a reset link left open too long) reads as an expired session', () => {
+    // supabase-js: new AuthSessionMissingError() — no code, message 'Auth session missing!'
+    const error = toAuthError({
+      name: 'AuthSessionMissingError',
+      status: 400,
+      code: undefined,
+      message: 'Auth session missing!',
+    })
+    expect(error).toMatchObject({
+      kind: 'auth',
+      message: 'Your session has expired. Sign in again.',
+    })
+  })
+
   it('keeps the server explanation for weak passwords', () => {
     const error = toAuthError({
       name: 'AuthWeakPasswordError',
@@ -544,5 +558,43 @@ describe('session transitions', () => {
     await store.getState().actions.init()
     controller.abort()
     expect(auth.unsubscribe).toHaveBeenCalledOnce()
+  })
+})
+
+describe('second review', () => {
+  it('signing out offline still signs this device out and reports success', async () => {
+    const workspace = fakeWorkspace()
+    const auth = controllableService({ id: 'u1', email: 'me@example.com' })
+    vi.mocked(auth.service.signOut).mockImplementationOnce(async () => {
+      auth.expireSilently() // supabase-js drops the local session…
+      throw new RepositoryError('network', 'Network error — check your connection.') // …the server call failed
+    })
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: auth.service,
+      workspace: workspace.store,
+    })
+    await store.getState().actions.init()
+    expect(await store.getState().actions.signOut()).toEqual({ ok: true, value: undefined })
+    expect(store.getState().status).toBe('signed_out')
+    expect(workspace.actions.reset).toHaveBeenCalledOnce()
+  })
+
+  it('a sign-out that leaves the session in place reports the failure', async () => {
+    const auth = controllableService({ id: 'u1', email: 'me@example.com' })
+    vi.mocked(auth.service.signOut).mockRejectedValueOnce(
+      new RepositoryError('network', 'Network error — check your connection.'),
+    )
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: auth.service,
+      workspace: fakeWorkspace().store,
+    })
+    await store.getState().actions.init()
+    expect(await store.getState().actions.signOut()).toMatchObject({
+      ok: false,
+      error: { kind: 'network' },
+    })
+    expect(store.getState().status).toBe('signed_in')
   })
 })

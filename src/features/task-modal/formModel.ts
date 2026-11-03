@@ -115,11 +115,7 @@ export function diffTask(task: Task, edits: TaskFormEdits): TaskSaveDiff {
   if (edits.priority !== undefined && edits.priority !== task.priority) {
     patch.priority = edits.priority
   }
-  if (
-    edits.phaseId !== undefined &&
-    task.parentTaskId === null &&
-    edits.phaseId !== task.phaseId
-  ) {
+  if (edits.phaseId !== undefined && task.parentTaskId === null && edits.phaseId !== task.phaseId) {
     patch.phaseId = edits.phaseId
   }
   const startDate = edits.startDate !== undefined ? edits.startDate : task.startDate

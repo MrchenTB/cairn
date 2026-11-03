@@ -7,8 +7,10 @@ import {
   makeWorkspace,
 } from '@/domain/testFactories'
 import {
+  deletePhaseDescription,
   deleteProjectDescription,
   listJoin,
+  phaseContents,
   plural,
   projectContents,
   taskCountsByProject,
@@ -49,9 +51,45 @@ describe('projectContents / delete copy', () => {
       ],
     })
     const contents = projectContents(data, 'p1')
-    expect(contents).toEqual({ tasks: 2, phases: 1, milestones: 2 })
+    expect(contents).toEqual({ tasks: 1, subtasks: 1, phases: 1, milestones: 2 })
     expect(deleteProjectDescription(contents)).toBe(
-      'Deletes 2 tasks, 1 phase and 2 milestones along with the project. This can’t be undone.',
+      'Deletes 1 task, 1 subtask, 1 phase and 2 milestones along with the project. This can’t be undone.',
+    )
+    // Zero counts are left out; an empty project says so.
+    expect(deleteProjectDescription(projectContents(data, 'p2'))).toBe(
+      'Deletes 1 task along with the project. This can’t be undone.',
+    )
+    expect(deleteProjectDescription({ tasks: 0, subtasks: 0, phases: 0, milestones: 0 })).toBe(
+      'The project has no tasks, phases or milestones. This can’t be undone.',
+    )
+  })
+
+  it('describes what a phase delete ungroups (tasks, subtasks, milestones; zero counts left out)', () => {
+    const tasks = [
+      makeTask({ id: 'a', projectId: 'p1', phaseId: 'ph1' }),
+      makeTask({ projectId: 'p1', phaseId: 'ph1', parentTaskId: 'a' }),
+      makeTask({ projectId: 'p1', phaseId: 'ph1', parentTaskId: 'a' }),
+      makeTask({ projectId: 'p1', phaseId: 'ph1' }),
+      makeTask({ projectId: 'p1', phaseId: 'ph2' }),
+      makeTask({ projectId: 'p1', phaseId: null }),
+    ]
+    const milestones = [
+      makeMilestone({ projectId: 'p1', phaseId: 'ph1', date: '2026-11-20' }),
+      makeMilestone({ projectId: 'p1', phaseId: null, date: '2026-11-21' }),
+    ]
+    const contents = phaseContents('ph1', tasks, milestones)
+    expect(contents).toEqual({ tasks: 2, subtasks: 2, milestones: 1 })
+    expect(deletePhaseDescription(contents)).toBe(
+      'Its 2 tasks, 2 subtasks and 1 milestone become ungrouped (No phase). Nothing else is deleted.',
+    )
+    expect(deletePhaseDescription(phaseContents('ph2', tasks, milestones))).toBe(
+      'Its 1 task becomes ungrouped (No phase). Nothing else is deleted.',
+    )
+    expect(deletePhaseDescription({ tasks: 0, subtasks: 0, milestones: 2 })).toBe(
+      'Its 2 milestones become ungrouped (No phase). Nothing else is deleted.',
+    )
+    expect(deletePhaseDescription(phaseContents('empty', tasks, milestones))).toBe(
+      'The phase is empty. Nothing else is deleted.',
     )
   })
 

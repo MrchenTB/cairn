@@ -110,7 +110,8 @@ export interface SpanAnchors {
 
 /**
  * Link anchors per span kind: range → bar edges; due-only → either side of the due flag;
- * start-only → either side of the start tick; unscheduled → none (no link is drawn).
+ * start-only → the start tick (in) and the end of the start day, which scheduling treats as its
+ * finish (out); unscheduled → none (no link is drawn).
  */
 export function spanAnchors(span: DaySpan, geometry: TimelineGeometry): SpanAnchors | null {
   if (span.kind === 'range' && span.start !== null && span.end !== null) {
@@ -123,9 +124,14 @@ export function spanAnchors(span: DaySpan, geometry: TimelineGeometry): SpanAnch
   }
   if (span.kind === 'start_only' && span.start !== null) {
     const x = dayToX(span.start, geometry)
-    return { inX: x - 1, outX: x + MARKER_HALF_WIDTH }
+    return { inX: x - 1, outX: x + startMarkerOutOffset(geometry.dayWidth) }
   }
   return null
+}
+
+/** Distance from a start marker's tick to its outgoing anchor / connector (end of the day). */
+export function startMarkerOutOffset(dayWidth: number): number {
+  return Math.max(dayWidth, MARKER_HALF_WIDTH * 2)
 }
 
 // ---------------------------------------------------------------------------
@@ -177,9 +183,11 @@ export interface LinkRoute {
   arrow: string
   /** Where the "remove" button goes when the link is selected. */
   mid: Point
-  /** Vertical extent (for culling). */
+  /** Extent (for culling). */
   top: number
   bottom: number
+  left: number
+  right: number
   /** true when the link had to loop back (successor starts before the predecessor ends). */
   backward: boolean
 }
@@ -214,12 +222,20 @@ export function linkRoute(from: Point, to: Point, gap = LINK_GAP, radius = LINK_
     mid = { x: (outX + inX) / 2, y: laneY }
   }
   const arrow = `M${to.x - ARROW_LENGTH} ${to.y - ARROW_HALF_HEIGHT} L${to.x} ${to.y} L${to.x - ARROW_LENGTH} ${to.y + ARROW_HALF_HEIGHT} Z`
+  let left = Number.POSITIVE_INFINITY
+  let right = Number.NEGATIVE_INFINITY
+  for (const point of points) {
+    if (point.x < left) left = point.x
+    if (point.x > right) right = point.x
+  }
   return {
     d: roundedPath(points, radius),
     arrow,
     mid,
     top: Math.min(from.y, to.y) - ROW_HEIGHT / 2,
     bottom: Math.max(from.y, to.y) + ROW_HEIGHT / 2,
+    left: left - ARROW_LENGTH,
+    right,
     backward,
   }
 }

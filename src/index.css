@@ -227,6 +227,22 @@ html[data-input-modality='pointer']
 }
 
 /*
+ * Keyboard users: the highlighted row of a menu or select is where focus is, and its hover
+ * background alone is too faint to follow (< 3:1, WCAG 1.4.11). Add the inset focus ring while
+ * the keyboard is in use; pointer users keep the quiet hover background.
+ */
+html[data-input-modality='keyboard']
+  :is(
+    [role='menuitem'],
+    [role='menuitemradio'],
+    [role='menuitemcheckbox'],
+    [role='option']
+  )[data-highlighted] {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-width) * -1);
+}
+
+/*
  * sonner (toasts) — themed through its own variables (set inline on <Toaster/>), plus a few
  * overrides that need more specificity than sonner's injected stylesheet. No richColors:
  * semantic colour appears only on the icon.

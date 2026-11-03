@@ -20,6 +20,7 @@ import {
   takePendingProjectCreate,
 } from './createSupport'
 import { CreateTaskForm } from './CreateTaskForm'
+import { ignorePointerDownOnToasts } from './dialogGuards'
 import { EditTaskForm } from './EditTaskForm'
 import type { TaskFormValues } from './formModel'
 import { isSaveShortcut } from './keys'
@@ -48,6 +49,28 @@ function createKey(defaults: NewTaskDefaults): string {
 
 function sessionKey(session: Session): string {
   return session.kind === 'edit' ? `edit-${session.taskId}` : createKey(session.defaults)
+}
+
+/**
+ * Runs `callback` once no dialog is on screen any more (exit animations included), checking
+ * every frame, at most `timeoutMs` later. Returns a cancel function.
+ */
+function afterDialogsClosed(callback: () => void, timeoutMs = 1000): () => void {
+  const startedAt = performance.now()
+  let frame = 0
+  const tick = () => {
+    const open = document.querySelector('[role="dialog"], [role="alertdialog"]') !== null
+    if (open && performance.now() - startedAt < timeoutMs) {
+      frame = requestAnimationFrame(tick)
+      return
+    }
+    frame = 0
+    callback()
+  }
+  frame = requestAnimationFrame(tick)
+  return () => {
+    if (frame) cancelAnimationFrame(frame)
+  }
 }
 
 export function TaskModalHost() {
@@ -102,6 +125,7 @@ export function TaskModalHost() {
   useEffect(() => {
     if (!taskParam) {
       reportedMissingRef.current = null
+      deletingRef.current = null
       return
     }
     if (task || status !== 'ready') return
@@ -116,25 +140,31 @@ export function TaskModalHost() {
   }, [taskParam, task, status, closeTask])
 
   // "Create project" from an empty workspace: reopen New task for the new project afterwards.
-  useEffect(
-    () =>
-      useUIStore.subscribe((state, previous) => {
-        if (previous.projectDialog?.mode !== 'create' || state.projectDialog !== null) return
-        const pending = takePendingProjectCreate()
-        if (!pending) return
-        // Let the workspace store settle (the dialog may close in the same tick it creates).
-        window.setTimeout(() => {
-          const created = projectsRef.current.find(
-            (project) => !pending.knownProjectIds.has(project.id) && project.status !== 'archived',
-          )
-          if (!created) return
-          useUIStore
-            .getState()
-            .openNewTask(defaultsWithDraft(pending.defaults, created.id, pending.draft))
-        }, 0)
-      }),
-    [],
-  )
+  useEffect(() => {
+    let cancel: (() => void) | null = null
+    const unsubscribe = useUIStore.subscribe((state, previous) => {
+      if (previous.projectDialog?.mode !== 'create' || state.projectDialog !== null) return
+      const pending = takePendingProjectCreate()
+      if (!pending) return
+      cancel?.()
+      // Wait until the project dialog has finished closing: while its focus scope is still
+      // mounted, the page it navigates to could take focus from the reopened modal.
+      cancel = afterDialogsClosed(() => {
+        cancel = null
+        const created = projectsRef.current.find(
+          (project) => !pending.knownProjectIds.has(project.id) && project.status !== 'archived',
+        )
+        if (!created) return
+        useUIStore
+          .getState()
+          .openNewTask(defaultsWithDraft(pending.defaults, created.id, pending.draft))
+      })
+    })
+    return () => {
+      unsubscribe()
+      cancel?.()
+    }
+  }, [])
 
   const closeEdit = useCallback(() => closeTask(), [closeTask])
 
@@ -188,6 +218,7 @@ export function TaskModalHost() {
           className="max-w-[680px]"
           // The form focuses its title itself.
           onOpenAutoFocus={(event) => event.preventDefault()}
+          onPointerDownOutside={ignorePointerDownOnToasts}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             restoreFocus()

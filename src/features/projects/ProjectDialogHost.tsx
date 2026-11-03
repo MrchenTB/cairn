@@ -40,6 +40,7 @@ import {
   NAME_MAX_LENGTH,
   PROJECT_COLORS,
   PROJECT_STATUSES,
+  type AppError,
   type ISODate,
   type Project,
   type ProjectColor,
@@ -100,8 +101,22 @@ function sameValues(a: FormValues, b: FormValues): boolean {
   )
 }
 
+const dialogKeys = new WeakMap<ProjectDialogState, string>()
+let dialogSequence = 0
+
+/**
+ * One key per open request (every openProjectDialog call passes a new state object), so each
+ * opening starts a fresh form: re-opening the same project must not reuse the previous values or
+ * its "unsaved changes" state.
+ */
 function dialogKey(state: ProjectDialogState): string {
-  return state.mode === 'create' ? 'create' : `edit:${state.projectId}`
+  let key = dialogKeys.get(state)
+  if (!key) {
+    dialogSequence += 1
+    key = `${state.mode}:${dialogSequence}`
+    dialogKeys.set(state, key)
+  }
+  return key
 }
 
 export function ProjectDialogHost() {
@@ -185,8 +200,6 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
   const [errors, setErrors] = useState<FormErrors>({})
   const [submitting, setSubmitting] = useState(false)
   const [submitFailed, setSubmitFailed] = useState(false)
-  /** An earlier attempt failed remotely: its store toast offers a Retry that this one replaces. */
-  const failedOnce = useRef(false)
 
   const nameRef = useRef<HTMLInputElement>(null)
   const descriptionRef = useRef<HTMLTextAreaElement>(null)
@@ -250,31 +263,29 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
       startDate: values.startDate,
       dueDate: values.dueDate,
     }
+    const fail = (error: AppError) => {
+      if (error.kind === 'validation') {
+        setErrors({ form: error.message })
+        return
+      }
+      // The store rolled the change back and toasted it. While this form is open it owns the
+      // retry ("Try again" re-sends the form), so the toast's Retry — which would create the
+      // project a second time — is taken away.
+      notify.dismiss(SYNC_ERROR_TOAST_ID)
+      setSubmitFailed(true)
+    }
     if (state.mode === 'create') {
       const result = await actions.createProject(input)
       setSubmitting(false)
-      if (result.ok) {
-        // Retrying from the form re-sent the project: drop the stale "Retry" toast (no duplicate).
-        if (failedOnce.current) notify.dismiss(SYNC_ERROR_TOAST_ID)
-        onDone()
-        navigate(`/projects/${result.value.id}/list`)
-        return
-      }
-      if (result.error.kind === 'validation') setErrors({ form: result.error.message })
-      else {
-        failedOnce.current = true
-        setSubmitFailed(true)
-      }
+      if (!result.ok) return fail(result.error)
+      onDone()
+      navigate(`/projects/${result.value.id}/list`)
       return
     }
     const result = await actions.updateProject(state.projectId, input)
     setSubmitting(false)
-    if (result.ok) {
-      onDone()
-      return
-    }
-    if (result.error.kind === 'validation') setErrors({ form: result.error.message })
-    else setSubmitFailed(true)
+    if (!result.ok) return fail(result.error)
+    onDone()
   }
 
   const onSubmit = (event: FormEvent) => {
