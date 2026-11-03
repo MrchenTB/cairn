@@ -3,7 +3,12 @@
  * in loaders (no flash) and keep the query string, so `?task=<id>` deep links survive them.
  */
 import type { ComponentType } from 'react'
-import { createBrowserRouter, redirect, type LoaderFunctionArgs, type RouteObject } from 'react-router'
+import {
+  createBrowserRouter,
+  redirect,
+  type LoaderFunctionArgs,
+  type RouteObject,
+} from 'react-router'
 import { LoadingState } from '@/components/layout/LoadingState'
 import { AppSplash } from './AppSplash'
 import { AuthGate } from './AuthGate'
@@ -93,12 +98,17 @@ export const routes: RouteObject[] = [
                     children: [
                       {
                         index: true,
-                        lazy: page(() => import('@/features/projects/ProjectsPage'), 'ProjectsPage'),
+                        lazy: page(
+                          () => import('@/features/projects/ProjectsPage'),
+                          'ProjectsPage',
+                        ),
                       },
                       {
                         path: ':projectId',
                         handle: handle(({ params, data }) =>
-                          params.projectId ? data.projects[params.projectId]?.name : null,
+                          params.projectId && Object.hasOwn(data.projects, params.projectId)
+                            ? data.projects[params.projectId].name
+                            : null,
                         ),
                         lazy: page(
                           () => import('@/features/projects/ProjectLayout'),
@@ -138,7 +148,10 @@ export const routes: RouteObject[] = [
                       {
                         path: ':section',
                         loader: allowParam('section', SETTINGS_SECTIONS, '/settings/account'),
-                        lazy: page(() => import('@/features/settings/SettingsPage'), 'SettingsPage'),
+                        lazy: page(
+                          () => import('@/features/settings/SettingsPage'),
+                          'SettingsPage',
+                        ),
                       },
                     ],
                   },

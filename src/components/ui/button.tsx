@@ -42,7 +42,12 @@ export function Button({
     <button
       data-slot="button"
       type={type ?? 'button'}
-      className={cn(buttonVariants({ variant, size }), className)}
+      // Busy is not "unavailable": keep full colour, the spinner says it is working.
+      className={cn(
+        buttonVariants({ variant, size }),
+        loading && 'disabled:opacity-100',
+        className,
+      )}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       {...props}

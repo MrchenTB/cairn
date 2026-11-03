@@ -1,0 +1,128 @@
+/**
+ * "Add phase" dialog, opened from the project header menu (any view). The List view also adds
+ * phases inline; both go through actions.createPhase.
+ */
+import { useId, useRef, useState, type FormEvent } from 'react'
+import { ErrorState } from '@/components/layout/ErrorState'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { useActions } from '@/data/hooks'
+import { NAME_MAX_LENGTH } from '@/domain/types'
+import { validateName } from '@/domain/validation'
+import { usePhaseDialog } from './phaseDialogStore'
+
+export function PhaseDialogHost() {
+  const projectId = usePhaseDialog((s) => s.projectId)
+  const close = usePhaseDialog((s) => s.close)
+  const [shown, setShown] = useState(projectId)
+  if (projectId !== null && projectId !== shown) setShown(projectId)
+
+  return (
+    <Dialog
+      open={projectId !== null}
+      onOpenChange={(open) => {
+        if (!open) close()
+      }}
+    >
+      {shown ? <PhaseForm key={shown} projectId={shown} onDone={close} /> : null}
+    </Dialog>
+  )
+}
+
+function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => void }) {
+  const actions = useActions()
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const inputId = useId()
+  const errorId = useId()
+
+  const submit = async () => {
+    if (submitting) return
+    const invalid = validateName(name, NAME_MAX_LENGTH, 'Phase name')
+    if (invalid) {
+      setError(invalid.message)
+      inputRef.current?.focus()
+      return
+    }
+    setSubmitting(true)
+    setFailed(false)
+    const result = await actions.createPhase({ projectId, name: name.trim() })
+    setSubmitting(false)
+    if (result.ok) onDone()
+    else if (result.error.kind === 'validation') setError(result.error.message)
+    else setFailed(true)
+  }
+
+  const onSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    void submit()
+  }
+
+  return (
+    <DialogContent size="sm">
+      <form noValidate onSubmit={onSubmit}>
+        <DialogHeader>
+          <DialogTitle>New phase</DialogTitle>
+          <DialogDescription>
+            Phases group a project’s tasks and milestones, e.g. “Research” or “Launch”.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="flex flex-col gap-1.5 pt-1 pb-3">
+          <Label htmlFor={inputId}>Name</Label>
+          <Input
+            ref={inputRef}
+            id={inputId}
+            autoFocus
+            autoComplete="off"
+            value={name}
+            placeholder="Phase name"
+            onChange={(event) => {
+              setName(event.target.value)
+              setError(null)
+              setFailed(false)
+            }}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            aria-required
+          />
+          {error ? (
+            <p id={errorId} className="text-meta text-danger">
+              {error}
+            </p>
+          ) : null}
+          {failed ? (
+            <ErrorState
+              variant="banner"
+              className="mt-2"
+              title="Couldn’t add the phase"
+              retryLabel="Try again"
+              onRetry={() => void submit()}
+              retrying={submitting}
+            />
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="secondary" size="md" onClick={onDone}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" size="md" loading={submitting}>
+            Add phase
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  )
+}

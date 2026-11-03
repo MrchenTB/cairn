@@ -63,11 +63,18 @@ function createStoredValue<T>(key: string, parse: (raw: unknown) => T) {
   }
 }
 
+/** Own-property lookup, so ids like "constructor" never read Object.prototype. */
+function own<V>(record: Record<string, V>, key: string): V | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined
+}
+
 function parseRecord<V>(guard: (value: unknown) => value is V) {
   return (raw: unknown): Record<string, V> => {
     const result: Record<string, V> = {}
     if (isPlainObject(raw)) {
-      for (const [id, value] of Object.entries(raw)) if (guard(value)) result[id] = value
+      for (const [id, value] of Object.entries(raw)) {
+        if (id !== '__proto__' && guard(value)) result[id] = value
+      }
     }
     return result
   }
@@ -77,7 +84,9 @@ const views = createStoredValue(VIEWS_KEY, parseRecord(isProjectView))
 const scales = createStoredValue(SCALES_KEY, parseRecord(isGanttScale))
 const recents = createStoredValue(RECENTS_KEY, (raw): string[] =>
   Array.isArray(raw)
-    ? raw.filter((id): id is string => typeof id === 'string' && id.length > 0).slice(0, MAX_RECENTS)
+    ? raw
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        .slice(0, MAX_RECENTS)
     : [],
 )
 
@@ -87,18 +96,18 @@ const recents = createStoredValue(RECENTS_KEY, (raw): string[] =>
 
 /** Last view used for the project (default 'list'). */
 export function getProjectView(projectId: string): ProjectView {
-  return views.get()[projectId] ?? DEFAULT_PROJECT_VIEW
+  return own(views.get(), projectId) ?? DEFAULT_PROJECT_VIEW
 }
 
 export function setProjectView(projectId: string, view: ProjectView): void {
   const current = views.get()
-  if (current[projectId] === view) return
+  if (own(current, projectId) === view) return
   views.set({ ...current, [projectId]: view })
 }
 
 export function useProjectView(projectId: string): ProjectView {
   const all = useSyncExternalStore(views.subscribe, views.get, views.get)
-  return all[projectId] ?? DEFAULT_PROJECT_VIEW
+  return own(all, projectId) ?? DEFAULT_PROJECT_VIEW
 }
 
 // ---------------------------------------------------------------------------
@@ -107,12 +116,12 @@ export function useProjectView(projectId: string): ProjectView {
 
 /** Gantt scale for a scope: a project id, or a page key such as 'timeline' (default 'week'). */
 export function getGanttScale(scopeId: string): GanttScale {
-  return scales.get()[scopeId] ?? DEFAULT_GANTT_SCALE
+  return own(scales.get(), scopeId) ?? DEFAULT_GANTT_SCALE
 }
 
 export function setGanttScale(scopeId: string, scale: GanttScale): void {
   const current = scales.get()
-  if (current[scopeId] === scale) return
+  if (own(current, scopeId) === scale) return
   scales.set({ ...current, [scopeId]: scale })
 }
 
@@ -120,7 +129,7 @@ export function setGanttScale(scopeId: string, scale: GanttScale): void {
 export function useGanttScale(scopeId: string): [GanttScale, (scale: GanttScale) => void] {
   const all = useSyncExternalStore(scales.subscribe, scales.get, scales.get)
   const setScale = useCallback((scale: GanttScale) => setGanttScale(scopeId, scale), [scopeId])
-  return [all[scopeId] ?? DEFAULT_GANTT_SCALE, setScale]
+  return [own(all, scopeId) ?? DEFAULT_GANTT_SCALE, setScale]
 }
 
 // ---------------------------------------------------------------------------

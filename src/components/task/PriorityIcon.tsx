@@ -11,7 +11,13 @@ const PRIORITY_COLOR: Record<TaskPriority, string> = {
 }
 
 /** Number of solid stones per level (urgent adds a capstone on top of three). */
-const SOLID_STONES: Record<TaskPriority, number> = { none: 0, low: 1, medium: 2, high: 3, urgent: 3 }
+const SOLID_STONES: Record<TaskPriority, number> = {
+  none: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  urgent: 3,
+}
 const DIM = 0.28
 
 export interface PriorityIconProps {

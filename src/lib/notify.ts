@@ -22,7 +22,13 @@ export const notify = {
   },
   error(
     message: string,
-    options?: { description?: string; action?: NotifyAction; id?: string | number },
+    options?: {
+      description?: string
+      action?: NotifyAction
+      id?: string | number
+      /** ms; default 8000 (Infinity = until dismissed) */
+      duration?: number
+    },
   ) {
     return toast.error(message, { duration: 8000, ...options })
   },

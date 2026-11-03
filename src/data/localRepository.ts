@@ -46,7 +46,7 @@ import type {
   Timestamp,
   WorkspaceSnapshot,
 } from '@/domain/types'
-import type { Repository } from './contracts'
+import type { Repository, UpsertPreferencesOptions } from './contracts'
 import { NETWORK_ERROR_MESSAGE, RepositoryError } from './errors'
 
 export const LOCAL_STORAGE_KEY = 'cairn:local:workspace:v1'
@@ -72,17 +72,49 @@ export function createMemoryStorage(initial: Record<string, string> = {}): Stora
   }
 }
 
-/** `window.localStorage` when it exists and is writable (not in some private modes), else null. */
+const STORAGE_PROBE_KEY = '__cairn_storage_probe__'
+
+/** A "storage is full" error (names and legacy codes differ between browsers). */
+function isQuotaError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const { name, code } = error as { name?: unknown; code?: unknown }
+  return (
+    name === 'QuotaExceededError' ||
+    name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    code === 22 ||
+    code === 1014
+  )
+}
+
+/**
+ * `window.localStorage` when the browser lets this site use it, else null (blocked, or some
+ * private modes). A FULL storage is still returned: the saved workspace is in it, and saves then
+ * fail with a clear error instead of silently going to memory.
+ */
 export function getBrowserStorage(): StorageLike | null {
+  let storage: Storage
   try {
     if (typeof window === 'undefined' || !window.localStorage) return null
-    const probe = '__cairn_storage_probe__'
-    window.localStorage.setItem(probe, probe)
-    window.localStorage.removeItem(probe)
-    return window.localStorage
+    storage = window.localStorage
+    storage.getItem(STORAGE_PROBE_KEY)
   } catch {
     return null
   }
+  try {
+    storage.setItem(STORAGE_PROBE_KEY, STORAGE_PROBE_KEY)
+    storage.removeItem(STORAGE_PROBE_KEY)
+  } catch (error) {
+    return isQuotaError(error) ? storage : null
+  }
+  return storage
+}
+
+/** What `onUnreadableData` receives when the stored workspace could not be read. */
+export interface UnreadableLocalData {
+  /** Storage key the unreadable text was moved to, or null when there was no room for it. */
+  backupKey: string | null
+  /** The unreadable text itself (e.g. to offer it as a download). */
+  raw: string
 }
 
 export interface LocalRepositoryOptions {
@@ -93,6 +125,11 @@ export interface LocalRepositoryOptions {
   latencyMs?: number
   /** Clock for server-side timestamps. */
   now?: () => Timestamp
+  /**
+   * Called (once per unreadable value) when the stored workspace could not be read. The data is
+   * set aside and a new, empty workspace starts, so the app keeps working; the app tells the user.
+   */
+  onUnreadableData?: (info: UnreadableLocalData) => void
 }
 
 interface LocalDb {
@@ -121,17 +158,117 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+type FieldCheck = (value: unknown) => boolean
+
+const isText: FieldCheck = (value) => typeof value === 'string'
+const isOptionalText: FieldCheck = (value) => value === null || typeof value === 'string'
+const isOptionalDate: FieldCheck = (value) => value === null || isISODate(value)
+const isOneOf =
+  (allowed: readonly string[]): FieldCheck =>
+  (value) =>
+    typeof value === 'string' && allowed.includes(value)
+
+/**
+ * The fields every stored row must have, with the types the views rely on. A row that does not
+ * fit (hand-edited storage, another tool, a newer app version) would crash rendering, so the whole
+ * stored value is treated as unreadable instead.
+ */
+const ROW_SHAPES = {
+  projects: {
+    id: isText,
+    name: isText,
+    description: isOptionalText,
+    status: isOneOf(PROJECT_STATUSES),
+    color: isOneOf(PROJECT_COLORS),
+    startDate: isOptionalDate,
+    dueDate: isOptionalDate,
+    scheduleMode: isOneOf(SCHEDULE_MODES),
+    sortOrder: isText,
+    createdAt: isText,
+    updatedAt: isText,
+  },
+  phases: {
+    id: isText,
+    projectId: isText,
+    name: isText,
+    sortOrder: isText,
+    createdAt: isText,
+    updatedAt: isText,
+  },
+  tasks: {
+    id: isText,
+    projectId: isText,
+    phaseId: isOptionalText,
+    parentTaskId: isOptionalText,
+    title: isText,
+    description: isOptionalText,
+    status: isOneOf(TASK_STATUSES),
+    priority: isOneOf(TASK_PRIORITIES),
+    startDate: isOptionalDate,
+    dueDate: isOptionalDate,
+    sortOrder: isText,
+    completedAt: isOptionalText,
+    createdAt: isText,
+    updatedAt: isText,
+  },
+  milestones: {
+    id: isText,
+    projectId: isText,
+    phaseId: isOptionalText,
+    name: isText,
+    date: isISODate,
+    createdAt: isText,
+    updatedAt: isText,
+  },
+  dependencies: {
+    id: isText,
+    projectId: isText,
+    predecessorId: isText,
+    successorId: isText,
+    type: isOneOf(DEPENDENCY_TYPES),
+    createdAt: isText,
+  },
+} as const satisfies Record<Exclude<keyof LocalDb, 'version' | 'preferences'>, object>
+
+function isTableOf(table: unknown, shape: Readonly<Record<string, FieldCheck>>): boolean {
+  if (!isRecord(table)) return false
+  for (const [key, row] of Object.entries(table)) {
+    if (!isRecord(row) || row.id !== key) return false
+    for (const field in shape) if (!shape[field](row[field])) return false
+  }
+  return true
+}
+
+/** Stored preferences, or null when missing or unreadable (the app then uses its defaults). */
+function readPreferences(value: unknown): Preferences | null {
+  if (!isRecord(value)) return null
+  const { theme, sidebarCollapsed, timezone, weekStartsOn } = value
+  const knownTheme = THEME_PREFERENCES.find((option) => option === theme)
+  if (
+    !knownTheme ||
+    typeof sidebarCollapsed !== 'boolean' ||
+    typeof timezone !== 'string' ||
+    timezone === '' ||
+    (weekStartsOn !== 0 && weekStartsOn !== 1)
+  ) {
+    return null
+  }
+  return { theme: knownTheme, sidebarCollapsed, timezone, weekStartsOn }
+}
+
+/** The stored workspace, or null when it is not one this version can read safely. */
 function parseDb(raw: string): LocalDb | null {
+  let parsed: unknown
   try {
-    const parsed: unknown = JSON.parse(raw)
-    if (!isRecord(parsed) || parsed.version !== 1) return null
-    const tables = ['projects', 'phases', 'tasks', 'milestones', 'dependencies'] as const
-    if (!tables.every((table) => isRecord(parsed[table]))) return null
-    if (parsed.preferences !== null && !isRecord(parsed.preferences)) return null
-    return parsed as unknown as LocalDb
+    parsed = JSON.parse(raw)
   } catch {
     return null
   }
+  if (!isRecord(parsed) || parsed.version !== 1) return null
+  for (const [table, shape] of Object.entries(ROW_SHAPES)) {
+    if (!isTableOf(parsed[table], shape)) return null
+  }
+  return { ...(parsed as unknown as LocalDb), preferences: readPreferences(parsed.preferences) }
 }
 
 // ---------------------------------------------------------------------------
@@ -458,14 +595,20 @@ export class LocalRepository implements Repository {
   private readonly storage: StorageLike
   private readonly storageKey: string
   private readonly now: () => Timestamp
+  private readonly onUnreadableData: ((info: UnreadableLocalData) => void) | undefined
   private latencyMs: number
   private failuresLeft = 0
+  /** The last stored text known to be readable (skips re-validating unchanged data). */
+  private trustedRaw: string | null = null
+  /** The last unreadable text reported (each one is reported once). */
+  private reportedRaw: string | null = null
 
   constructor(options: LocalRepositoryOptions = {}) {
     this.storage = options.storage ?? getBrowserStorage() ?? createMemoryStorage()
     this.storageKey = options.storageKey ?? LOCAL_STORAGE_KEY
     this.now = options.now ?? (() => new Date().toISOString())
     this.latencyMs = Math.max(0, options.latencyMs ?? 0)
+    this.onUnreadableData = options.onUnreadableData
   }
 
   /** Test hook: the next `n` writes reject with a network error and store nothing. */
@@ -700,9 +843,23 @@ export class LocalRepository implements Repository {
     })
   }
 
-  upsertPreferences(preferences: Preferences): Promise<Preferences> {
+  /** One row; `fields` = update only those on an existing row; `onlyIfMissing` = insert only. */
+  upsertPreferences(
+    preferences: Preferences,
+    options: UpsertPreferencesOptions = {},
+  ): Promise<Preferences> {
     return this.write((db) => {
-      db.preferences = checkPreferences(preferences)
+      const current = db.preferences
+      if (current && options.onlyIfMissing) return current
+      let next = preferences
+      if (current && options.fields) {
+        next = { ...current }
+        for (const field of options.fields) {
+          if (Object.hasOwn(preferences, field))
+            Object.assign(next, { [field]: preferences[field] })
+        }
+      }
+      db.preferences = checkPreferences(next)
       return db.preferences
     })
   }
@@ -765,8 +922,9 @@ export class LocalRepository implements Repository {
     if (simulateFailure) throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
     const db = this.load()
     const result = change(db, this.now())
+    const serialized = JSON.stringify(db)
     try {
-      this.storage.setItem(this.storageKey, JSON.stringify(db))
+      this.storage.setItem(this.storageKey, serialized)
     } catch (error) {
       throw new RepositoryError(
         'unknown',
@@ -774,23 +932,72 @@ export class LocalRepository implements Repository {
         error,
       )
     }
+    this.trustedRaw = serialized
     return result === undefined ? result : structuredClone(result)
   }
 
   private load(): LocalDb {
-    const raw = this.storage.getItem(this.storageKey)
-    if (raw === null) return emptyDb()
-    const db = parseDb(raw)
-    if (db) return db
-    // Unreadable data is set aside (never silently overwritten) and a new workspace starts.
+    let raw: string | null
     try {
-      this.storage.setItem(`${this.storageKey}:unreadable:${Date.now()}`, raw)
-      this.storage.removeItem(this.storageKey)
+      raw = this.storage.getItem(this.storageKey)
     } catch (error) {
-      throw new RepositoryError('unknown', 'The data stored in this browser is unreadable.', error)
+      throw new RepositoryError(
+        'unknown',
+        "Couldn't read this browser's storage. Allow site data for this page, then try again.",
+        error,
+      )
     }
-    console.warn('[cairn] Local data was unreadable; it was set aside and a new workspace started.')
+    if (raw === null) return emptyDb()
+    if (raw === this.trustedRaw) {
+      const db = JSON.parse(raw) as LocalDb
+      return { ...db, preferences: readPreferences(db.preferences) }
+    }
+    const db = parseDb(raw)
+    if (db) {
+      this.trustedRaw = raw
+      return db
+    }
+    // Unreadable data is set aside (never silently overwritten) and a new workspace starts, so
+    // the app keeps working; the user is told and can download the unreadable text.
+    const backupKey = this.setAside(raw)
+    if (this.reportedRaw !== raw) {
+      this.reportedRaw = raw
+      console.warn(
+        backupKey
+          ? `[cairn] Local data was unreadable; it was moved to "${backupKey}" and a new workspace started.`
+          : '[cairn] Local data was unreadable and the storage is too full to keep a copy; a new workspace started.',
+      )
+      this.onUnreadableData?.({ backupKey, raw })
+    }
     return emptyDb()
+  }
+
+  /**
+   * Moves unreadable text to `<key>:unreadable:<time>`. When the storage is too full for a second
+   * copy, the original is removed first to make room (and put back if even that fails). Returns
+   * the copy's key, or null when the text had to stay where it was (the next save replaces it).
+   */
+  private setAside(raw: string): string | null {
+    const backupKey = `${this.storageKey}:unreadable:${Date.now()}`
+    try {
+      this.storage.setItem(backupKey, raw)
+      this.storage.removeItem(this.storageKey)
+      return backupKey
+    } catch {
+      // probably full: try moving it instead of copying
+    }
+    try {
+      this.storage.removeItem(this.storageKey)
+      this.storage.setItem(backupKey, raw)
+      return backupKey
+    } catch {
+      try {
+        this.storage.setItem(this.storageKey, raw)
+      } catch {
+        // nothing more can be done without losing it; it stays reported to the app
+      }
+      return null
+    }
   }
 
   private delay(): Promise<void> {

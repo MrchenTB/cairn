@@ -2,7 +2,14 @@ import type { ComponentProps } from 'react'
 import { Select as SelectPrimitive } from 'radix-ui'
 import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { fieldBase, floatingMotion, floatingSurface, menuItem, menuLabel, menuSeparator } from './styles'
+import {
+  fieldBase,
+  floatingMotion,
+  floatingSurface,
+  menuItem,
+  menuLabel,
+  menuSeparator,
+} from './styles'
 
 export const Select = SelectPrimitive.Root
 export const SelectGroup = SelectPrimitive.Group

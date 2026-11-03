@@ -1,0 +1,10 @@
+// Cloudflare Workers Static Assets (no Worker script): serves the Vite build in ./dist.
+// Deploy: `npm run build` then `npx wrangler@4.156.1 deploy` (see docs/deployment.md).
+{
+  "name": "cairn",
+  "compatibility_date": "2026-11-02",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

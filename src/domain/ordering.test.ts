@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   bySortOrder,
   compareSortKeys,
+  isAtPlacement,
   keyAtEnd,
   keyAtStart,
   keyBetween,
@@ -377,5 +378,59 @@ describe('keysForPlacement', () => {
   it('handles an empty list and n = 0', () => {
     expect(keysForPlacement([], {}, 2)).toHaveLength(2)
     expect(keysForPlacement([item('A', 'a0')], { afterId: 'A' }, 0)).toEqual([])
+  })
+})
+
+describe('isAtPlacement', () => {
+  // Full order T1 D1 T2 (the Done column is D1 alone; the To Do column is T1, T2).
+  const all = [item('T1', 'a0'), item('D1', 'a1'), item('T2', 'a2')]
+  const without = (id: string) => all.filter((i) => i.id !== id)
+  const at = (id: string, placement: Parameters<typeof isAtPlacement>[2]) =>
+    isAtPlacement(all.find((i) => i.id === id) as Ordered, without(id), placement)
+
+  it('anchors to a known neighbour exactly like keyForPlacement', () => {
+    expect(at('D1', { afterId: 'T1' })).toBe(true)
+    expect(at('D1', { beforeId: 'T2' })).toBe(true)
+    expect(at('D1', { afterId: 'T1', beforeId: 'T2' })).toBe(true)
+    expect(at('T2', { afterId: 'T1' })).toBe(false) // D1 sits in between
+    // Top of a filtered group: directly before its first item, not "first in the project".
+    expect(at('D1', { afterId: null, beforeId: 'T2' })).toBe(true)
+    expect(at('T1', { afterId: null, beforeId: 'T2' })).toBe(false)
+  })
+
+  it('null afterId = first, null beforeId / nothing / unknown ids = last', () => {
+    expect(at('T1', { afterId: null })).toBe(true)
+    expect(at('D1', { afterId: null })).toBe(false)
+    expect(at('T1', { afterId: null, beforeId: 'gone' })).toBe(true)
+    expect(at('T2', { beforeId: null })).toBe(true)
+    expect(at('T2', {})).toBe(true)
+    expect(at('T2', { afterId: 'gone' })).toBe(true)
+    expect(at('D1', {})).toBe(false)
+    expect(isAtPlacement(item('X', 'a0'), [], {})).toBe(true)
+  })
+
+  it('is true exactly when keyForPlacement would keep the item in its gap (property test)', () => {
+    const random = seededRandom(17)
+    for (let round = 0; round < 500; round++) {
+      const list = keysBetween(null, null, 1 + Math.floor(random() * 7)).map((key, i) =>
+        item(`I${i}`, key),
+      )
+      const moved = list[Math.floor(random() * list.length)]
+      const siblings = list.filter((i) => i.id !== moved.id)
+      const pick = () => {
+        const r = random()
+        if (r < 0.2) return null
+        if (r < 0.3) return undefined
+        if (r < 0.35) return 'gone'
+        return siblings.length > 0 ? siblings[Math.floor(random() * siblings.length)].id : null
+      }
+      const placement = { afterId: pick(), beforeId: pick() }
+      const placed = { ...moved, sortOrder: keyForPlacement(siblings, placement) }
+      const before = ids([...siblings, moved])
+      const after = ids([...siblings, placed])
+      expect(isAtPlacement(moved, siblings, placement)).toBe(
+        JSON.stringify(before) === JSON.stringify(after),
+      )
+    }
   })
 })

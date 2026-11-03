@@ -10,7 +10,13 @@ declare const process: { env: Record<string, string | undefined> }
 const ORIGINAL_TZ = process.env.TZ
 
 /** Zones from UTC−11 to UTC+14: a UTC-midnight bug would shift the day in at least one. */
-const TIME_ZONES = ['Pacific/Pago_Pago', 'America/Los_Angeles', 'UTC', 'Asia/Taipei', 'Pacific/Kiritimati']
+const TIME_ZONES = [
+  'Pacific/Pago_Pago',
+  'America/Los_Angeles',
+  'UTC',
+  'Asia/Taipei',
+  'Pacific/Kiritimati',
+]
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-02T12:00:00Z') })

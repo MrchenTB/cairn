@@ -52,7 +52,10 @@ export function CommandList({ className, ...props }: ComponentProps<typeof Comma
   )
 }
 
-export function CommandEmpty({ className, ...props }: ComponentProps<typeof CommandPrimitive.Empty>) {
+export function CommandEmpty({
+  className,
+  ...props
+}: ComponentProps<typeof CommandPrimitive.Empty>) {
   return (
     <CommandPrimitive.Empty
       data-slot="command-empty"
@@ -62,7 +65,10 @@ export function CommandEmpty({ className, ...props }: ComponentProps<typeof Comm
   )
 }
 
-export function CommandGroup({ className, ...props }: ComponentProps<typeof CommandPrimitive.Group>) {
+export function CommandGroup({
+  className,
+  ...props
+}: ComponentProps<typeof CommandPrimitive.Group>) {
   return (
     <CommandPrimitive.Group
       data-slot="command-group"
@@ -162,7 +168,9 @@ export function CommandDialog({
         className={cn('top-[15vh] z-(--z-command) max-h-[70vh] p-0', className)}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
-        {description ? <DialogDescription className="sr-only">{description}</DialogDescription> : null}
+        {description ? (
+          <DialogDescription className="sr-only">{description}</DialogDescription>
+        ) : null}
         <Command {...commandProps}>{children}</Command>
       </DialogContent>
     </Dialog>

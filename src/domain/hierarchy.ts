@@ -2,7 +2,7 @@
  * Project structure helpers: Project → (optional Phase) → Task → (optional, ONE level) Subtask.
  */
 import { bySortOrder } from './ordering'
-import type { Milestone, Phase, Project, Result, Task } from './types'
+import type { Dependency, Milestone, Phase, Project, Result, Task } from './types'
 
 /** parentTaskId → children sorted by sortOrder. */
 export function buildChildrenIndex(tasks: readonly Task[]): Map<string, Task[]> {
@@ -37,9 +37,16 @@ function invalid(message: string): Result {
 
 /**
  * Can `task` become a subtask of `parent`? Rules: not itself, same project, parent is top-level,
- * `task` has no subtasks of its own. Returns a validation error with a readable message otherwise.
+ * `task` has no subtasks of its own and — when `dependencies` are given — no dependency links the
+ * two tasks (either direction; the database rejects that too). Returns a validation error with a
+ * readable message otherwise.
  */
-export function canBecomeSubtaskOf(task: Task, parent: Task, tasks: readonly Task[]): Result {
+export function canBecomeSubtaskOf(
+  task: Task,
+  parent: Task,
+  tasks: readonly Task[],
+  dependencies?: readonly Pick<Dependency, 'predecessorId' | 'successorId'>[],
+): Result {
   if (task.id === parent.id) return invalid("A task can't be its own subtask.")
   if (task.projectId !== parent.projectId) {
     return invalid('A subtask must be in the same project as its parent.')
@@ -47,6 +54,16 @@ export function canBecomeSubtaskOf(task: Task, parent: Task, tasks: readonly Tas
   if (parent.parentTaskId) return invalid('Only top-level tasks can have subtasks.')
   if (tasks.some((other) => other.parentTaskId === task.id)) {
     return invalid("A task that has subtasks can't become a subtask.")
+  }
+  const linked = dependencies?.some(
+    (d) =>
+      (d.predecessorId === task.id && d.successorId === parent.id) ||
+      (d.predecessorId === parent.id && d.successorId === task.id),
+  )
+  if (linked) {
+    return invalid(
+      "A task can't become a subtask of a task it depends on (or that depends on it). Remove that dependency first.",
+    )
   }
   return { ok: true, value: undefined }
 }

@@ -17,17 +17,13 @@ export function TabsList({ className, ...props }: ComponentProps<typeof TabsPrim
   )
 }
 
-export function TabsTrigger({
-  className,
-  ...props
-}: ComponentProps<typeof TabsPrimitive.Trigger>) {
-  return <TabsPrimitive.Trigger data-slot="tabs-trigger" className={cn(pillTab, className)} {...props} />
+export function TabsTrigger({ className, ...props }: ComponentProps<typeof TabsPrimitive.Trigger>) {
+  return (
+    <TabsPrimitive.Trigger data-slot="tabs-trigger" className={cn(pillTab, className)} {...props} />
+  )
 }
 
-export function TabsContent({
-  className,
-  ...props
-}: ComponentProps<typeof TabsPrimitive.Content>) {
+export function TabsContent({ className, ...props }: ComponentProps<typeof TabsPrimitive.Content>) {
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
@@ -42,6 +38,9 @@ export function NavTabs({ className, ...props }: ComponentProps<'nav'>) {
   return <nav className={cn('flex items-center gap-1', className)} {...props} />
 }
 
-export function NavTab({ className, ...props }: Omit<NavLinkProps, 'className'> & { className?: string }) {
+export function NavTab({
+  className,
+  ...props
+}: Omit<NavLinkProps, 'className'> & { className?: string }) {
   return <NavLink className={cn(pillTab, className)} {...props} />
 }

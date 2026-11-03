@@ -1,0 +1,263 @@
+import { describe, expect, it } from 'vitest'
+import { fromEpochDay, toEpochDay } from '@/domain/dates'
+import {
+  MAX_RANGE_DAYS,
+  SCALES,
+  buildHeaderTiers,
+  eachUnit,
+  extendRange,
+  gridBackgroundStyle,
+  gridLines,
+  isWeekendDay,
+  renderWindow,
+  timelineRange,
+  visibleDayRange,
+} from './scale'
+
+const d = toEpochDay
+const iso = fromEpochDay
+// Calendar facts used below: 2026-11-02 is a Monday; 2027 is not a leap year, 2028 is.
+
+describe('SCALES', () => {
+  it('uses 36 / 16 / 5 px per day', () => {
+    expect(SCALES.day.dayWidth).toBe(36)
+    expect(SCALES.week.dayWidth).toBe(16)
+    expect(SCALES.month.dayWidth).toBe(5)
+  })
+})
+
+describe('timelineRange', () => {
+  const data = { start: d('2026-11-10'), end: d('2026-11-20') }
+  const today = d('2026-11-03')
+
+  it('pads data ∪ today and aligns Day/Week to whole weeks (Monday start)', () => {
+    const range = timelineRange(data, today, 'day', 1)
+    // today − 14 = Tue Oct 20 → Mon Oct 19; Nov 20 + 14 = Fri Dec 4 → Sun Dec 6
+    expect(iso(range.start)).toBe('2026-10-19')
+    expect(iso(range.end)).toBe('2026-12-06')
+  })
+
+  it('honours a Sunday week start', () => {
+    const range = timelineRange(data, today, 'day', 0)
+    expect(iso(range.start)).toBe('2026-10-18')
+    expect(iso(range.end)).toBe('2026-12-05')
+  })
+
+  it('aligns Month to whole months across the year boundary', () => {
+    const range = timelineRange(data, today, 'month', 1)
+    // today − 92 = Aug 3 → Aug 1; Nov 20 + 92 = Feb 20 2027 → Feb 28 2027
+    expect(iso(range.start)).toBe('2026-08-01')
+    expect(iso(range.end)).toBe('2027-02-28')
+  })
+
+  it('works from today alone when nothing is scheduled', () => {
+    const range = timelineRange(null, today, 'week', 1)
+    expect(range.start).toBeLessThanOrEqual(today - SCALES.week.paddingDays)
+    expect(range.end).toBeGreaterThanOrEqual(today + SCALES.week.paddingDays)
+  })
+
+  it('always includes today, even far from the data', () => {
+    const range = timelineRange({ start: d('2030-01-01'), end: d('2030-01-05') }, today, 'day', 1)
+    expect(range.start).toBeLessThanOrEqual(today)
+    expect(range.end).toBeGreaterThanOrEqual(d('2030-01-05'))
+  })
+
+  it('is at least minDays long (fills the viewport)', () => {
+    const range = timelineRange(null, today, 'day', 1, 200)
+    expect(range.end - range.start + 1).toBeGreaterThanOrEqual(200)
+  })
+})
+
+describe('extendRange', () => {
+  const range = { start: d('2026-11-02'), end: d('2026-11-29') }
+
+  it('grows one side, aligned to the scale unit', () => {
+    const left = extendRange(range, 'start', 10, 'week', 1)
+    expect(iso(left.start)).toBe('2026-10-19') // Oct 23 → Monday Oct 19
+    expect(left.end).toBe(range.end)
+    const right = extendRange(range, 'end', 40, 'month', 1)
+    expect(iso(right.end)).toBe('2027-01-31')
+    expect(right.start).toBe(range.start)
+  })
+
+  it('stops growing at MAX_RANGE_DAYS', () => {
+    const huge = { start: 0, end: MAX_RANGE_DAYS }
+    expect(extendRange(huge, 'end', 100, 'day', 1)).toBe(huge)
+  })
+})
+
+describe('eachUnit', () => {
+  it('lists every unit intersecting the interval', () => {
+    const weeks = eachUnit(d('2026-11-04'), d('2026-11-17'), 'week', 1)
+    expect(weeks.map(([s, e]) => [iso(s), iso(e)])).toEqual([
+      ['2026-11-02', '2026-11-08'],
+      ['2026-11-09', '2026-11-15'],
+      ['2026-11-16', '2026-11-22'],
+    ])
+    const years = eachUnit(d('2026-12-01'), d('2027-01-10'), 'year', 1)
+    expect(years.map(([s, e]) => [iso(s), iso(e)])).toEqual([
+      ['2026-01-01', '2026-12-31'],
+      ['2027-01-01', '2027-12-31'],
+    ])
+  })
+
+  it('returns nothing for an empty interval', () => {
+    expect(eachUnit(10, 9, 'day', 1)).toEqual([])
+  })
+})
+
+describe('buildHeaderTiers', () => {
+  it('Day: months on top, days below, weekends and today flagged, across a month boundary', () => {
+    const range = { start: d('2026-10-26'), end: d('2026-11-08') }
+    const tiers = buildHeaderTiers({
+      scale: 'day',
+      range,
+      window: range,
+      dayWidth: 36,
+      weekStartsOn: 1,
+      today: d('2026-11-03'),
+    })
+    expect(tiers.top.map((c) => [c.label, c.x, c.width])).toEqual([
+      ['Oct 2026', 0, 6 * 36],
+      ['Nov 2026', 6 * 36, 8 * 36],
+    ])
+    expect(tiers.bottom).toHaveLength(14)
+    const nov2 = tiers.bottom.find((c) => c.startDay === d('2026-11-02'))
+    expect(nov2).toMatchObject({ label: '2', prefix: 'M', x: 7 * 36, width: 36, weekend: false })
+    expect(nov2?.title).toBe('Monday, November 2, 2026')
+    expect(tiers.bottom.filter((c) => c.weekend).map((c) => iso(c.startDay))).toEqual([
+      '2026-10-31',
+      '2026-11-01',
+      '2026-11-07',
+      '2026-11-08',
+    ])
+    expect(tiers.bottom.filter((c) => c.today).map((c) => iso(c.startDay))).toEqual(['2026-11-03'])
+    expect(tiers.top.find((c) => c.today)?.label).toBe('Nov 2026')
+  })
+
+  it('Week: week cells start on the configured weekday', () => {
+    const monday = buildHeaderTiers({
+      scale: 'week',
+      range: { start: d('2026-11-02'), end: d('2026-11-29') },
+      window: { start: d('2026-11-02'), end: d('2026-11-29') },
+      dayWidth: 16,
+      weekStartsOn: 1,
+      today: 0,
+    })
+    expect(monday.bottom.map((c) => c.label)).toEqual(['Nov 2', 'Nov 9', 'Nov 16', 'Nov 23'])
+    expect(monday.bottom.map((c) => c.width)).toEqual([112, 112, 112, 112])
+    const sunday = buildHeaderTiers({
+      scale: 'week',
+      range: { start: d('2026-11-01'), end: d('2026-11-28') },
+      window: { start: d('2026-11-01'), end: d('2026-11-28') },
+      dayWidth: 16,
+      weekStartsOn: 0,
+      today: 0,
+    })
+    expect(sunday.bottom.map((c) => c.label)).toEqual(['Nov 1', 'Nov 8', 'Nov 15', 'Nov 22'])
+    expect(sunday.bottom[0].title).toBe('Week of Nov 1, 2026')
+  })
+
+  it('Month: years on top, months below, across a year and a leap February', () => {
+    const range = { start: d('2027-11-01'), end: d('2028-03-31') }
+    const tiers = buildHeaderTiers({
+      scale: 'month',
+      range,
+      window: range,
+      dayWidth: 5,
+      weekStartsOn: 1,
+      today: 0,
+    })
+    expect(tiers.top.map((c) => [c.label, c.width])).toEqual([
+      ['2027', 61 * 5],
+      ['2028', 91 * 5],
+    ])
+    expect(tiers.bottom.map((c) => [c.label, c.width])).toEqual([
+      ['Nov', 30 * 5],
+      ['Dec', 31 * 5],
+      ['Jan', 31 * 5],
+      ['Feb', 29 * 5],
+      ['Mar', 31 * 5],
+    ])
+    expect(tiers.bottom[3].title).toBe('February 2028')
+  })
+
+  it('clips edge cells to the range and renders only the window', () => {
+    const range = { start: d('2026-11-04'), end: d('2026-12-31') }
+    const tiers = buildHeaderTiers({
+      scale: 'day',
+      range,
+      window: { start: d('2026-11-20'), end: d('2026-11-22') },
+      dayWidth: 36,
+      weekStartsOn: 1,
+      today: 0,
+    })
+    expect(tiers.bottom.map((c) => iso(c.startDay))).toEqual([
+      '2026-11-20',
+      '2026-11-21',
+      '2026-11-22',
+    ])
+    // The November cell starts before the range: clipped to x = 0, 27 days wide.
+    expect(tiers.top[0]).toMatchObject({ label: 'Nov 2026', x: 0, width: 27 * 36 })
+  })
+})
+
+describe('gridLines', () => {
+  it('Day/Week: strong month boundaries inside the window, none at the range start', () => {
+    const range = { start: d('2026-11-01'), end: d('2027-01-31') }
+    const lines = gridLines({ scale: 'week', range, window: range, dayWidth: 16 })
+    expect(lines.map((l) => [iso(range.start + l.x / 16), l.strong])).toEqual([
+      ['2026-12-01', true],
+      ['2027-01-01', true],
+    ])
+  })
+
+  it('Month: month lines are light, year lines strong', () => {
+    const range = { start: d('2026-11-01'), end: d('2027-02-28') }
+    const lines = gridLines({ scale: 'month', range, window: range, dayWidth: 5 })
+    expect(lines.map((l) => [iso(range.start + l.x / 5), l.strong])).toEqual([
+      ['2026-12-01', false],
+      ['2027-01-01', true],
+      ['2027-02-01', false],
+    ])
+  })
+})
+
+describe('gridBackgroundStyle', () => {
+  it('aligns week lines and weekend shading to the origin weekday', () => {
+    const origin = d('2026-10-26') // Monday
+    const monday = gridBackgroundStyle('day', origin, 36, 1)
+    expect(monday?.backgroundImage.split('linear-gradient')).toHaveLength(4) // 3 layers
+    // day lines, week lines at Monday (offset 0), weekends from Saturday (offset 5 days)
+    expect(monday?.backgroundPosition).toBe(`0 0, 0px 0, ${5 * 36}px 0`)
+    expect(monday?.backgroundSize).toBe(`36px 100%, ${7 * 36}px 100%, ${7 * 36}px 100%`)
+    const sunday = gridBackgroundStyle('week', origin, 16, 0)
+    expect(sunday?.backgroundPosition).toBe(`${6 * 16}px 0, ${5 * 16}px 0`)
+  })
+
+  it('Month draws no regular grid', () => {
+    expect(gridBackgroundStyle('month', d('2026-11-01'), 5, 1)).toBeNull()
+  })
+})
+
+describe('visible window', () => {
+  it('maps scroll position to visible days', () => {
+    const origin = d('2026-11-02')
+    const visible = visibleDayRange(36 * 3 + 5, 36 * 10, origin, 36)
+    expect(iso(visible.start)).toBe('2026-11-05')
+    expect(iso(visible.end)).toBe('2026-11-15')
+  })
+
+  it('renders one extra viewport per side and keeps the window while inside it', () => {
+    const first = renderWindow({ start: 100, end: 109 }, null)
+    expect(first).toEqual({ start: 90, end: 119 })
+    expect(renderWindow({ start: 95, end: 104 }, first)).toBe(first)
+    expect(renderWindow({ start: 115, end: 124 }, first)).toEqual({ start: 105, end: 134 })
+  })
+
+  it('knows weekends', () => {
+    expect(isWeekendDay(d('2026-11-07'))).toBe(true)
+    expect(isWeekendDay(d('2026-11-08'))).toBe(true)
+    expect(isWeekendDay(d('2026-11-09'))).toBe(false)
+  })
+})

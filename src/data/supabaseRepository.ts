@@ -20,7 +20,7 @@ import type {
   TaskPatch,
   WorkspaceSnapshot,
 } from '@/domain/types'
-import type { Repository } from './contracts'
+import type { Repository, UpsertPreferencesOptions } from './contracts'
 import {
   NETWORK_ERROR_MESSAGE,
   RepositoryError,
@@ -37,6 +37,7 @@ import {
   phaseFromRow,
   phasePatchToRow,
   phaseToInsert,
+  preferencesFieldsToRow,
   preferencesFromRow,
   preferencesToRow,
   projectFromRow,
@@ -115,6 +116,28 @@ const FALLBACK_MESSAGES: Record<string, string> = {
 
 const VALIDATION_CODES = new Set(Object.keys(FALLBACK_MESSAGES))
 
+/** The project's database lacks Cairn's schema (migration not applied, or an older one). */
+const MISSING_SCHEMA_CODES = new Set([
+  'PGRST202',
+  'PGRST204',
+  'PGRST205',
+  '42P01',
+  '42703',
+  '42883',
+])
+export const MISSING_SCHEMA_MESSAGE =
+  "The database isn't set up for Cairn yet. Apply the Supabase migration (see the README), then reload."
+
+/** Transient server conditions: sending the same request again usually works. */
+const TRANSIENT_MESSAGES: Record<string, string> = {
+  '40P01': 'The server was busy. Try again.',
+  '40001': 'The server was busy. Try again.',
+  '55P03': 'The server was busy. Try again.',
+  '57014': 'The server took too long to answer. Try again.',
+}
+
+const GENERIC_SERVER_MESSAGE = "The server couldn't complete the request. Try again."
+
 function constraintMessage(error: PostgrestErrorLike): string | null {
   const text = `${typeof error.message === 'string' ? error.message : ''} ${
     typeof error.details === 'string' ? error.details : ''
@@ -127,13 +150,14 @@ function constraintMessage(error: PostgrestErrorLike): string | null {
  * Maps whatever supabase-js returned or threw to a RepositoryError:
  * fetch failures → network · 23505 → conflict · check/FK/not-null/format/raise → validation
  * (server text when readable) · P0002/PGRST116 → not_found · 42501 → permission ·
- * PGRST30x/JWT → auth · anything else → unknown.
+ * PGRST30x/JWT → auth · missing schema, deadlock/serialization/timeout and anything else →
+ * unknown (retryable), with a message saying which.
  */
 export function toRepositoryError(error: unknown, status?: number): RepositoryError {
   if (error instanceof RepositoryError) return error
   if (isFetchFailure(error)) return new RepositoryError('network', NETWORK_ERROR_MESSAGE, error)
   if (typeof error !== 'object' || error === null) {
-    return new RepositoryError('unknown', 'Something went wrong while saving.', error)
+    return new RepositoryError('unknown', GENERIC_SERVER_MESSAGE, error)
   }
   const e = error as PostgrestErrorLike
   const code = typeof e.code === 'string' ? e.code : ''
@@ -179,7 +203,13 @@ export function toRepositoryError(error: unknown, status?: number): RepositoryEr
       error,
     )
   }
-  return new RepositoryError('unknown', 'Something went wrong while saving.', error)
+  if (MISSING_SCHEMA_CODES.has(code)) {
+    return new RepositoryError('unknown', MISSING_SCHEMA_MESSAGE, error)
+  }
+  if (Object.hasOwn(TRANSIENT_MESSAGES, code)) {
+    return new RepositoryError('unknown', TRANSIENT_MESSAGES[code], error)
+  }
+  return new RepositoryError('unknown', GENERIC_SERVER_MESSAGE, error)
 }
 
 /** Awaits a supabase-js builder, turning thrown errors into RepositoryErrors too. */
@@ -297,6 +327,11 @@ export class SupabaseRepository implements Repository {
     await this.deleteRow('task_dependencies', id)
   }
 
+  /**
+   * All-or-nothing on the server (it raises, changing nothing, unless every task was updated).
+   * The returned rows are matched by id, never by position: PostgREST's `max_rows` (1000) cuts
+   * long answers, so a task can be missing from them although it was updated.
+   */
   async applySchedule(changes: readonly ScheduleChange[]): Promise<Task[]> {
     if (changes.length === 0) return []
     const rows = await this.callRpc('apply_task_schedule', {
@@ -306,16 +341,53 @@ export class SupabaseRepository implements Repository {
         due_date: change.dueDate,
       })),
     })
-    return Array.isArray(rows) ? (rows as TaskRow[]).map(taskFromRow) : []
+    if (!Array.isArray(rows)) return []
+    const requested = new Set(changes.map((change) => change.taskId))
+    const byId = new Map<string, Task>()
+    for (const row of rows as unknown[]) {
+      if (typeof row !== 'object' || row === null) continue
+      const task = taskFromRow(row as TaskRow)
+      if (requested.has(task.id)) byId.set(task.id, task)
+    }
+    return [...byId.values()]
   }
 
-  async upsertPreferences(preferences: Preferences): Promise<Preferences> {
+  /**
+   * One row per user (user_id defaults to auth.uid()). `fields`: only those columns are sent, so
+   * on an existing row ON CONFLICT updates just them. `onlyIfMissing`: ON CONFLICT DO NOTHING, then
+   * the existing row is read back.
+   */
+  async upsertPreferences(
+    preferences: Preferences,
+    options: UpsertPreferencesOptions = {},
+  ): Promise<Preferences> {
+    const table = () => this.client.from('user_preferences')
+    if (options.onlyIfMissing) {
+      const inserted = check(
+        await execute(
+          table()
+            .upsert(preferencesToRow(preferences), {
+              onConflict: 'user_id',
+              ignoreDuplicates: true,
+            })
+            .select(),
+        ),
+      )
+      if (Array.isArray(inserted) && inserted.length > 0) {
+        return preferencesFromRow(inserted[0] as PreferencesRow)
+      }
+      const existing = check(await execute(table().select('*').limit(1)))
+      if (Array.isArray(existing) && existing.length > 0) {
+        return preferencesFromRow(existing[0] as PreferencesRow)
+      }
+      // Removed in between: store this value after all.
+    }
+    const values =
+      options.fields && options.fields.length > 0
+        ? preferencesFieldsToRow(preferences, options.fields)
+        : preferencesToRow(preferences)
     const result = await execute(
-      this.client
-        .from('user_preferences')
-        .upsert(preferencesToRow(preferences), { onConflict: 'user_id' })
-        .select()
-        .single(),
+      table().upsert(values, { onConflict: 'user_id' }).select().single(),
     )
     return preferencesFromRow(check(result) as PreferencesRow)
   }

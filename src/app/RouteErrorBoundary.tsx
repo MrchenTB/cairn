@@ -2,7 +2,8 @@ import { isRouteErrorResponse, useRouteError } from 'react-router'
 import { ErrorState } from '@/components/layout/ErrorState'
 import { NotFoundPage } from './NotFoundPage'
 
-const STALE_CHUNK = /dynamically imported module|Importing a module script failed|error loading dynamically/i
+const STALE_CHUNK =
+  /dynamically imported module|Importing a module script failed|error loading dynamically/i
 
 function describe(error: unknown): { title: string; message: string } {
   const text = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
@@ -29,7 +30,13 @@ export function ContentErrorBoundary() {
   const { title, message } = describe(error)
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <ErrorState title={title} message={message} onRetry={reload} retryLabel="Reload" />
+      <ErrorState
+        titleAs="h1"
+        title={title}
+        message={message}
+        onRetry={reload}
+        retryLabel="Reload"
+      />
     </div>
   )
 }
@@ -39,8 +46,14 @@ export function RootErrorBoundary() {
   const error = useRouteError()
   const { title, message } = describe(error)
   return (
-    <div className="min-h-dvh bg-app">
-      <ErrorState title={title} message={message} onRetry={reload} retryLabel="Reload" />
-    </div>
+    <main className="min-h-dvh bg-app">
+      <ErrorState
+        titleAs="h1"
+        title={title}
+        message={message}
+        onRetry={reload}
+        retryLabel="Reload"
+      />
+    </main>
   )
 }

@@ -26,6 +26,7 @@ import {
   createWorkspaceStore,
   SYNC_ERROR_TOAST_ID,
   UI_PREFS_STORAGE_KEY,
+  UNSAVED_ON_RESET_TOAST_ID,
   type WorkspaceEnvironment,
 } from './store'
 
@@ -61,6 +62,7 @@ interface SetupOptions {
   now?: () => number
   randomId?: () => string
   load?: boolean
+  signal?: AbortSignal
 }
 
 /** Server clock far from the client clock, so reconciled timestamps are always recognisable. */
@@ -71,7 +73,7 @@ async function setup(options: SetupOptions = {}) {
   const storage = options.storage ?? createMemoryStorage()
   const repo = options.repo ?? new LocalRepository({ storage, now: serverClock })
   if (options.rows) await seed(repo, options.rows)
-  const notifier = { error: vi.fn() }
+  const notifier = { error: vi.fn(), dismiss: vi.fn() }
   let sequence = 0
   const store = createWorkspaceStore({
     mode: 'local',
@@ -81,6 +83,7 @@ async function setup(options: SetupOptions = {}) {
     environment: options.environment,
     now: options.now,
     randomId: options.randomId ?? (() => `new-${++sequence}`),
+    signal: options.signal,
   })
   const harness = {
     store,
@@ -163,7 +166,8 @@ describe('load', () => {
     const upsert = vi.spyOn(repo, 'upsertPreferences')
     const h = await setup({ repo })
     expect(upsert).toHaveBeenCalledOnce()
-    expect(upsert).toHaveBeenCalledWith({ ...DEFAULT_PREFERENCES })
+    // insert only: preferences another device saved meanwhile are never overwritten
+    expect(upsert).toHaveBeenCalledWith({ ...DEFAULT_PREFERENCES }, { onlyIfMissing: true })
     expect((await repo.loadWorkspace()).preferences).toEqual(DEFAULT_PREFERENCES)
     await h.actions.load()
     await idle(h)
@@ -1016,5 +1020,330 @@ describe('reset', () => {
     await writing
     expect(h.state().data).toBe(EMPTY_WORKSPACE)
     expect(h.state().sync.pending).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Review findings (each test failed before its fix)
+// ---------------------------------------------------------------------------
+
+const OK = { ok: true, value: undefined }
+
+class GatedLoadRepository extends LocalRepository {
+  gate: Promise<void> | null = null
+  reads = 0
+  override async loadWorkspace() {
+    const snapshot = await super.loadWorkspace() // read at the start of the call
+    this.reads += 1
+    if (this.gate) await this.gate
+    return snapshot
+  }
+}
+
+function gate() {
+  let release = () => {}
+  const promise = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  return { promise, release }
+}
+
+describe('placement uses the same neighbour rule as keyForPlacement', () => {
+  it('a drop in place at the top of a column writes nothing', async () => {
+    // X (in progress) · item · B: the To Do column shows item, B.
+    const h = await setup({
+      rows: {
+        projects: [makeProject({ id: 'p1' })],
+        tasks: [
+          makeTask({ id: 'X', projectId: 'p1', status: 'in_progress', sortOrder: 'a0' }),
+          makeTask({ id: 'item', projectId: 'p1', sortOrder: 'a1' }),
+          makeTask({ id: 'B', projectId: 'p1', sortOrder: 'a2' }),
+        ],
+      },
+    })
+    const update = vi.spyOn(h.repo, 'updateTask')
+    expect(await h.actions.moveTask({ taskId: 'item', afterId: null, beforeId: 'B' })).toEqual(OK)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('a drop at the top of a column lands directly before its first card', async () => {
+    // item · X (in progress) · B
+    const h = await setup({
+      rows: {
+        projects: [makeProject({ id: 'p1' })],
+        tasks: [
+          makeTask({ id: 'item', projectId: 'p1', sortOrder: 'a0' }),
+          makeTask({ id: 'X', projectId: 'p1', status: 'in_progress', sortOrder: 'a1' }),
+          makeTask({ id: 'B', projectId: 'p1', sortOrder: 'a2' }),
+        ],
+      },
+    })
+    await h.actions.moveTask({ taskId: 'item', afterId: null, beforeId: 'B' })
+    expect(topLevel(h)).toEqual(['X', 'item', 'B'])
+    expect(sortedIds((await storedSnapshot(h)).tasks)).toEqual(['X', 'item', 'B'])
+  })
+})
+
+describe('preferences across devices', () => {
+  const cloud = {
+    theme: 'light',
+    sidebarCollapsed: false,
+    timezone: 'Pacific/Chatham',
+    weekStartsOn: 0,
+  } as const
+
+  it('a change made before the workspace loads is saved on top of the cloud values', async () => {
+    const repo = new LocalRepository({ storage: createMemoryStorage() })
+    await repo.upsertPreferences(cloud)
+    const h = await setup({ repo, load: false })
+    const saving = h.actions.updatePreferences({ sidebarCollapsed: true })
+    expect(h.state().preferences.sidebarCollapsed).toBe(true) // applied at once
+    await h.actions.load()
+    expect(await saving).toEqual(OK)
+    await idle(h)
+    const expected = { ...cloud, sidebarCollapsed: true }
+    expect(h.state().preferences).toEqual(expected)
+    expect((await repo.loadWorkspace()).preferences).toEqual(expected)
+  })
+
+  it("saving one preference never overwrites another device's newer values", async () => {
+    const storage = createMemoryStorage()
+    const deviceA = await setup({ storage })
+    const deviceB = await setup({ storage }) // loaded now, not refreshed afterwards
+    expect(await deviceA.actions.updatePreferences({ timezone: 'Pacific/Chatham' })).toEqual(OK)
+    expect(await deviceB.actions.updatePreferences({ theme: 'dark' })).toEqual(OK)
+    const stored = (await deviceA.repo.loadWorkspace()).preferences
+    expect(stored).toMatchObject({ timezone: 'Pacific/Chatham', theme: 'dark' })
+    expect(deviceB.state().preferences).toEqual(stored)
+  })
+
+  it('first-run defaults never overwrite preferences another device saved meanwhile', async () => {
+    const storage = createMemoryStorage()
+    class Racing extends LocalRepository {
+      override async loadWorkspace() {
+        const snapshot = await super.loadWorkspace() // no preferences yet…
+        await new LocalRepository({ storage }).upsertPreferences(cloud) // …then another device saves
+        return snapshot
+      }
+    }
+    const h = await setup({ repo: new Racing({ storage }), storage })
+    expect((await h.repo.loadWorkspace()).preferences).toEqual(cloud)
+    expect(h.state().preferences).toEqual(cloud)
+  })
+})
+
+describe('loading', () => {
+  it('a successful load clears the error of a failed one (but not a failed write)', async () => {
+    const h = await setup({ rows: workspaceRows(), load: false })
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await h.actions.load()
+    expect(h.state().sync.lastError).toMatchObject({ kind: 'network' })
+    expect(await h.actions.load()).toEqual(OK)
+    expect(h.state().sync.lastError).toBeNull()
+
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'x' })
+    await h.actions.refresh({ silent: true })
+    expect(h.state().sync).toMatchObject({ lastError: { kind: 'network' }, canRetry: true })
+  })
+
+  it('a write made while the workspace (re)loads is neither lost nor reverted', async () => {
+    const storage = createMemoryStorage()
+    const repo = new GatedLoadRepository({ storage })
+    const h = await setup({ repo, storage, rows: workspaceRows() })
+    const { promise, release } = gate()
+    repo.gate = promise
+    const reads = repo.reads
+    const loading = h.actions.load()
+    await vi.waitFor(() => expect(repo.reads).toBe(reads + 1)) // the snapshot has been read
+    const saving = h.actions.updateTask('a', { title: 'During load' })
+    release()
+    expect(await loading).toEqual(OK)
+    expect(await saving).toEqual(OK)
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('During load')
+    expect(h.state().data.tasks.a).toEqual(await storedTask(h, 'a'))
+  })
+
+  it('retries a failed load when the browser comes back online', async () => {
+    const win = new EventTarget()
+    const h = await setup({
+      rows: workspaceRows(),
+      environment: { window: win, navigator: { onLine: false } },
+      load: false,
+    })
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await h.actions.load()
+    expect(h.state().status).toBe('error')
+    win.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(h.state().status).toBe('ready'))
+    expect(Object.keys(h.state().data.tasks)).toHaveLength(4)
+  })
+
+  it('stops listening for focus/online once its signal is aborted', async () => {
+    const win = new EventTarget()
+    const controller = new AbortController()
+    let clock = 1_000_000
+    const h = await setup({
+      rows: workspaceRows(),
+      environment: { window: win, navigator: { onLine: true } },
+      now: () => clock,
+      signal: controller.signal,
+    })
+    const load = vi.spyOn(h.repo, 'loadWorkspace')
+    controller.abort()
+    clock += AUTO_REFRESH_INTERVAL_MS * 2
+    win.dispatchEvent(new Event('focus'))
+    win.dispatchEvent(new Event('offline'))
+    win.dispatchEvent(new Event('online'))
+    expect(load).not.toHaveBeenCalled()
+    expect(h.state().sync.online).toBe(true)
+  })
+})
+
+describe('server answers', () => {
+  it('a malformed answer to a saved write never leaves it pending', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const original = h.repo.updateTask.bind(h.repo)
+    vi.spyOn(h.repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await original(id, patch) // stored, but the answer is unusable
+      return undefined as unknown as Task
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await h.actions.updateTask('a', { title: 'Saved' })).toEqual(OK)
+    expect(error).toHaveBeenCalledOnce()
+    expect(h.state().sync).toMatchObject({ pending: 0, lastError: null })
+    // the canonical row is fetched again
+    await vi.waitFor(() =>
+      expect(h.state().data.tasks.a).toEqual(expect.objectContaining({ title: 'Saved' })),
+    )
+  })
+
+  it('applySchedule keeps the dates of tasks the server answer left out (max_rows)', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const original = h.repo.applySchedule.bind(h.repo)
+    vi.spyOn(h.repo, 'applySchedule').mockImplementationOnce(async (changes) =>
+      (await original(changes)).slice(0, 1),
+    )
+    expect(
+      await h.actions.applySchedule([
+        { taskId: 'a', startDate: '2026-11-02', dueDate: '2026-11-04' },
+        { taskId: 'b', startDate: '2026-11-05', dueDate: '2026-11-06' },
+      ]),
+    ).toEqual(OK)
+    expect(h.state().data.tasks.b).toMatchObject({ startDate: '2026-11-05', dueDate: '2026-11-06' })
+    expect(h.state().data.tasks.a).toEqual(await storedTask(h, 'a'))
+    expect(h.state().sync.pending).toBe(0)
+  })
+
+  it('deleting something another device already deleted succeeds quietly', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    await new LocalRepository({ storage: h.storage }).deleteTask('a', { keepSubtasks: false })
+    expect(await h.actions.deleteTask('a', { keepSubtasks: false })).toEqual(OK)
+    expect(h.state().data.tasks.a).toBeUndefined()
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    expect(h.state().sync.lastError).toBeNull()
+  })
+
+  it('keepSubtasks never deletes subtasks this device has not seen yet', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    // another device adds a subtask to "a"
+    await new LocalRepository({ storage: h.storage }).insertTask(
+      makeTask({ id: 'remote-sub', projectId: 'p1', parentTaskId: 'a', sortOrder: 'a0' }),
+    )
+    const result = await h.actions.deleteTask('a', { keepSubtasks: true })
+    expect(result).toMatchObject({ ok: false, error: { kind: 'validation' } })
+    expect(await storedTask(h, 'a')).toBeDefined()
+    expect(await storedTask(h, 'remote-sub')).toBeDefined()
+    // the rejection shows this device is behind: it fetches the current state
+    await vi.waitFor(() => expect(h.state().data.tasks['remote-sub']).toBeDefined())
+    expect(h.state().data.tasks.a).toBeDefined()
+  })
+})
+
+describe('sign-out and stale retries', () => {
+  it("a stale toast's Retry does nothing once the workspace was reset", async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.createProject({ name: 'Private' })
+    const { action } = h.notifier.error.mock.calls[0][1] as { action: { onClick: () => void } }
+    h.actions.reset() // signed out; another account may sign in next
+    expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
+    await h.actions.load()
+    const insert = vi.spyOn(h.repo, 'insertProject')
+    action.onClick()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(insert).not.toHaveBeenCalled()
+    expect(Object.values(h.state().data.projects).map((p) => p.name)).not.toContain('Private')
+  })
+
+  it('a reset with unsaved changes says so', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(20)
+    const saving = h.actions.updateTask('a', { title: 'In flight' })
+    h.actions.reset()
+    expect(h.notifier.error).toHaveBeenCalledWith(
+      expect.stringMatching(/changes/i),
+      expect.objectContaining({ id: UNSAVED_ON_RESET_TOAST_ID }),
+    )
+    await saving
+  })
+
+  it('a reset right after a load (only housekeeping pending) says nothing', async () => {
+    const h = await setup({ load: false })
+    h.repo.setLatency(20)
+    await h.actions.load() // the first-run preferences are being saved in the background
+    expect(h.state().sync.pending).toBe(1)
+    h.actions.reset()
+    expect(h.notifier.error).not.toHaveBeenCalled()
+  })
+})
+
+describe('import retries', () => {
+  const file = (): BackupFile => ({
+    app: 'cairn',
+    formatVersion: 1,
+    exportedAt: '2026-10-01T00:00:00.000Z',
+    preferences: null,
+    data: {
+      projects: [makeProject({ id: 'X', name: 'Xray' }), makeProject({ id: 'Y', name: 'Yankee' })],
+      phases: [makePhase({ id: 'PH', projectId: 'X' })],
+      tasks: [
+        makeTask({ id: 'T1', projectId: 'X', phaseId: 'PH', title: 'parent' }),
+        // a hand-edited file: the subtask claims no phase although its parent has one
+        makeTask({ id: 'T2', projectId: 'X', parentTaskId: 'T1', phaseId: null, title: 'child' }),
+      ],
+      milestones: [],
+      dependencies: [],
+    },
+  })
+
+  it('retrying an import whose answer was lost never creates a second copy', async () => {
+    const h = await setup({ randomId: () => crypto.randomUUID() })
+    const original = h.repo.importWorkspace.bind(h.repo)
+    vi.spyOn(h.repo, 'importWorkspace').mockImplementationOnce(async (data) => {
+      await original(data) // stored…
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE) // …but the answer never arrived
+    })
+    expect((await h.actions.importBackup(file())).ok).toBe(false)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    const stored = await storedSnapshot(h)
+    expect(stored.projects).toHaveLength(2)
+    await vi.waitFor(() =>
+      expect(Object.keys(h.state().data.projects).sort()).toEqual(
+        stored.projects.map((p) => p.id).sort(),
+      ),
+    )
+  })
+
+  it("an imported subtask takes its parent's phase, as the server stores it", async () => {
+    const h = await setup({ randomId: () => crypto.randomUUID() })
+    expect((await h.actions.importBackup(file())).ok).toBe(true)
+    const tasks = Object.values(h.state().data.tasks)
+    const parent = tasks.find((t) => t.title === 'parent') as Task
+    const child = tasks.find((t) => t.title === 'child') as Task
+    expect(child.phaseId).toBe(parent.phaseId)
+    expect((await storedTask(h, child.id))?.phaseId).toBe(parent.phaseId)
   })
 })

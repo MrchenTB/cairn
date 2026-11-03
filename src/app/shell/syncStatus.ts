@@ -16,8 +16,8 @@ export interface SyncStatus {
 
 /**
  * Maps the store's sync state to what the sidebar shows. Priority: saving → failed write →
- * offline (cloud only) → local mode → saved. Local mode is always labelled "Local only" so it is
- * never mistaken for cloud sync.
+ * offline (cloud only) → local mode → saved. Local mode is always labelled "Local only — not
+ * synced" so it is never mistaken for cloud sync.
  */
 export function deriveSyncStatus(mode: DataMode, sync: SyncState): SyncStatus {
   if (sync.pending > 0) {
@@ -46,15 +46,16 @@ export function deriveSyncStatus(mode: DataMode, sync: SyncState): SyncStatus {
       kind: 'offline',
       label: 'Offline',
       title: "You're offline",
-      detail: "Changes can't be saved until the connection is back. Anything that fails can be retried.",
+      detail:
+        "Changes can't be saved until the connection is back. Anything that fails can be retried.",
       canRetry: false,
     }
   }
   if (mode === 'local') {
     return {
       kind: 'local',
-      label: 'Local only',
-      title: 'Local only — not synced',
+      label: 'Local only — not synced',
+      title: 'Stored in this browser only',
       detail:
         'Your data is stored in this browser only. It is not backed up or available on other devices. Export a backup from Settings → Data.',
       canRetry: false,

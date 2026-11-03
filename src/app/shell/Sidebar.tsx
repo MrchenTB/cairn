@@ -1,4 +1,12 @@
-import { useMemo, type ComponentType, type ReactNode } from 'react'
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ComponentType,
+  type MouseEvent,
+  type ReactNode,
+  type Ref,
+} from 'react'
 import { NavLink } from 'react-router'
 import {
   ChartGantt,
@@ -17,8 +25,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useProjects, useToday, useWorkspaceData, useWorkspaceStatus } from '@/data/hooks'
 import { bucketPopulation, dueBucket } from '@/domain/buckets'
+import type { Project } from '@/domain/types'
 import { cn } from '@/lib/utils'
-import { SHORTCUTS } from '../shortcuts'
+import { SHORTCUTS, useCurrentProjectId } from '../shortcuts'
 import { useSetSidebarCollapsed, useSidebarCollapsed } from '../uiPrefs'
 import { useUIStore } from '../uiStore'
 import { useRecentProjectIds } from '../viewPrefs'
@@ -33,15 +42,31 @@ interface NavItemProps {
   icon: ComponentType<{ className?: string; strokeWidth?: number }>
   collapsed: boolean
   shortcut?: string
-  /** Right-aligned count (expanded) / dot (collapsed). */
+  /** Right-aligned count (expanded); kept for assistive tech when collapsed. */
   badge?: ReactNode
+  /** Small dot on the icon in the collapsed rail. */
   badgeDot?: 'danger' | 'neutral' | null
   end?: boolean
 }
 
-function NavItem({ to, label, icon: Icon, collapsed, shortcut, badge, badgeDot, end }: NavItemProps) {
+function NavItem({
+  to,
+  label,
+  icon: Icon,
+  collapsed,
+  shortcut,
+  badge,
+  badgeDot,
+  end,
+}: NavItemProps) {
   return (
-    <Tooltip content={label} shortcut={shortcut} side="right" delayDuration={300} disabled={!collapsed}>
+    <Tooltip
+      content={label}
+      shortcut={shortcut}
+      side="right"
+      delayDuration={300}
+      disabled={!collapsed}
+    >
       <NavLink to={to} end={end} className={cn(sidebarItemClass, collapsed ? 'w-9' : 'w-full')}>
         <span className="relative flex shrink-0">
           <Icon className={sidebarIconClass} strokeWidth={1.75} />
@@ -63,7 +88,9 @@ function NavItem({ to, label, icon: Icon, collapsed, shortcut, badge, badgeDot, 
         >
           {label}
         </span>
-        {!collapsed && badge ? badge : null}
+        {badge ? (
+          <span className={cn('flex shrink-0', collapsed && 'sr-only')}>{badge}</span>
+        ) : null}
       </NavLink>
     </Tooltip>
   )
@@ -92,31 +119,45 @@ function MyTasksBadge({ overdue, total }: { overdue: number; total: number }) {
         'shrink-0 text-meta tabular-nums',
         overdue > 0 ? 'text-danger' : 'text-fg-tertiary',
       )}
-      aria-label={`${total} due today or overdue`}
+      // Leading comma: read as a pause after "My Tasks" (inline text is joined without spaces).
+      aria-label={
+        overdue > 0
+          ? `, ${total} due today or overdue (${overdue} overdue)`
+          : `, ${total} due today`
+      }
     >
       {total}
     </span>
   )
 }
 
-function RecentProjects() {
+/**
+ * Sidebar "Recent": visited projects (most recent first), topped up with other active projects
+ * in their list order so the section never shrinks after the first visit. Max 5.
+ */
+function useRecentProjects(): Project[] {
   const recentIds = useRecentProjectIds()
   const projects = useProjects()
+  return useMemo(() => {
+    const byId = new Map(projects.map((project) => [project.id, project]))
+    const recent: Project[] = []
+    for (const id of recentIds) {
+      const project = byId.get(id)
+      if (project) recent.push(project)
+    }
+    const shown = new Set(recent.map((project) => project.id))
+    const others = projects.filter((p) => p.status === 'active' && !shown.has(p.id))
+    return [...recent, ...others].slice(0, RECENT_LIMIT)
+  }, [projects, recentIds])
+}
+
+function RecentProjects({ items }: { items: Project[] }) {
   const { status } = useWorkspaceStatus()
   const openProjectDialog = useUIStore((s) => s.openProjectDialog)
 
-  const items = useMemo(() => {
-    const byId = new Map(projects.map((project) => [project.id, project]))
-    const recent = recentIds.flatMap((id) => {
-      const project = byId.get(id)
-      return project ? [project] : []
-    })
-    const list = recent.length > 0 ? recent : projects.filter((p) => p.status === 'active')
-    return list.slice(0, RECENT_LIMIT)
-  }, [projects, recentIds])
-
   return (
     <section aria-labelledby="sidebar-recent" className="mt-4 flex min-h-0 flex-col">
+      {/* pr-1 centres the 24px "+" under the 28px collapse button above it. */}
       <div className="flex h-6 shrink-0 items-center justify-between pr-1 pl-2.5">
         <h2 id="sidebar-recent" className="text-meta font-medium text-fg-tertiary">
           Recent
@@ -126,14 +167,15 @@ function RecentProjects() {
             variant="ghost"
             size="icon-sm"
             aria-label="New project"
-            className="size-5 text-fg-tertiary [&_svg:not([class*=size-])]:size-3.5"
+            className="text-fg-tertiary"
             onClick={() => openProjectDialog({ mode: 'create' })}
           >
-            <Plus />
+            <Plus strokeWidth={1.75} />
           </Button>
         </Tooltip>
       </div>
-      <div className="-mx-2 mt-0.5 flex min-h-0 flex-col gap-0.5 overflow-y-auto px-2 pb-1">
+      {/* py-1 leaves room for the outset focus ring inside the scroll container. */}
+      <div className="-mx-2 -mt-0.5 flex min-h-0 flex-col gap-0.5 overflow-y-auto px-2 py-1">
         {status !== 'ready' ? (
           [0, 1, 2].map((index) => (
             <div key={index} className="flex h-7 items-center gap-2 px-2.5">
@@ -162,12 +204,19 @@ function RecentProjects() {
   )
 }
 
-function SidebarHeader({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+interface SidebarHeaderProps {
+  collapsed: boolean
+  onToggle: (event: MouseEvent<HTMLButtonElement>) => void
+  toggleRef: Ref<HTMLButtonElement>
+}
+
+function SidebarHeader({ collapsed, onToggle, toggleRef }: SidebarHeaderProps) {
   if (collapsed) {
     return (
       <div className="flex h-11 shrink-0 items-center">
         <Tooltip content="Expand sidebar" shortcut={SHORTCUTS.toggleSidebar} side="right">
           <button
+            ref={toggleRef}
             type="button"
             aria-label="Expand sidebar"
             onClick={onToggle}
@@ -190,13 +239,21 @@ function SidebarHeader({ collapsed, onToggle }: { collapsed: boolean; onToggle: 
     )
   }
   return (
-    <div className="flex h-11 shrink-0 items-center justify-between pl-2 pr-0.5">
+    <div className="flex h-11 shrink-0 items-center justify-between pr-0.5 pl-2">
       <span className="flex min-w-0 items-center gap-2.5 text-fg">
         <LogoMark size={20} />
-        <span className="truncate text-[15px] leading-5 font-semibold tracking-[-0.01em]">Cairn</span>
+        <span className="truncate text-[15px] leading-5 font-semibold tracking-[-0.01em]">
+          Cairn
+        </span>
       </span>
       <Tooltip content="Collapse sidebar" shortcut={SHORTCUTS.toggleSidebar} side="bottom">
-        <Button variant="ghost" size="icon" aria-label="Collapse sidebar" onClick={onToggle}>
+        <Button
+          ref={toggleRef}
+          variant="ghost"
+          size="icon"
+          aria-label="Collapse sidebar"
+          onClick={onToggle}
+        >
           <PanelLeftClose className="text-fg-tertiary" strokeWidth={1.75} />
         </Button>
       </Tooltip>
@@ -213,6 +270,27 @@ export function Sidebar() {
   const collapsed = useSidebarCollapsed()
   const setCollapsed = useSetSidebarCollapsed()
   const attention = useMyTasksAttention()
+  const recent = useRecentProjects()
+  const currentProjectId = useCurrentProjectId()
+  // The expand/collapse buttons are different elements: when the focused one is replaced,
+  // move focus to its counterpart so keyboard users keep their place.
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const refocusToggle = useRef(false)
+
+  useLayoutEffect(() => {
+    if (!refocusToggle.current) return
+    refocusToggle.current = false
+    toggleRef.current?.focus({ preventScroll: true })
+  }, [collapsed])
+
+  const onToggle = (event: MouseEvent<HTMLButtonElement>) => {
+    refocusToggle.current = document.activeElement === event.currentTarget
+    setCollapsed(!collapsed)
+  }
+
+  // One "current" item: on a project page the Recent entry is it (when it is listed), so the
+  // Projects item only matches /projects itself.
+  const projectListed = !collapsed && recent.some((project) => project.id === currentProjectId)
 
   return (
     <aside
@@ -225,7 +303,7 @@ export function Sidebar() {
       )}
     >
       <div className="flex min-h-0 w-(--sidebar-width) flex-1 flex-col px-2 pt-2 pb-2">
-        <SidebarHeader collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+        <SidebarHeader collapsed={collapsed} onToggle={onToggle} toggleRef={toggleRef} />
         <nav aria-label="Main" className="mt-1 flex flex-col gap-0.5">
           <NavItem
             to="/overview"
@@ -253,6 +331,7 @@ export function Sidebar() {
             icon={FolderKanban}
             collapsed={collapsed}
             shortcut={SHORTCUTS.goProjects}
+            end={projectListed}
           />
           <NavItem
             to="/timeline"
@@ -262,7 +341,7 @@ export function Sidebar() {
             shortcut={SHORTCUTS.goTimeline}
           />
         </nav>
-        {collapsed ? <div className="flex-1" /> : <RecentProjects />}
+        {collapsed ? <div className="flex-1" /> : <RecentProjects items={recent} />}
         <div className={cn('flex flex-col gap-0.5', !collapsed && 'mt-auto pt-3')}>
           <SyncIndicator collapsed={collapsed} />
           <NavItem to="/settings" label="Settings" icon={Settings} collapsed={collapsed} />

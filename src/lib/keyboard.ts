@@ -25,7 +25,16 @@ export const isMac: boolean =
 
 const SEQUENCE_TIMEOUT_MS = 1200
 
-const MODIFIER_KEYS = new Set(['shift', 'control', 'meta', 'alt', 'capslock', 'fn', 'os', 'altgraph'])
+const MODIFIER_KEYS = new Set([
+  'shift',
+  'control',
+  'meta',
+  'alt',
+  'capslock',
+  'fn',
+  'os',
+  'altgraph',
+])
 
 const KEY_ALIASES: Record<string, string> = {
   esc: 'escape',
@@ -84,10 +93,7 @@ export function parseHotkey(binding: string): Chord[] {
     })
 }
 
-type KeyLike = Pick<
-  KeyboardEvent,
-  'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'
->
+type KeyLike = Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>
 
 function normalizeKey(key: string): string {
   return key.toLowerCase()

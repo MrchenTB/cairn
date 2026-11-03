@@ -216,6 +216,17 @@
 }
 
 /*
+ * Pointer users: Radix returns focus to menu / popover / dialog triggers programmatically and
+ * Chrome keeps :focus-visible on for that focus, leaving a ring nobody asked for. Hide it until
+ * the next key press (src/lib/inputModality.ts sets the attribute). Keyboard focus and text
+ * fields always keep their ring. Unlayered so it wins over focus-visible utilities.
+ */
+html[data-input-modality='pointer']
+  :is([aria-haspopup], [aria-expanded]):not(input, textarea):focus-visible {
+  outline-color: transparent;
+}
+
+/*
  * sonner (toasts) — themed through its own variables (set inline on <Toaster/>), plus a few
  * overrides that need more specificity than sonner's injected stylesheet. No richColors:
  * semantic colour appears only on the icon.

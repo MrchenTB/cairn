@@ -12,6 +12,8 @@ export interface EmptyStateProps {
   secondaryAction?: ReactNode
   /** `page` adds the 12vh top offset used for whole-view empty states; `inline` is compact. */
   variant?: 'page' | 'inline'
+  /** Heading element for the title (default h2; use h1 when the state is the whole page). */
+  titleAs?: 'h1' | 'h2' | 'h3'
   className?: string
 }
 
@@ -23,6 +25,7 @@ export function EmptyState({
   action,
   secondaryAction,
   variant = 'page',
+  titleAs: Title = 'h2',
   className,
 }: EmptyStateProps) {
   return (
@@ -35,7 +38,7 @@ export function EmptyState({
       )}
     >
       {Icon ? <Icon className="mb-3 size-6 text-fg-tertiary" strokeWidth={1.5} /> : null}
-      <h2 className="text-heading font-semibold text-fg">{title}</h2>
+      <Title className="text-heading font-semibold text-fg">{title}</Title>
       {description ? (
         <p className="mt-1 line-clamp-2 text-ui text-fg-secondary">{description}</p>
       ) : null}

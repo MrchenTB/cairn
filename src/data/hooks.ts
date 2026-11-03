@@ -6,6 +6,7 @@
  */
 import { useMemo, useSyncExternalStore } from 'react'
 import { todayInTimeZone } from '@/domain/dates'
+import { compareMilestones } from '@/domain/hierarchy'
 import { bySortOrder } from '@/domain/ordering'
 import type {
   Dependency,
@@ -19,6 +20,11 @@ import type {
 } from '@/domain/types'
 import type { DataMode, SyncState, WorkspaceActions } from './contracts'
 import { useAuthStore, useWorkspaceStore } from './store'
+
+/** Own rows only: ids come from URLs (`?task=constructor` must not find Object.prototype). */
+function byId<T>(table: Record<string, T>, id: string | null | undefined): T | undefined {
+  return id && Object.hasOwn(table, id) ? table[id] : undefined
+}
 
 export function useActions(): WorkspaceActions {
   return useWorkspaceStore((s) => s.actions)
@@ -62,7 +68,7 @@ export function useProjects(options: { includeArchived?: boolean } = {}): Projec
   )
 }
 export function useProject(projectId: string | null | undefined): Project | undefined {
-  return useWorkspaceStore((s) => (projectId ? s.data.projects[projectId] : undefined))
+  return useWorkspaceStore((s) => byId(s.data.projects, projectId))
 }
 /** Phases of a project sorted by sortOrder. */
 export function usePhases(projectId: string | null | undefined): Phase[] {
@@ -91,7 +97,7 @@ export function useProjectTasks(projectId: string | null | undefined): Task[] {
   )
 }
 export function useTask(taskId: string | null | undefined): Task | undefined {
-  return useWorkspaceStore((s) => (taskId ? s.data.tasks[taskId] : undefined))
+  return useWorkspaceStore((s) => byId(s.data.tasks, taskId))
 }
 /** Subtasks of a parent, sorted. */
 export function useSubtasks(parentTaskId: string | null | undefined): Task[] {
@@ -106,24 +112,25 @@ export function useSubtasks(parentTaskId: string | null | undefined): Task[] {
     [tasks, parentTaskId],
   )
 }
-/** Milestones (of one project, or all when projectId is omitted) sorted by date then name. */
+/**
+ * Milestones (of one project, or all when projectId is omitted) in the outline's order: date,
+ * then name, then id (`compareMilestones`).
+ */
 export function useMilestones(projectId?: string | null): Milestone[] {
   const milestones = useWorkspaceStore((s) => s.data.milestones)
   return useMemo(
     () =>
       Object.values(milestones)
         .filter((m) => !projectId || m.projectId === projectId)
-        .sort((a, b) =>
-          a.date === b.date ? a.name.localeCompare(b.name) : a.date < b.date ? -1 : 1,
-        ),
+        .sort(compareMilestones),
     [milestones, projectId],
   )
 }
 export function useMilestone(milestoneId: string | null | undefined): Milestone | undefined {
-  return useWorkspaceStore((s) => (milestoneId ? s.data.milestones[milestoneId] : undefined))
+  return useWorkspaceStore((s) => byId(s.data.milestones, milestoneId))
 }
 export function usePhase(phaseId: string | null | undefined): Phase | undefined {
-  return useWorkspaceStore((s) => (phaseId ? s.data.phases[phaseId] : undefined))
+  return useWorkspaceStore((s) => byId(s.data.phases, phaseId))
 }
 
 /**

@@ -7,6 +7,8 @@ import { MilestoneDialogHost } from '@/features/milestones/MilestoneDialogHost'
 import { ProjectDialogHost } from '@/features/projects/ProjectDialogHost'
 import { SearchOverlay } from '@/features/search/SearchOverlay'
 import { TaskModalHost } from '@/features/task-modal/TaskModalHost'
+import { cn } from '@/lib/utils'
+import { PasswordRecoveryDialog } from '../PasswordRecoveryDialog'
 import { useCurrentProjectId, useGlobalShortcuts } from '../shortcuts'
 import { useWorkspaceBootstrap } from '../useWorkspaceBootstrap'
 import { isProjectView, recordProjectVisit, setProjectView } from '../viewPrefs'
@@ -30,8 +32,9 @@ function useProjectRouteMemory() {
 /**
  * Signed-in app frame: sidebar on the app layer + the main content as an inset rounded panel
  * (8px gap, 12px radius, subtle border) with the 44px top bar. The main area shows the page,
- * a skeleton while the workspace loads, or an error with Retry. Global hosts are mounted once;
- * feature hosts mount after the first successful load so deep links (?task=…) resolve.
+ * a skeleton while the workspace loads, or an error with Retry. Global hosts are mounted once
+ * (shortcuts help, "Set a new password" after a reset link); feature hosts mount after the first
+ * successful load so deep links (?task=…) resolve.
  */
 export function AppShell() {
   useGlobalShortcuts()
@@ -40,9 +43,19 @@ export function AppShell() {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-app text-fg">
+      {/* `not-sr-only` resets padding/margin, so the visible styles are all focus-scoped. */}
       <a
         href="#main"
-        className="sr-only rounded-md bg-elevated px-3 py-2 text-ui font-medium text-fg shadow-popover focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-(--z-toast)"
+        onClick={(event) => {
+          // Move focus without adding #main to the URL (the router owns the location).
+          event.preventDefault()
+          document.getElementById('main')?.focus()
+        }}
+        className={cn(
+          'sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-(--z-toast)',
+          'focus:inline-flex focus:h-8 focus:items-center focus:rounded-md focus:border focus:border-default',
+          'focus:bg-elevated focus:px-3 focus:text-ui focus:font-medium focus:text-fg focus:shadow-popover',
+        )}
       >
         Skip to content
       </a>
@@ -55,6 +68,7 @@ export function AppShell() {
               <Outlet />
             ) : boot.status === 'error' ? (
               <ErrorState
+                titleAs="h1"
                 title="Couldn’t load your workspace"
                 message={boot.error?.message}
                 onRetry={boot.retry}
@@ -67,6 +81,7 @@ export function AppShell() {
         </div>
       </div>
       <ShortcutsDialog />
+      <PasswordRecoveryDialog />
       {boot.loadedOnce ? (
         <>
           <TaskModalHost />

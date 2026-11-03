@@ -54,6 +54,22 @@ interface ConfirmRequest {
   focusCancel: boolean
   open: boolean
   resolve: (value: string | null) => void
+  /** Where focus goes back when the dialog closes (it has no trigger for Radix to use). */
+  returnFocus: HTMLElement | null
+}
+
+/**
+ * The element that had focus when a request was made. A menu item is about to disappear (the menu
+ * closes), so its menu's trigger is used instead.
+ */
+function focusToRestore(): HTMLElement | null {
+  if (typeof document === 'undefined') return null
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || active === document.body) return null
+  const menu = active.closest('[role="menu"]')
+  const triggerId = menu?.getAttribute('aria-labelledby')
+  const trigger = triggerId ? document.getElementById(triggerId) : null
+  return trigger ?? active
 }
 
 /** Matches the dialog exit animation so the panel keeps its content while fading out. */
@@ -67,9 +83,14 @@ function emit() {
   for (const listener of listeners) listener()
 }
 
-function enqueue(request: Omit<ConfirmRequest, 'id' | 'open' | 'resolve'>): Promise<string | null> {
+function enqueue(
+  request: Omit<ConfirmRequest, 'id' | 'open' | 'resolve' | 'returnFocus'>,
+): Promise<string | null> {
   return new Promise((resolve) => {
-    queue = [...queue, { ...request, id: nextId++, open: true, resolve }]
+    queue = [
+      ...queue,
+      { ...request, id: nextId++, open: true, resolve, returnFocus: focusToRestore() },
+    ]
     emit()
   })
 }
@@ -147,6 +168,17 @@ export function ConfirmHost() {
             if (current.focusCancel) return // Radix focuses Cancel by default
             event.preventDefault()
             lastActionRef.current?.focus()
+          }}
+          onCloseAutoFocus={(event) => {
+            // No trigger: return focus to where the request came from, else stay inside the
+            // dialog underneath (e.g. a modal that asked "Discard changes?").
+            const target =
+              current.returnFocus?.isConnected === true
+                ? current.returnFocus
+                : document.querySelector<HTMLElement>('[role="dialog"][data-state="open"]')
+            if (!target) return
+            event.preventDefault()
+            target.focus({ preventScroll: true })
           }}
         >
           <AlertDialogHeader>

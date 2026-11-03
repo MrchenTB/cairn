@@ -10,6 +10,7 @@ export function NotFoundPage() {
     <PageContainer>
       <EmptyState
         icon={Compass}
+        titleAs="h1"
         title="Page not found"
         description="This page doesn’t exist or has moved."
         action={

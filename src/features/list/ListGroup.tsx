@@ -1,0 +1,468 @@
+/**
+ * One outline group of the List view ("No phase" or a phase): sticky 32px header (collapse,
+ * name, count, + add task, ⋯ phase menu, inline rename), its sortable top-level tasks (each with
+ * its expandable subtasks), its milestones and the inline "Add task" row.
+ */
+import { useId, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useDroppable } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronRight,
+  Diamond,
+  Ellipsis,
+  Pencil,
+  Plus,
+  Trash,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { insetFocus } from '@/components/ui/styles'
+import { Tooltip } from '@/components/ui/tooltip'
+import type { OutlineGroup, OutlineTask } from '@/domain/hierarchy'
+import { computeProgress } from '@/domain/progress'
+import { NAME_MAX_LENGTH, TITLE_MAX_LENGTH, type Task } from '@/domain/types'
+import { validateName } from '@/domain/validation'
+import { cn } from '@/lib/utils'
+import { InlineCreate } from './InlineCreate'
+import { addRowKey, useListContext } from './listContext'
+import { subtaskContainerId } from './listDnd'
+import { MilestoneRow } from './MilestoneRow'
+import { TaskRow } from './TaskRow'
+import type { ListDragData } from './useListDnd'
+
+const validateTitle = (value: string) => validateName(value, TITLE_MAX_LENGTH, 'Task title')?.message ?? null
+
+export interface ListGroupProps {
+  group: OutlineGroup
+  containerId: string
+  /** Top-level task ids to render (drag preview aware). */
+  taskIds: readonly string[]
+  /** Every top-level task of the outline by id (a task may be previewed in another group). */
+  entries: ReadonlyMap<string, OutlineTask>
+  /** false in a project without phases (flat list). */
+  showHeader: boolean
+  collapsed: boolean
+  onCollapsedChange: (collapsed: boolean) => void
+  /** Position among the phases (for Move up / Move down). */
+  phaseIndex: number
+  phaseCount: number
+}
+
+export function ListGroup({
+  group,
+  containerId,
+  taskIds,
+  entries,
+  showHeader,
+  collapsed,
+  onCollapsedChange,
+  phaseIndex,
+  phaseCount,
+}: ListGroupProps) {
+  const ctx = useListContext()
+  const bodyId = useId()
+  const { setNodeRef } = useDroppable({
+    id: containerId,
+    data: { type: 'group', containerId } satisfies ListDragData,
+  })
+  const drag = ctx.drag
+  const isDropTarget =
+    drag?.kind === 'task' &&
+    drag.overContainer === containerId &&
+    !drag.initial[containerId]?.includes(drag.activeId)
+  const addKey = addRowKey.group(containerId)
+  const lastTaskId = taskIds.at(-1) ?? null
+  const name = group.phase?.name ?? 'No phase'
+
+  const openAddRow = () => {
+    if (collapsed) onCollapsedChange(false)
+    ctx.setEditingRow(addKey)
+  }
+
+  return (
+    <section
+      ref={setNodeRef}
+      aria-label={showHeader ? `${name}, ${group.tasks.length} tasks` : undefined}
+      className="relative"
+    >
+      {showHeader ? (
+        <GroupHeader
+          group={group}
+          name={name}
+          bodyId={bodyId}
+          collapsed={collapsed}
+          onCollapsedChange={onCollapsedChange}
+          isDropTarget={isDropTarget}
+          onAddTask={openAddRow}
+          phaseIndex={phaseIndex}
+          phaseCount={phaseCount}
+        />
+      ) : null}
+      {collapsed && showHeader ? null : (
+        <div id={bodyId}>
+          <SortableContext id={containerId} items={taskIds as string[]} strategy={verticalListSortingStrategy}>
+            <ul aria-label={showHeader ? `Tasks in ${name}` : 'Tasks'}>
+              {taskIds.map((taskId) => {
+                const entry = entries.get(taskId)
+                return entry ? (
+                  <TopLevelItem key={taskId} entry={entry} containerId={containerId} />
+                ) : null
+              })}
+            </ul>
+          </SortableContext>
+          {group.milestones.length > 0 ? (
+            <ul aria-label={`Milestones${showHeader ? ` in ${name}` : ''}`}>
+              {group.milestones.map((milestone) => (
+                <MilestoneRow
+                  key={milestone.id}
+                  milestone={milestone}
+                  today={ctx.today}
+                  onOpen={ctx.openMilestone}
+                />
+              ))}
+            </ul>
+          ) : null}
+          <InlineCreate
+            label="Add task"
+            inputLabel={showHeader ? `New task in ${name}` : 'New task'}
+            placeholder="Task name"
+            open={ctx.editingRow === addKey}
+            onOpenChange={(open) => ctx.setEditingRow(open ? addKey : null)}
+            validate={validateTitle}
+            onSubmit={(title) =>
+              ctx.createTask({ title, phaseId: group.phase?.id ?? null, parentTaskId: null, afterId: lastTaskId })
+            }
+            className="pr-3 pl-12"
+          />
+        </div>
+      )}
+    </section>
+  )
+}
+
+interface GroupHeaderProps {
+  group: OutlineGroup
+  name: string
+  bodyId: string
+  collapsed: boolean
+  onCollapsedChange: (collapsed: boolean) => void
+  isDropTarget: boolean
+  onAddTask: () => void
+  phaseIndex: number
+  phaseCount: number
+}
+
+function GroupHeader({
+  group,
+  name,
+  bodyId,
+  collapsed,
+  onCollapsedChange,
+  isDropTarget,
+  onAddTask,
+  phaseIndex,
+  phaseCount,
+}: GroupHeaderProps) {
+  const ctx = useListContext()
+  const phase = group.phase
+  const [renaming, setRenaming] = useState(false)
+  const count = group.tasks.length
+
+  return (
+    <div
+      data-drop-target={isDropTarget || undefined}
+      className={cn(
+        'group/header sticky top-0 z-[2] flex h-8 items-center gap-1 bg-muted pr-3 pl-6',
+        'transition-colors duration-fast',
+        'data-[drop-target]:bg-selected data-[drop-target]:shadow-[inset_2px_0_0_var(--accent)]',
+      )}
+    >
+      {renaming && phase ? (
+        <RenameInput
+          initial={phase.name}
+          onCancel={() => setRenaming(false)}
+          onSave={async (next) => {
+            const error = await ctx.phaseCommands.rename(phase, next)
+            if (!error) setRenaming(false)
+            return error
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          aria-controls={collapsed ? undefined : bodyId}
+          onClick={() => onCollapsedChange(!collapsed)}
+          onDoubleClick={() => {
+            if (phase) setRenaming(true)
+          }}
+          className={cn(
+            '-ml-1 flex h-6 min-w-0 items-center gap-1.5 rounded-md pr-1.5 pl-1 text-meta',
+            'transition-colors duration-fast hover:bg-hover hover:duration-instant',
+            insetFocus,
+          )}
+        >
+          <ChevronRight
+            aria-hidden
+            className={cn(
+              'size-3.5 shrink-0 text-fg-tertiary transition-transform duration-fast motion-reduce:transition-none',
+              !collapsed && 'rotate-90',
+            )}
+          />
+          <span className="truncate font-semibold text-fg-secondary">{name}</span>
+          <span className="text-fg-tertiary tabular-nums">
+            <span className="sr-only">, </span>
+            {count}
+            <span className="sr-only"> {count === 1 ? 'task' : 'tasks'}</span>
+          </span>
+        </button>
+      )}
+      {renaming ? null : (
+        <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity duration-fast group-hover/header:opacity-100 group-focus-within/header:opacity-100 has-[[data-state=open]]:opacity-100">
+          <Tooltip content={`Add task to ${name}`}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Add task to ${name}`}
+              onClick={onAddTask}
+              className={insetFocus}
+            >
+              <Plus />
+            </Button>
+          </Tooltip>
+          <DropdownMenu>
+            <Tooltip content={phase ? 'Phase actions' : 'Group actions'}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={phase ? `Actions for phase ${name}` : 'Actions for tasks without a phase'}
+                  className={insetFocus}
+                >
+                  <Ellipsis />
+                </Button>
+              </DropdownMenuTrigger>
+            </Tooltip>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem onSelect={onAddTask}>
+                <Plus />
+                Add task
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => ctx.phaseCommands.addMilestone(phase?.id ?? null)}>
+                <Diamond />
+                Add milestone…
+              </DropdownMenuItem>
+              {phase ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setRenaming(true)}>
+                    <Pencil />
+                    Rename phase
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={phaseIndex <= 0}
+                    onSelect={() => ctx.phaseCommands.move(phase, -1)}
+                  >
+                    <ArrowUp />
+                    Move phase up
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={phaseIndex >= phaseCount - 1}
+                    onSelect={() => ctx.phaseCommands.move(phase, 1)}
+                  >
+                    <ArrowDown />
+                    Move phase down
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => ctx.phaseCommands.remove(phase)}>
+                    <Trash />
+                    Delete phase…
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RenameInput({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: string
+  onSave: (name: string) => Promise<string | null>
+  onCancel: () => void
+}) {
+  const [value, setValue] = useState(initial)
+  const [error, setError] = useState<string | null>(null)
+  const saving = useRef(false)
+  const errorId = useId()
+
+  const save = async () => {
+    if (saving.current) return
+    const next = value.trim()
+    if (next === initial.trim()) {
+      onCancel()
+      return
+    }
+    const invalid = validateName(next, NAME_MAX_LENGTH, 'Phase name')
+    if (invalid) {
+      setError(invalid.message)
+      return
+    }
+    saving.current = true
+    const message = await onSave(next)
+    saving.current = false
+    if (message) setError(message)
+  }
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      void save()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      onCancel()
+    }
+  }
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <input
+        autoFocus
+        value={value}
+        onChange={(event) => {
+          setValue(event.target.value)
+          setError(null)
+        }}
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={onKeyDown}
+        onBlur={() => {
+          // Blur saves a valid change and drops an invalid one.
+          if (validateName(value, NAME_MAX_LENGTH, 'Phase name')) onCancel()
+          else void save()
+        }}
+        aria-label="Phase name"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className={cn(
+          'h-6 w-64 max-w-full min-w-0 rounded-md border border-input bg-surface px-1.5 text-meta font-semibold text-fg',
+          'focus-visible:outline-2 focus-visible:outline-offset-[-1px] focus-visible:outline-focus',
+          'aria-invalid:border-danger',
+        )}
+      />
+      {error ? (
+        <span id={errorId} role="alert" className="truncate text-meta text-danger">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+function TopLevelItem({ entry, containerId }: { entry: OutlineTask; containerId: string }) {
+  const ctx = useListContext()
+  const { task, subtasks } = entry
+  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
+    useSortable({ id: task.id, data: { type: 'task', containerId } satisfies ListDragData })
+  const style: CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition: transition,
+  }
+  const progress = subtasks.length > 0 ? computeProgress(subtasks) : null
+  const addingSubtask = ctx.editingRow === addRowKey.subtask(task.id)
+  const expanded = ctx.expanded.has(task.id) && subtasks.length > 0
+  const showChildren = !isDragging && (expanded || addingSubtask)
+
+  return (
+    <li ref={setNodeRef} style={style} className={cn('relative', isDragging && 'z-[1]')}>
+      <TaskRow
+        task={task}
+        depth={0}
+        today={ctx.today}
+        subtasks={progress ? { done: progress.done, total: progress.total } : null}
+        expanded={expanded}
+        onToggleExpanded={() => ctx.toggleExpanded(task.id)}
+        handle={{ attributes, listeners }}
+        handleRef={setActivatorNodeRef}
+        placeholder={isDragging}
+        commands={ctx.commands}
+        menu={ctx.menuFor(task)}
+      />
+      {showChildren ? <SubtaskBlock parent={task} subtasks={expanded ? subtasks : []} /> : null}
+    </li>
+  )
+}
+
+function SubtaskBlock({ parent, subtasks }: { parent: Task; subtasks: readonly Task[] }) {
+  const ctx = useListContext()
+  const containerId = subtaskContainerId(parent.id)
+  const ids = subtasks.map((subtask) => subtask.id)
+  const addKey = addRowKey.subtask(parent.id)
+  return (
+    <div>
+      {subtasks.length > 0 ? (
+        <SortableContext id={containerId} items={ids} strategy={verticalListSortingStrategy}>
+          <ul aria-label={`Subtasks of ${parent.title}`}>
+            {subtasks.map((subtask) => (
+              <SubtaskItem key={subtask.id} task={subtask} parentId={parent.id} containerId={containerId} />
+            ))}
+          </ul>
+        </SortableContext>
+      ) : null}
+      <InlineCreate
+        label="Add subtask"
+        inputLabel={`New subtask of ${parent.title}`}
+        placeholder="Subtask name"
+        open={ctx.editingRow === addKey}
+        onOpenChange={(open) => ctx.setEditingRow(open ? addKey : null)}
+        validate={validateTitle}
+        onSubmit={(title) =>
+          ctx.createTask({ title, phaseId: parent.phaseId, parentTaskId: parent.id, afterId: ids.at(-1) ?? null })
+        }
+        className="pr-3 pl-[68px]"
+      />
+    </div>
+  )
+}
+
+function SubtaskItem({ task, parentId, containerId }: { task: Task; parentId: string; containerId: string }) {
+  const ctx = useListContext()
+  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
+    useSortable({ id: task.id, data: { type: 'subtask', containerId, parentId } satisfies ListDragData })
+  const style: CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition: transition,
+  }
+  return (
+    <li ref={setNodeRef} style={style} className={cn('relative', isDragging && 'z-[1]')}>
+      <TaskRow
+        task={task}
+        depth={1}
+        today={ctx.today}
+        subtasks={null}
+        expanded={false}
+        handle={{ attributes, listeners }}
+        handleRef={setActivatorNodeRef}
+        placeholder={isDragging}
+        commands={ctx.commands}
+        menu={ctx.menuFor(task)}
+      />
+    </li>
+  )
+}

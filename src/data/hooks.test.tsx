@@ -1,9 +1,25 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { makePhase, makeProject, makeWorkspace } from '@/domain/testFactories'
+import {
+  makeMilestone,
+  makePhase,
+  makeProject,
+  makeTask,
+  makeWorkspace,
+} from '@/domain/testFactories'
 import type { SyncState } from './contracts'
 import { DEFAULT_PREFERENCES, EMPTY_WORKSPACE } from './defaults'
-import { syncIndicator, usePhase, useProjects, useSyncIndicator, useToday } from './hooks'
+import {
+  syncIndicator,
+  useMilestone,
+  useMilestones,
+  usePhase,
+  useProject,
+  useProjects,
+  useSyncIndicator,
+  useTask,
+  useToday,
+} from './hooks'
 import { useWorkspaceStore } from './store'
 
 beforeEach(() => {
@@ -68,6 +84,38 @@ describe('selectors', () => {
     expect(all.current.map((p) => p.id)).toEqual(['a', 'b', 'z'])
     const { result: phase } = renderHook(() => usePhase('ph'))
     expect(phase.current?.projectId).toBe('a')
+  })
+})
+
+describe('lookups by id', () => {
+  it('ignore inherited keys (ids come from the URL, e.g. ?task=constructor)', () => {
+    useWorkspaceStore.setState({
+      data: makeWorkspace({
+        projects: [makeProject({ id: 'p1' })],
+        tasks: [makeTask({ id: 't1', projectId: 'p1' })],
+      }),
+    })
+    for (const id of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+      expect(renderHook(() => useTask(id)).result.current).toBeUndefined()
+      expect(renderHook(() => useProject(id)).result.current).toBeUndefined()
+      expect(renderHook(() => usePhase(id)).result.current).toBeUndefined()
+      expect(renderHook(() => useMilestone(id)).result.current).toBeUndefined()
+    }
+    expect(renderHook(() => useTask('t1')).result.current?.id).toBe('t1')
+  })
+
+  it('useMilestones orders like the outline: date, then name (numeric), then id', () => {
+    useWorkspaceStore.setState({
+      data: makeWorkspace({
+        milestones: [
+          makeMilestone({ id: 'm3', projectId: 'p1', name: 'Phase 10', date: '2026-11-02' }),
+          makeMilestone({ id: 'm2', projectId: 'p1', name: 'Phase 9', date: '2026-11-02' }),
+          makeMilestone({ id: 'm1', projectId: 'p1', name: 'Kickoff', date: '2026-11-01' }),
+        ],
+      }),
+    })
+    const { result } = renderHook(() => useMilestones('p1'))
+    expect(result.current.map((m) => m.name)).toEqual(['Kickoff', 'Phase 9', 'Phase 10'])
   })
 })
 

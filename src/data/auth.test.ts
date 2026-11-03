@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AuthService, AuthUser, WorkspaceState } from './contracts'
+import { makeProject, makeTask } from '@/domain/testFactories'
+import type { AuthChangeEvent, AuthService, AuthUser, WorkspaceState } from './contracts'
 import {
   createLocalAuthService,
   createSupabaseAuthService,
@@ -8,7 +9,8 @@ import {
   type SupabaseAuthClient,
 } from './auth'
 import { RepositoryError } from './errors'
-import { createAuthStore } from './store'
+import { createMemoryStorage, LocalRepository } from './localRepository'
+import { createAuthStore, createWorkspaceStore } from './store'
 
 // ---------------------------------------------------------------------------
 // Supabase auth service over a fake `supabase.auth`
@@ -42,6 +44,10 @@ function fakeSupabaseAuth() {
     signOut: vi.fn(async (_options?: unknown) => ({ error: null as unknown })),
     resetPasswordForEmail: vi.fn(async (_email: string, _options?: unknown) => ({
       data: {},
+      error: null as unknown,
+    })),
+    updateUser: vi.fn(async (_attributes: { password?: string }) => ({
+      data: { user: session?.user ?? null },
       error: null as unknown,
     })),
   }
@@ -111,6 +117,42 @@ describe('Supabase auth service', () => {
     expect(fake.auth.resetPasswordForEmail).toHaveBeenCalledWith('me@example.com', {
       redirectTo: 'https://cairn.example',
     })
+  })
+
+  it('reports a password-recovery link as its own event', async () => {
+    vi.useFakeTimers()
+    const fake = fakeSupabaseAuth()
+    const seen: [AuthUser | null, AuthChangeEvent | undefined][] = []
+    fake.service.onChange((user, event) => seen.push([user, event]))
+    fake.emit('PASSWORD_RECOVERY', { user: { id: 'u1', email: 'a@b.c' } })
+    fake.emit('TOKEN_REFRESHED', { user: { id: 'u1', email: 'a@b.c' } })
+    fake.emit('SOMETHING_NEW', { user: { id: 'u1', email: 'a@b.c' } })
+    await vi.runAllTimersAsync()
+    expect(seen).toEqual([
+      [{ id: 'u1', email: 'a@b.c' }, 'password_recovery'],
+      [{ id: 'u1', email: 'a@b.c' }, 'token_refreshed'],
+      [{ id: 'u1', email: 'a@b.c' }, undefined],
+    ])
+    vi.useRealTimers()
+  })
+
+  it('sets a new password with updateUser and maps its errors', async () => {
+    const fake = fakeSupabaseAuth()
+    await fake.service.updatePassword('new-secret-1')
+    expect(fake.auth.updateUser).toHaveBeenCalledWith({ password: 'new-secret-1' })
+    fake.auth.updateUser.mockResolvedValueOnce({
+      data: { user: null },
+      error: { name: 'AuthApiError', status: 422, code: 'same_password', message: 'same' },
+    })
+    await expect(fake.service.updatePassword('old')).rejects.toMatchObject({
+      kind: 'validation',
+      message: 'Choose a password different from the current one.',
+    })
+    fake.auth.updateUser.mockResolvedValueOnce({
+      data: { user: null },
+      error: { name: 'AuthApiError', status: 401, code: 'reauthentication_needed', message: 'x' },
+    })
+    await expect(fake.service.updatePassword('another')).rejects.toMatchObject({ kind: 'auth' })
   })
 
   it('turns Supabase errors into readable RepositoryErrors', async () => {
@@ -215,13 +257,14 @@ function fakeWorkspace() {
 
 function controllableService(initial: AuthUser | null = null) {
   let user = initial
-  let callback: ((user: AuthUser | null) => void) | null = null
+  let callback: ((user: AuthUser | null, event?: AuthChangeEvent) => void) | null = null
+  const unsubscribe = vi.fn()
   const service: AuthService = {
     mode: 'supabase',
     getUser: vi.fn(async () => user),
-    onChange: vi.fn((next: (user: AuthUser | null) => void) => {
+    onChange: vi.fn((next: (user: AuthUser | null, event?: AuthChangeEvent) => void) => {
       callback = next
-      return () => {}
+      return unsubscribe
     }),
     signIn: vi.fn(async (email: string) => {
       user = { id: 'u1', email }
@@ -231,12 +274,18 @@ function controllableService(initial: AuthUser | null = null) {
       user = null
     }),
     sendPasswordReset: vi.fn(async () => {}),
+    updatePassword: vi.fn(async () => {}),
   }
   return {
     service,
-    emit: (next: AuthUser | null) => {
+    unsubscribe,
+    emit: (next: AuthUser | null, event?: AuthChangeEvent) => {
       user = next
-      callback?.(next)
+      callback?.(next, event)
+    },
+    /** The session ends on the server without an event reaching this tab (yet). */
+    expireSilently: () => {
+      user = null
     },
   }
 }
@@ -347,5 +396,153 @@ describe('auth store', () => {
       value: undefined,
     })
     expect(auth.service.sendPasswordReset).toHaveBeenCalledWith('new@example.com')
+  })
+})
+
+describe('password recovery', () => {
+  it('a reset link signs in and asks for a new password until one is saved', async () => {
+    const workspace = fakeWorkspace()
+    const auth = controllableService()
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: auth.service,
+      workspace: workspace.store,
+    })
+    await store.getState().actions.init()
+    expect(store.getState().passwordRecovery).toBe(false)
+
+    auth.emit({ id: 'u1', email: 'me@example.com' }, 'password_recovery')
+    expect(store.getState()).toMatchObject({ status: 'signed_in', passwordRecovery: true })
+    expect(workspace.actions.load).toHaveBeenCalledOnce()
+    auth.emit({ id: 'u1', email: 'me@example.com' }, 'token_refreshed')
+    expect(store.getState().passwordRecovery).toBe(true)
+
+    const { actions } = store.getState()
+    expect(await actions.updatePassword('')).toMatchObject({
+      ok: false,
+      error: { kind: 'validation' },
+    })
+    expect(auth.service.updatePassword).not.toHaveBeenCalled()
+
+    vi.mocked(auth.service.updatePassword).mockRejectedValueOnce(
+      new RepositoryError('validation', 'Password should be at least 6 characters.'),
+    )
+    expect(await actions.updatePassword('short')).toMatchObject({
+      ok: false,
+      error: { message: 'Password should be at least 6 characters.' },
+    })
+    expect(store.getState().passwordRecovery).toBe(true) // still asking
+
+    expect(await actions.updatePassword('a-much-better-one')).toEqual({
+      ok: true,
+      value: undefined,
+    })
+    expect(auth.service.updatePassword).toHaveBeenLastCalledWith('a-much-better-one')
+    expect(store.getState().passwordRecovery).toBe(false)
+  })
+
+  it('can be dismissed, and sign-out ends it', async () => {
+    const auth = controllableService()
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: auth.service,
+      workspace: fakeWorkspace().store,
+    })
+    await store.getState().actions.init()
+    auth.emit({ id: 'u1', email: 'me@example.com' }, 'password_recovery')
+    store.getState().actions.dismissPasswordRecovery()
+    expect(store.getState().passwordRecovery).toBe(false)
+    auth.emit({ id: 'u1', email: 'me@example.com' }, 'password_recovery')
+    auth.emit(null, 'signed_out')
+    expect(store.getState()).toMatchObject({ status: 'signed_out', passwordRecovery: false })
+  })
+
+  it('local mode never asks and updatePassword is a no-op', async () => {
+    const store = createAuthStore({
+      mode: 'local',
+      auth: createLocalAuthService(),
+      workspace: fakeWorkspace().store,
+    })
+    await store.getState().actions.init()
+    expect(store.getState().passwordRecovery).toBe(false)
+    expect(await store.getState().actions.updatePassword('anything')).toEqual({
+      ok: true,
+      value: undefined,
+    })
+  })
+})
+
+describe('session transitions', () => {
+  function realWorkspace() {
+    const storage = createMemoryStorage()
+    const repo = new LocalRepository({ storage })
+    const store = createWorkspaceStore({
+      mode: 'supabase',
+      repository: repo,
+      notify: { error: vi.fn(), dismiss: vi.fn() },
+      storage: null,
+      randomId: () => crypto.randomUUID(),
+    })
+    return { store, repo }
+  }
+
+  it('re-checks the session when the server rejects it, and signs out when it is gone', async () => {
+    const { store: workspace, repo } = realWorkspace()
+    const auth = controllableService({ id: 'u1', email: 'me@example.com' })
+    const store = createAuthStore({ mode: 'supabase', auth: auth.service, workspace })
+    await store.getState().actions.init()
+    await vi.waitFor(() => expect(workspace.getState().status).toBe('ready'))
+    await repo.insertProject(makeProject({ id: 'p1' }))
+    await workspace.getState().actions.refresh()
+
+    auth.expireSilently() // revoked elsewhere; no auth event has arrived here
+    vi.spyOn(repo, 'updateProject').mockRejectedValueOnce(
+      new RepositoryError('auth', 'Your session has expired. Sign in again.'),
+    )
+    const calls = vi.mocked(auth.service.getUser).mock.calls.length
+    await workspace.getState().actions.updateProject('p1', { name: 'Renamed' })
+    await vi.waitFor(() => expect(store.getState().status).toBe('signed_out'))
+    expect(vi.mocked(auth.service.getUser).mock.calls.length).toBe(calls + 1)
+    expect(workspace.getState().data.projects).toEqual({})
+  })
+
+  it('sign-out waits for pending writes, so the last change is saved', async () => {
+    const { store: workspace, repo } = realWorkspace()
+    const auth = controllableService({ id: 'u1', email: 'me@example.com' })
+    const store = createAuthStore({ mode: 'supabase', auth: auth.service, workspace })
+    await store.getState().actions.init()
+    await vi.waitFor(() => expect(workspace.getState().status).toBe('ready'))
+    await repo.insertProject(makeProject({ id: 'p1' }))
+    await repo.insertTask(makeTask({ id: 't1', projectId: 'p1' }))
+    await workspace.getState().actions.refresh()
+
+    repo.setLatency(30)
+    // the first write is in flight, the second still queued behind it
+    void workspace.getState().actions.updateTask('t1', { title: 'Last edit' })
+    void workspace.getState().actions.updateTask('t1', { priority: 'high' })
+    expect(await store.getState().actions.signOut()).toEqual({ ok: true, value: undefined })
+    repo.setLatency(0)
+    expect((await repo.loadWorkspace()).tasks[0]).toMatchObject({
+      title: 'Last edit',
+      priority: 'high',
+    })
+    expect(auth.service.signOut).toHaveBeenCalledOnce()
+    expect(store.getState().status).toBe('signed_out')
+    expect(workspace.getState().data.tasks).toEqual({})
+  })
+
+  it('stops listening once its signal is aborted (hot reload)', async () => {
+    const controller = new AbortController()
+    const workspace = fakeWorkspace()
+    const auth = controllableService()
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: auth.service,
+      workspace: workspace.store,
+      signal: controller.signal,
+    })
+    await store.getState().actions.init()
+    controller.abort()
+    expect(auth.unsubscribe).toHaveBeenCalledOnce()
   })
 })

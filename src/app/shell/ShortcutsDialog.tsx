@@ -54,7 +54,9 @@ export function ShortcutsDialog() {
       >
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>Shortcuts don’t fire while you’re typing in a field.</DialogDescription>
+          <DialogDescription>
+            Shortcuts don’t fire while you’re typing in a field.
+          </DialogDescription>
         </DialogHeader>
         <DialogBody className="pb-5">
           <div className="grid gap-5 sm:grid-cols-2">

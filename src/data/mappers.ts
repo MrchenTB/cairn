@@ -366,6 +366,27 @@ export function preferencesToRow(preferences: Preferences): PreferencesUpsert {
   }
 }
 
+const PREFERENCES_COLUMNS = {
+  theme: 'theme',
+  sidebarCollapsed: 'sidebar_collapsed',
+  timezone: 'timezone',
+  weekStartsOn: 'week_starts_on',
+} as const satisfies Record<keyof Preferences, keyof PreferencesUpsert>
+
+/** Only the columns of `fields` (a partial upsert updates just those on an existing row). */
+export function preferencesFieldsToRow(
+  preferences: Preferences,
+  fields: readonly (keyof Preferences)[],
+): Partial<PreferencesUpsert> {
+  const full = preferencesToRow(preferences)
+  const row: Partial<PreferencesUpsert> = {}
+  for (const field of fields) {
+    const column = PREFERENCES_COLUMNS[field]
+    if (column) (row as Record<string, unknown>)[column] = full[column]
+  }
+  return row
+}
+
 // ---------------------------------------------------------------------------
 // Aggregates
 // ---------------------------------------------------------------------------

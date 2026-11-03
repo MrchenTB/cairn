@@ -29,6 +29,10 @@ export interface BadgeProps extends ComponentProps<'span'>, VariantProps<typeof 
 /** Small pill for counts and states. Always pair colour with text (never colour alone). */
 export function Badge({ className, variant, size, ...props }: BadgeProps) {
   return (
-    <span data-slot="badge" className={cn(badgeVariants({ variant, size }), className)} {...props} />
+    <span
+      data-slot="badge"
+      className={cn(badgeVariants({ variant, size }), className)}
+      {...props}
+    />
   )
 }

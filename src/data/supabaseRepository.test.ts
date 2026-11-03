@@ -10,7 +10,12 @@ import {
 import type { AppErrorKind } from '@/domain/types'
 import { RepositoryError } from './errors'
 import { projectToRow, taskToRow, type TaskRow } from './mappers'
-import { PAGE_SIZE, SupabaseRepository, toRepositoryError } from './supabaseRepository'
+import {
+  MISSING_SCHEMA_MESSAGE,
+  PAGE_SIZE,
+  SupabaseRepository,
+  toRepositoryError,
+} from './supabaseRepository'
 
 // ---------------------------------------------------------------------------
 // A hand-written fake of the supabase-js query builder: records every call and answers
@@ -48,6 +53,20 @@ const BUILDER_METHODS = [
   'maybeSingle',
   'limit',
 ] as const
+
+const preferencesRow = {
+  user_id: 'u',
+  theme: 'dark',
+  sidebar_collapsed: true,
+  timezone: 'Europe/Paris',
+  week_starts_on: 0,
+} as const
+const devicePreferences = {
+  theme: 'light',
+  sidebarCollapsed: false,
+  timezone: 'Asia/Taipei',
+  weekStartsOn: 1,
+} as const
 
 function createFakeClient(respond: Responder = () => ({ data: [] })) {
   const calls: Call[] = []
@@ -559,6 +578,95 @@ describe('error mapping', () => {
     expect(toRepositoryError({ message: '' }, 403).kind).toBe('permission')
     expect(toRepositoryError({ message: 'TypeError: Load failed', code: '' }, 0).kind).toBe(
       'network',
+    )
+  })
+})
+
+describe('review: answers and partial writes', () => {
+  it('apply_task_schedule answers are matched by id, never by position (max_rows cuts them)', async () => {
+    const changes = Array.from({ length: 1200 }, (_, i) => ({
+      taskId: `t${i}`,
+      startDate: null,
+      dueDate: '2026-11-09',
+    }))
+    const row = (id: string) => ({
+      ...taskToRow(makeTask({ id, projectId: 'p' })),
+      due_date: '2026-11-09',
+    })
+    // PostgREST returned only the first 1000 rows, in another order, plus noise
+    const answer = [
+      ...changes
+        .slice(0, 1000)
+        .reverse()
+        .map((change) => row(change.taskId)),
+      row('t5'),
+      row('not-requested'),
+      null,
+    ]
+    const { client } = createFakeClient(() => ({ data: answer }))
+    const tasks = await new SupabaseRepository(client).applySchedule(changes)
+    expect(tasks).toHaveLength(1000)
+    expect(new Set(tasks.map((t) => t.id)).size).toBe(1000)
+    expect(tasks.every((t) => /^t\d+$/.test(t.id) && Number(t.id.slice(1)) < 1000)).toBe(true)
+  })
+
+  it('saves only the changed preference columns (other devices keep theirs)', async () => {
+    const { client, calls } = createFakeClient(() => ({ data: preferencesRow }))
+    const stored = await new SupabaseRepository(client).upsertPreferences(devicePreferences, {
+      fields: ['theme', 'weekStartsOn'],
+    })
+    expect(op(calls[0], 'upsert')).toEqual([
+      'upsert',
+      { theme: 'light', week_starts_on: 1 },
+      { onConflict: 'user_id' },
+    ])
+    expect(stored).toEqual({
+      theme: 'dark',
+      sidebarCollapsed: true,
+      timezone: 'Europe/Paris',
+      weekStartsOn: 0,
+    })
+  })
+
+  it('onlyIfMissing inserts without overwriting and returns the existing row', async () => {
+    let inserted = false
+    const { client, calls } = createFakeClient((call) => {
+      if (op(call, 'upsert')) return { data: inserted ? [preferencesRow] : [] }
+      return { data: [preferencesRow] }
+    })
+    const repo = new SupabaseRepository(client)
+    expect(await repo.upsertPreferences(devicePreferences, { onlyIfMissing: true })).toMatchObject({
+      theme: 'dark',
+      timezone: 'Europe/Paris',
+    })
+    expect(op(calls[0], 'upsert')).toEqual([
+      'upsert',
+      { theme: 'light', sidebar_collapsed: false, timezone: 'Asia/Taipei', week_starts_on: 1 },
+      { onConflict: 'user_id', ignoreDuplicates: true },
+    ])
+    expect(opNames(calls[1])).toEqual(['select', 'limit'])
+    inserted = true
+    await repo.upsertPreferences(devicePreferences, { onlyIfMissing: true })
+    expect(calls).toHaveLength(3) // inserted: nothing to read back
+  })
+
+  it('names a missing migration, a busy server and other server failures accurately', () => {
+    expect(
+      toRepositoryError({
+        code: 'PGRST205',
+        message: "Could not find the table 'public.projects' in the schema cache",
+      }),
+    ).toMatchObject({ kind: 'unknown', message: MISSING_SCHEMA_MESSAGE })
+    expect(
+      toRepositoryError({ code: 'PGRST202', message: 'Could not find the function' }).message,
+    ).toBe(MISSING_SCHEMA_MESSAGE)
+    expect(toRepositoryError({ code: '40P01', message: 'deadlock detected' })).toMatchObject({
+      kind: 'unknown',
+      message: expect.stringMatching(/busy/),
+    })
+    // used for loads too: never claims a save
+    expect(toRepositoryError({ code: 'XX000', message: 'internal error' }).message).not.toMatch(
+      /saving/,
     )
   })
 })

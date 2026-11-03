@@ -79,13 +79,30 @@ export interface Repository {
   insertDependency(dependency: Dependency): Promise<Dependency>
   deleteDependency(id: string): Promise<void>
 
-  /** Atomic multi-task date update (all-or-nothing). Returns the updated tasks. */
+  /**
+   * Atomic multi-task date update (all-or-nothing). Returns the updated tasks it got back, matched
+   * by id: a task missing from the answer (e.g. PostgREST `max_rows` cut it) was still updated.
+   */
   applySchedule(changes: readonly ScheduleChange[]): Promise<Task[]>
 
-  upsertPreferences(preferences: Preferences): Promise<Preferences>
+  /** Saves the preferences row (one per user) and returns the stored row. */
+  upsertPreferences(
+    preferences: Preferences,
+    options?: UpsertPreferencesOptions,
+  ): Promise<Preferences>
 
   /** Atomic insert of an already id-remapped backup (all-or-nothing). */
   importWorkspace(data: BackupData): Promise<ImportSummary>
+}
+
+export interface UpsertPreferencesOptions {
+  /**
+   * Only these fields are written when the row exists (other devices' newer values of the other
+   * fields stay); a missing row is created from the whole value. Default: every field.
+   */
+  fields?: readonly (keyof Preferences)[]
+  /** Insert only: an existing row is left as it is and returned (first-run defaults). */
+  onlyIfMissing?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -99,29 +116,54 @@ export interface AuthUser {
 
 export type AuthStatus = 'loading' | 'signed_out' | 'signed_in'
 
+/**
+ * What an auth change was. 'password_recovery' = the user opened a password-reset link: they
+ * are signed in and should now choose a new password.
+ */
+export type AuthChangeEvent =
+  | 'initial_session'
+  | 'signed_in'
+  | 'signed_out'
+  | 'token_refreshed'
+  | 'user_updated'
+  | 'password_recovery'
+
 export interface AuthService {
   readonly mode: DataMode
   getUser(): Promise<AuthUser | null>
   /** Subscribe to sign-in/out/token events. Returns an unsubscribe function. */
-  onChange(callback: (user: AuthUser | null) => void): () => void
+  onChange(callback: (user: AuthUser | null, event?: AuthChangeEvent) => void): () => void
   signIn(email: string, password: string): Promise<void>
   /** needsConfirmation = true when the project requires email confirmation before sign-in. */
   signUp(email: string, password: string): Promise<{ needsConfirmation: boolean }>
   signOut(): Promise<void>
   sendPasswordReset(email: string): Promise<void>
+  /** Sets a new password for the signed-in user (e.g. after a password-reset link). */
+  updatePassword(newPassword: string): Promise<void>
 }
 
 export interface AuthState {
   mode: DataMode
   status: AuthStatus
   user: AuthUser | null
+  /**
+   * True after the user arrived through a password-reset link (they are signed in): the UI asks
+   * for a new password. Cleared by a successful updatePassword, by dismissPasswordRecovery and
+   * by sign-out. Always false in local mode.
+   */
+  passwordRecovery: boolean
   actions: {
     /** Reads the current session and subscribes to changes. Idempotent. */
     init(): Promise<void>
     signIn(email: string, password: string): Promise<Result>
     signUp(email: string, password: string): Promise<Result<{ needsConfirmation: boolean }>>
+    /** Waits (briefly) for pending writes to be saved, then signs out and clears the workspace. */
     signOut(): Promise<Result>
     sendPasswordReset(email: string): Promise<Result>
+    /** Validates (non-empty), saves the new password and clears passwordRecovery on success. */
+    updatePassword(newPassword: string): Promise<Result>
+    /** The user chose not to set a new password now (clears passwordRecovery). */
+    dismissPasswordRecovery(): void
   }
 }
 

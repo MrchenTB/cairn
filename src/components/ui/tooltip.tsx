@@ -1,14 +1,26 @@
-import { useState, type ComponentProps, type ReactElement, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
 import { Tooltip as TooltipPrimitive } from 'radix-ui'
+import { getInputModality, installInputModality } from '@/lib/inputModality'
 import { cn } from '@/lib/utils'
 import { Shortcut } from './kbd'
 
-/** Mounted once at the app root. Delay ≈ 400 ms; moving between triggers is instant. */
+/**
+ * Mounted once at the app root. Delay ≈ 400 ms; moving between triggers is instant. Also starts
+ * input-modality tracking (keyboard vs pointer) used by tooltips and focus rings.
+ */
 export function TooltipProvider({
   delayDuration = 400,
   skipDelayDuration = 300,
   ...props
 }: ComponentProps<typeof TooltipPrimitive.Provider>) {
+  useEffect(() => installInputModality(), [])
   return (
     <TooltipPrimitive.Provider
       delayDuration={delayDuration}
@@ -64,7 +76,9 @@ export interface TooltipProps {
 /**
  * Convenience tooltip: `<Tooltip content="Search" shortcut="mod+k"><Button …/></Tooltip>`.
  * Tooltips describe; icon-only buttons still need their own aria-label. `disabled` keeps the
- * same element tree (the trigger never remounts when it toggles).
+ * same element tree (the trigger never remounts when it toggles). Opens on hover and on
+ * keyboard focus — not when focus merely returns to the trigger after a pointer interaction
+ * (e.g. a menu closed by clicking an item), so no tooltip lingers away from the pointer.
  */
 export function Tooltip({
   content,
@@ -76,14 +90,34 @@ export function Tooltip({
   children,
 }: TooltipProps) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const pointerInside = useRef(false)
   const inactive = disabled || (!content && !shortcut)
+  const onOpenChange = (next: boolean) => {
+    if (next && getInputModality() === 'pointer') {
+      const hovered = pointerInside.current || (triggerRef.current?.matches(':hover') ?? false)
+      if (!hovered) return // focus came back after a click elsewhere: not a reason to show
+    }
+    setOpen(next)
+  }
   return (
     <TooltipPrimitive.Root
       open={!inactive && open}
-      onOpenChange={setOpen}
+      onOpenChange={onOpenChange}
       delayDuration={delayDuration}
     >
-      <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Trigger
+        asChild
+        ref={triggerRef}
+        onPointerEnter={() => {
+          pointerInside.current = true
+        }}
+        onPointerLeave={() => {
+          pointerInside.current = false
+        }}
+      >
+        {children}
+      </TooltipPrimitive.Trigger>
       {inactive ? null : (
         <TooltipContent side={side} align={align}>
           <span className="flex items-center gap-2">

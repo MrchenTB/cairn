@@ -99,6 +99,25 @@ export function keyForPlacement(
     return lastResortKey(siblings)
   }
 }
+/**
+ * True when `item` already sits where `keyForPlacement(siblings, placement)` would put it (a drop
+ * in place, so no write is needed). `siblings` = the destination list WITHOUT the item, any order.
+ * Same neighbour precedence as `keyForPlacement`, so the two can never disagree.
+ */
+export function isAtPlacement(
+  item: Ordered,
+  siblings: readonly Ordered[],
+  placement: { afterId?: string | null; beforeId?: string | null },
+): boolean {
+  const sorted = sortByOrder(siblings)
+  const [gap] = resolveGap(sorted, placement ?? {})
+  const before = gap > 0 ? sorted[gap - 1] : null
+  const after = gap < sorted.length ? sorted[gap] : null
+  return (
+    (before === null || bySortOrder(before, item) < 0) &&
+    (after === null || bySortOrder(item, after) < 0)
+  )
+}
 /** `n` sorted keys for a block of items placed like `keyForPlacement` (e.g. promoted subtasks). */
 export function keysForPlacement(
   siblings: readonly Ordered[],

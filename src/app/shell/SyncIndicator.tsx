@@ -23,8 +23,9 @@ function formatTime(epochMs: number): string {
 }
 
 /**
- * Sidebar sync state: a 6px dot + label ("Local only", "Saving…", "Saved", "Offline",
- * "Couldn't save · Retry"). Opens a popover with details; Retry re-runs the failed write.
+ * Sidebar sync state: a 6px dot + label ("Local only — not synced", "Saving…", "Saved",
+ * "Offline", "Couldn't save · Retry"). Opens a popover with details; Retry re-runs the failed
+ * write.
  */
 export function SyncIndicator({ collapsed }: { collapsed: boolean }) {
   const mode = useDataMode()

@@ -23,12 +23,13 @@ const MENU_ORDER: readonly ThemePreference[] = ['light', 'dark', 'system']
 export function ThemeMenu() {
   const { preference, resolved, setPreference } = useTheme()
   const TriggerIcon = preference === 'system' ? Monitor : resolved === 'dark' ? Moon : Sun
+  const label = `Theme: ${OPTIONS[preference].label}`
 
   return (
     <DropdownMenu>
-      <Tooltip content="Theme" side="bottom">
+      <Tooltip content={label} side="bottom">
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label={`Theme: ${OPTIONS[preference].label}`}>
+          <Button variant="ghost" size="icon" aria-label={label}>
             <TriggerIcon strokeWidth={1.75} />
           </Button>
         </DropdownMenuTrigger>

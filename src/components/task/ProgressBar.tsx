@@ -45,7 +45,10 @@ export function ProgressBar({
         aria-valuemax={100}
         aria-valuenow={percent}
         aria-valuetext={valueText}
-        className={cn('block h-1 w-16 shrink-0 overflow-hidden rounded-full bg-active', barClassName)}
+        className={cn(
+          'block h-1 w-16 shrink-0 overflow-hidden rounded-full bg-active',
+          barClassName,
+        )}
       >
         <span
           className="block h-full rounded-full bg-accent transition-[width] duration-slow ease-move"

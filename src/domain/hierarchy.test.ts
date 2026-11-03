@@ -7,7 +7,7 @@ import {
   subtasksOf,
   topLevelTasks,
 } from './hierarchy'
-import { makeMilestone, makePhase, makeProject, makeTask } from './testFactories'
+import { makeDependency, makeMilestone, makePhase, makeProject, makeTask } from './testFactories'
 import type { OutlineGroup } from './hierarchy'
 
 const project = makeProject({ id: 'p1' })
@@ -74,6 +74,32 @@ describe('canBecomeSubtaskOf', () => {
         expect(result.error.message).toMatch(message)
       }
     }
+  })
+
+  it('with dependencies: rejects a parent the task is linked to by a dependency (either way)', () => {
+    const plainToParent = makeDependency({
+      projectId: 'p1',
+      predecessorId: 'plain',
+      successorId: 'parent',
+    })
+    const parentToPlain = makeDependency({
+      projectId: 'p1',
+      predecessorId: 'parent',
+      successorId: 'plain',
+    })
+    const unrelated = makeDependency({ projectId: 'p1', predecessorId: 'plain', successorId: 'x' })
+    for (const dependency of [plainToParent, parentToPlain]) {
+      const result = canBecomeSubtaskOf(plain, parent, tasks, [dependency])
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('validation')
+        expect(result.error.message).toMatch(/Remove that dependency first/)
+      }
+    }
+    expect(canBecomeSubtaskOf(plain, parent, tasks, [unrelated]).ok).toBe(true)
+    expect(canBecomeSubtaskOf(plain, parent, tasks, []).ok).toBe(true)
+    // Without the dependencies argument the rule is not checked (existing callers).
+    expect(canBecomeSubtaskOf(plain, parent, tasks).ok).toBe(true)
   })
 })
 

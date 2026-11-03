@@ -13,6 +13,8 @@ export interface ErrorStateProps {
   retryLabel?: string
   /** `page` = centred block for a whole view; `banner` = inline strip above content. */
   variant?: 'page' | 'banner'
+  /** Heading element for the page variant's title (default h2; h1 when it is the whole page). */
+  titleAs?: 'h1' | 'h2' | 'h3'
   className?: string
 }
 
@@ -24,6 +26,7 @@ export function ErrorState({
   retrying = false,
   retryLabel = 'Retry',
   variant = 'page',
+  titleAs: Title = 'h2',
   className,
 }: ErrorStateProps) {
   if (variant === 'banner') {
@@ -58,7 +61,7 @@ export function ErrorState({
       )}
     >
       <TriangleAlert className="mb-3 size-6 text-danger" strokeWidth={1.5} aria-hidden />
-      <h2 className="text-heading font-semibold text-fg">{title}</h2>
+      <Title className="text-heading font-semibold text-fg">{title}</Title>
       {message ? <p className="mt-1 text-ui text-fg-secondary">{message}</p> : null}
       {onRetry ? (
         <Button variant="secondary" size="md" className="mt-4" onClick={onRetry} loading={retrying}>

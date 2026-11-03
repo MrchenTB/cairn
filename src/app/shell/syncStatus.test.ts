@@ -13,8 +13,11 @@ const idle: SyncState = {
 const failure = { kind: 'network' as const, message: 'Network error — check your connection.' }
 
 describe('deriveSyncStatus', () => {
-  it('always says "Local only" in local mode when idle (never pretends to sync)', () => {
-    expect(deriveSyncStatus('local', idle)).toMatchObject({ kind: 'local', label: 'Local only' })
+  it('always says "Local only — not synced" in local mode when idle (never pretends to sync)', () => {
+    expect(deriveSyncStatus('local', idle)).toMatchObject({
+      kind: 'local',
+      label: 'Local only — not synced',
+    })
     expect(deriveSyncStatus('local', { ...idle, online: false }).kind).toBe('local')
   })
 

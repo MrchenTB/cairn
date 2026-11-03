@@ -5,7 +5,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppErrorKind } from '@/domain/types'
-import type { AuthService, AuthUser, DataMode } from './contracts'
+import type { AuthChangeEvent, AuthService, AuthUser, DataMode } from './contracts'
 import {
   NETWORK_ERROR_MESSAGE,
   RepositoryError,
@@ -26,6 +26,7 @@ export type SupabaseAuthClient = Pick<
   | 'signUp'
   | 'signOut'
   | 'resetPasswordForEmail'
+  | 'updateUser'
 >
 
 const AUTH_ERRORS: Record<string, readonly [AppErrorKind, string | null]> = {
@@ -48,6 +49,14 @@ const AUTH_ERRORS: Record<string, readonly [AppErrorKind, string | null]> = {
   weak_password: ['validation', null],
   validation_failed: ['validation', null],
   same_password: ['validation', 'Choose a password different from the current one.'],
+  reauthentication_needed: [
+    'auth',
+    'For your security, sign in again before changing your password.',
+  ],
+  reauthentication_not_valid: [
+    'auth',
+    'For your security, sign in again before changing your password.',
+  ],
   over_request_rate_limit: ['unknown', 'Too many attempts. Wait a moment and try again.'],
   over_email_send_rate_limit: ['unknown', 'Too many emails were sent. Try again later.'],
   session_expired: ['auth', 'Your session has expired. Sign in again.'],
@@ -93,6 +102,15 @@ function toAuthUser(user: { id: string; email?: string | null }): AuthUser {
   return { id: user.id, email: user.email ?? null }
 }
 
+const AUTH_EVENTS: Record<string, AuthChangeEvent> = {
+  INITIAL_SESSION: 'initial_session',
+  SIGNED_IN: 'signed_in',
+  SIGNED_OUT: 'signed_out',
+  TOKEN_REFRESHED: 'token_refreshed',
+  USER_UPDATED: 'user_updated',
+  PASSWORD_RECOVERY: 'password_recovery',
+}
+
 function defaultRedirect(): string {
   return typeof window === 'undefined' ? '' : window.location.origin
 }
@@ -114,9 +132,10 @@ export function createSupabaseAuthService(
       return data.session ? toAuthUser(data.session.user) : null
     },
     onChange(callback) {
-      const { data } = auth.onAuthStateChange((_event, session) => {
+      const { data } = auth.onAuthStateChange((event, session) => {
         const user = session ? toAuthUser(session.user) : null
-        setTimeout(() => callback(user), 0)
+        const kind = Object.hasOwn(AUTH_EVENTS, event) ? AUTH_EVENTS[event] : undefined
+        setTimeout(() => callback(user, kind), 0)
       })
       return () => data.subscription.unsubscribe()
     },
@@ -143,6 +162,10 @@ export function createSupabaseAuthService(
       const { error } = await auth.resetPasswordForEmail(email, { redirectTo: redirectTo() })
       if (error) throw toAuthError(error)
     },
+    async updatePassword(newPassword) {
+      const { error } = await auth.updateUser({ password: newPassword })
+      if (error) throw toAuthError(error)
+    },
   }
 }
 
@@ -156,6 +179,7 @@ export function createLocalAuthService(): AuthService {
     signUp: async () => ({ needsConfirmation: false }),
     signOut: async () => {},
     sendPasswordReset: async () => {},
+    updatePassword: async () => {},
   }
 }
 

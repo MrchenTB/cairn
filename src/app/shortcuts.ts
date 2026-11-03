@@ -36,6 +36,7 @@ export function useGlobalShortcuts(): void {
   const projectId = useCurrentProjectId()
   const collapsed = useSidebarCollapsed()
   const setCollapsed = useSetSidebarCollapsed()
+  const searchOpen = useUIStore((s) => s.searchOpen)
 
   useHotkeys(
     SHORTCUTS.search,
@@ -45,6 +46,13 @@ export function useGlobalShortcuts(): void {
     },
     { allowInInput: true, allowInModal: true, description: 'Search', group: 'General' },
   )
+  // Safety net while search is open: Radix overlays handle Esc themselves (and mark the event
+  // handled, so this never runs twice); this only closes an overlay that did not.
+  useHotkeys('escape', () => useUIStore.getState().setSearchOpen(false), {
+    enabled: searchOpen,
+    allowInInput: true,
+    allowInModal: true,
+  })
   useHotkeys(
     SHORTCUTS.newTask,
     () => useUIStore.getState().openNewTask(projectId ? { projectId } : {}),

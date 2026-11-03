@@ -12,8 +12,11 @@ import {
 } from './keyboard'
 
 // jsdom is not macOS, so `mod` = Ctrl.
-const press = (key: string, init: KeyboardEventInit = {}, target: Element | Document | Window = document.body) =>
-  fireEvent.keyDown(target, { key, ...init })
+const press = (
+  key: string,
+  init: KeyboardEventInit = {},
+  target: Element | Document | Window = document.body,
+) => fireEvent.keyDown(target, { key, ...init })
 
 const keyLike = (key: string, code: string, init: Partial<KeyboardEventInit> = {}) => ({
   key,

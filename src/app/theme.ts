@@ -30,7 +30,9 @@ function subscribeSystemTheme(callback: () => void) {
 }
 
 function getSystemDark(): boolean {
-  return typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(DARK_QUERY).matches
+  return (
+    typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(DARK_QUERY).matches
+  )
 }
 
 /** Live `prefers-color-scheme: dark` (updates when the OS theme changes). */

@@ -106,9 +106,10 @@
   /* ---------- Z-index ---------- */
   --z-sticky: 10;
   --z-sidebar: 20;
-  --z-dropdown: 50;
   --z-overlay: 60;
   --z-modal: 61;
+  /* Menus, popovers, selects: above modals, which open them (Task Modal, project dialog…). */
+  --z-dropdown: 65;
   --z-command: 70;
   --z-toast: 80;
   --z-tooltip: 90;

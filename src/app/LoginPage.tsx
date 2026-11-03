@@ -1,18 +1,17 @@
-import { useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { Navigate, useLocation } from 'react-router'
-import { Eye, EyeOff, MailCheck, TriangleAlert } from 'lucide-react'
-import { LogoMark } from '@/components/brand/Logo'
+import { MailCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordInput } from '@/components/ui/password-input'
 import { useAuth } from '@/data/hooks'
-import { cn } from '@/lib/utils'
 import { AppSplash } from './AppSplash'
+import { AuthLayout, FormAlert } from './AuthLayout'
 import type { LoginRedirectState } from './AuthGate'
+import { MIN_PASSWORD_LENGTH } from './passwordRules'
 
 type FormMode = 'sign-in' | 'sign-up'
-
-const MIN_PASSWORD_LENGTH = 8
 
 /** Only same-app paths are accepted as a post-login destination. */
 function safeTarget(from: string | undefined): string {
@@ -27,18 +26,44 @@ interface Notice {
   body: string
 }
 
+/** `field` = the input the message is about (null = the whole form, e.g. a server error). */
+interface FormError {
+  field: 'email' | 'password' | null
+  message: string
+}
+
+function NoticePanel({ notice, onBack }: { notice: Notice; onBack: () => void }) {
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  // The form that had focus is gone: move focus to the message so it is read and Tab continues.
+  useEffect(() => headingRef.current?.focus(), [])
+  return (
+    <div className="flex flex-col items-center text-center" role="status">
+      <MailCheck className="size-6 text-accent-text" strokeWidth={1.5} aria-hidden />
+      <h2
+        ref={headingRef}
+        tabIndex={-1}
+        className="mt-3 rounded-sm text-heading font-semibold text-fg focus:outline-none"
+      >
+        {notice.title}
+      </h2>
+      <p className="mt-1 text-ui text-fg-secondary">{notice.body}</p>
+      <Button variant="secondary" size="md" className="mt-5 w-full" onClick={onBack}>
+        Back to sign in
+      </Button>
+    </div>
+  )
+}
+
 function CredentialsForm() {
   const { actions } = useAuth()
   const ids = useId()
   const emailRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
   const [mode, setMode] = useState<FormMode>('sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
   const [pending, setPending] = useState<'submit' | 'reset' | null>(null)
-  const [error, setError] = useState<{ field: 'email' | 'password' | null; message: string } | null>(
-    null,
-  )
+  const [error, setError] = useState<FormError | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
 
   const switchMode = (next: FormMode) => {
@@ -46,20 +71,26 @@ function CredentialsForm() {
     setError(null)
   }
 
+  const fail = (next: FormError) => {
+    setError(next)
+    if (next.field === 'email') emailRef.current?.focus()
+    if (next.field === 'password') passwordRef.current?.focus()
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setError(null)
     const trimmed = email.trim()
     if (!/^\S+@\S+$/.test(trimmed)) {
-      setError({ field: 'email', message: 'Enter a valid email address.' })
+      fail({ field: 'email', message: 'Enter a valid email address.' })
       return
     }
     if (!password) {
-      setError({ field: 'password', message: 'Enter your password.' })
+      fail({ field: 'password', message: 'Enter your password.' })
       return
     }
     if (mode === 'sign-up' && password.length < MIN_PASSWORD_LENGTH) {
-      setError({
+      fail({
         field: 'password',
         message: `Use at least ${MIN_PASSWORD_LENGTH} characters for your password.`,
       })
@@ -90,8 +121,10 @@ function CredentialsForm() {
     setError(null)
     const trimmed = email.trim()
     if (!/^\S+@\S+$/.test(trimmed)) {
-      setError({ field: 'email', message: 'Enter your email address first, then choose “Forgot password?”.' })
-      emailRef.current?.focus()
+      fail({
+        field: 'email',
+        message: 'Enter your email address first, then choose “Forgot password?”.',
+      })
       return
     }
     setPending('reset')
@@ -109,28 +142,25 @@ function CredentialsForm() {
 
   if (notice) {
     return (
-      <div className="flex flex-col items-center text-center" role="status">
-        <MailCheck className="size-6 text-accent-text" strokeWidth={1.5} aria-hidden />
-        <h2 className="mt-3 text-heading font-semibold text-fg">{notice.title}</h2>
-        <p className="mt-1 text-ui text-fg-secondary">{notice.body}</p>
-        <Button
-          variant="secondary"
-          size="md"
-          className="mt-5 w-full"
-          onClick={() => {
-            setNotice(null)
-            switchMode('sign-in')
-          }}
-        >
-          Back to sign in
-        </Button>
-      </div>
+      <NoticePanel
+        notice={notice}
+        onBack={() => {
+          setNotice(null)
+          switchMode('sign-in')
+        }}
+      />
     )
   }
 
   const emailId = `${ids}-email`
   const passwordId = `${ids}-password`
+  const hintId = `${ids}-password-hint`
   const errorId = `${ids}-error`
+  // Each field is described only by the messages that concern it.
+  const describe = (field: 'email' | 'password', hint?: string) =>
+    [hint, error && (error.field === field || error.field === null) ? errorId : undefined]
+      .filter(Boolean)
+      .join(' ') || undefined
 
   return (
     <>
@@ -146,58 +176,44 @@ function CredentialsForm() {
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             aria-invalid={error?.field === 'email' || undefined}
-            aria-describedby={error ? errorId : undefined}
+            aria-describedby={describe('email')}
             placeholder="you@example.com"
           />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={passwordId}>Password</Label>
-          <div className="relative">
-            <Input
-              id={passwordId}
-              type={showPassword ? 'text' : 'password'}
-              autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              aria-invalid={error?.field === 'password' || undefined}
-              aria-describedby={error ? errorId : undefined}
-              className="pr-9"
-            />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="absolute top-1 right-1"
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-              aria-pressed={showPassword}
-              onClick={() => setShowPassword((shown) => !shown)}
-            >
-              {showPassword ? <EyeOff /> : <Eye />}
-            </Button>
-          </div>
+          <PasswordInput
+            ref={passwordRef}
+            id={passwordId}
+            autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            aria-invalid={error?.field === 'password' || undefined}
+            aria-describedby={describe('password', mode === 'sign-up' ? hintId : undefined)}
+          />
           {mode === 'sign-up' ? (
-            <p className="text-meta text-fg-tertiary">At least {MIN_PASSWORD_LENGTH} characters.</p>
+            <p id={hintId} className="text-meta text-fg-tertiary">
+              At least {MIN_PASSWORD_LENGTH} characters.
+            </p>
           ) : (
             <button
               type="button"
               onClick={sendReset}
               disabled={pending !== null}
-              className="self-end rounded-sm text-meta text-fg-tertiary transition-colors duration-fast hover:text-fg disabled:opacity-50"
+              className="self-end rounded-sm text-meta text-fg-tertiary transition-colors duration-fast hover:text-fg hover:duration-instant disabled:opacity-50"
             >
               {pending === 'reset' ? 'Sending…' : 'Forgot password?'}
             </button>
           )}
         </div>
-        {error ? (
-          <p
-            id={errorId}
-            role="alert"
-            className="flex items-start gap-2 rounded-md bg-danger-subtle px-2.5 py-2 text-ui text-danger"
-          >
-            <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-            <span>{error.message}</span>
-          </p>
-        ) : null}
-        <Button type="submit" variant="primary" size="md" loading={pending === 'submit'} className="w-full">
+        {error ? <FormAlert id={errorId}>{error.message}</FormAlert> : null}
+        <Button
+          type="submit"
+          variant="primary"
+          size="md"
+          loading={pending === 'submit'}
+          className="w-full"
+        >
           {mode === 'sign-in' ? 'Sign in' : 'Create account'}
         </Button>
       </form>
@@ -229,19 +245,8 @@ export function LoginPage() {
   if (status === 'loading') return <AppSplash />
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-app px-4 py-12">
-      <div className="w-full max-w-[380px]">
-        <div className="mb-6 flex flex-col items-center text-center">
-          <LogoMark tone="brand" size={40} title="Cairn" />
-          <h1 className="mt-4 text-title font-semibold tracking-(--letter-spacing-title) text-fg">
-            Welcome to Cairn
-          </h1>
-          <p className="mt-1 text-ui text-fg-secondary">Plan clearly. Work simply.</p>
-        </div>
-        <div className={cn('rounded-xl border border-subtle bg-main p-6 shadow-panel')}>
-          <CredentialsForm />
-        </div>
-      </div>
-    </main>
+    <AuthLayout title="Welcome to Cairn" subtitle="Plan clearly. Work simply.">
+      <CredentialsForm />
+    </AuthLayout>
   )
 }

@@ -16,7 +16,9 @@
  *   newest intent) and hands A's original value to that later change, so if it fails too the
  *   field returns to its last saved value;
  * - reconciling A's stored row skips fields a later pending change wrote, updating that
- *   change's rollback value to the stored one instead.
+ *   change's rollback value to the stored one instead;
+ * - a full load reads behind the writes already sent (same queue) and re-applies the writes made
+ *   meanwhile on top of the snapshot, so it never reverts or loses them.
  */
 import {
   applyPatches,
@@ -28,10 +30,11 @@ import {
   type Patch,
 } from 'immer'
 import { create, type StoreApi } from 'zustand'
-import { isISODate, isValidTimeZone } from '@/domain/dates'
+import { getBrowserTimeZone, isISODate, isValidTimeZone, todayInTimeZone } from '@/domain/dates'
 import { canBecomeSubtaskOf } from '@/domain/hierarchy'
 import {
   bySortOrder,
+  isAtPlacement,
   keyAtEnd,
   keyForPlacement,
   keysBetween,
@@ -85,8 +88,10 @@ import {
 } from '@/domain/validation'
 import { notify } from '@/lib/notify'
 import { createAuthService, LOCAL_USER } from './auth'
+import { downloadTextFile } from './backup'
 import { getDataMode, isTestHooksEnabled } from './config'
 import type {
+  AuthChangeEvent,
   AuthService,
   AuthState,
   AuthUser,
@@ -99,10 +104,12 @@ import type {
 import { DEFAULT_PREFERENCES, EMPTY_WORKSPACE } from './defaults'
 import { isRetryable, toAppError } from './errors'
 import {
+  createMemoryStorage,
   getBrowserStorage,
   installTestHooks,
   LocalRepository,
   type StorageLike,
+  type UnreadableLocalData,
 } from './localRepository'
 import { getSupabaseClient } from './supabaseClient'
 import { SupabaseRepository } from './supabaseRepository'
@@ -115,9 +122,11 @@ export const UI_PREFS_STORAGE_KEY = 'cairn:ui-prefs'
 export const AUTO_REFRESH_INTERVAL_MS = 30_000
 /** Failed writes share one toast id, so the newest failure replaces the previous toast. */
 export const SYNC_ERROR_TOAST_ID = 'cairn-sync-error'
+/** Toast shown when a reset (sign-out) dropped changes that were still being saved. */
+export const UNSAVED_ON_RESET_TOAST_ID = 'cairn-unsaved-on-reset'
 
-/** The toast API the store needs (injectable for tests). */
-export type Notifier = Pick<typeof notify, 'error'>
+/** The toast API the store needs (injectable for tests; `dismiss` is optional). */
+export type Notifier = Pick<typeof notify, 'error'> & Partial<Pick<typeof notify, 'dismiss'>>
 
 /** Event sources for cross-device freshness (browser: window, document, navigator). */
 export interface WorkspaceEnvironment {
@@ -139,6 +148,8 @@ export interface WorkspaceStoreOptions {
   now?: () => number
   /** Id generator for new entities and imports (default crypto.randomUUID). */
   randomId?: () => string
+  /** Aborting it removes the store's event listeners (HMR, tests). */
+  signal?: AbortSignal
 }
 
 // ---------------------------------------------------------------------------
@@ -197,8 +208,16 @@ type Path = readonly (string | number)[]
 
 /** A write applied to `data` whose server answer is still pending. */
 interface PendingWrite {
+  /** Forward patches of THIS write (re-applied on top of a snapshot loaded meanwhile). */
+  patches: Patch[]
   /** Inverse patches of THIS write; their paths are the paths the write touched. */
   inverse: Patch[]
+}
+
+/** A Retry offered for a failed write; only valid in the session (epoch) that made it. */
+interface RetryHandle {
+  run: () => Promise<Result<unknown>>
+  epoch: number
 }
 
 /** A stored row to merge into the state at `path` (['data', table, id] or ['preferences']). */
@@ -270,6 +289,12 @@ function toWorkspaceData(snapshot: WorkspaceSnapshot): WorkspaceData {
 
 const OK: Result = { ok: true, value: undefined }
 
+/** Result of a write that was still waiting when the workspace was reset (sign-out). */
+const SIGNED_OUT_ERROR: AppError = {
+  kind: 'auth',
+  message: 'You were signed out before this change was saved.',
+}
+
 function invalid(message: string): { ok: false; error: AppError } {
   return { ok: false, error: { kind: 'validation', message } }
 }
@@ -321,40 +346,18 @@ function isEmpty(value: object): boolean {
   return Object.keys(value).length === 0
 }
 
+/** The fields of `patch` that are set (undefined = not part of it). */
+function definedFields<T extends object>(patch: Partial<T>): Partial<T> {
+  const fields: Partial<T> = {}
+  for (const key of Object.keys(patch) as (keyof T)[]) {
+    if (patch[key] !== undefined) fields[key] = patch[key]
+  }
+  return fields
+}
+
 function once<T>(fn: () => Promise<T>): () => Promise<T> {
   let promise: Promise<T> | null = null
   return () => (promise ??= fn())
-}
-
-/** Mirrors `keyForPlacement`'s neighbour resolution: index of the gap the item goes into. */
-function placementGap(sorted: readonly Ordered[], placement: Placement): number {
-  const { afterId, beforeId } = placement
-  if (afterId === null) return 0
-  if (typeof afterId === 'string') {
-    const index = sorted.findIndex((item) => item.id === afterId)
-    if (index >= 0) return index + 1
-  }
-  if (typeof beforeId === 'string') {
-    const index = sorted.findIndex((item) => item.id === beforeId)
-    if (index >= 0) return index
-  }
-  return sorted.length
-}
-
-/** True when `item` already sits where `placement` would put it (a drop in place). */
-function isAlreadyPlaced(
-  item: Ordered,
-  siblings: readonly Ordered[],
-  placement: Placement,
-): boolean {
-  const sorted = sortByOrder(siblings)
-  const gap = placementGap(sorted, placement)
-  const before = gap > 0 ? sorted[gap - 1] : null
-  const after = gap < sorted.length ? sorted[gap] : null
-  return (
-    (before === null || bySortOrder(before, item) < 0) &&
-    (after === null || bySortOrder(item, after) < 0)
-  )
 }
 
 function topLevelSiblings(
@@ -374,18 +377,6 @@ function subtaskSiblings(
 ): Task[] {
   return Object.values(tasks).filter(
     (task) => task.parentTaskId === parentId && task.id !== excludeId,
-  )
-}
-
-function linkedByDependency(
-  dependencies: Record<string, Dependency>,
-  a: string,
-  b: string,
-): boolean {
-  return Object.values(dependencies).some(
-    (d) =>
-      (d.predecessorId === a && d.successorId === b) ||
-      (d.predecessorId === b && d.successorId === a),
   )
 }
 
@@ -412,6 +403,12 @@ interface WriteSpec<T> {
   retry: () => Promise<Result<unknown>>
   /** Background housekeeping: never toasts and never touches lastError / lastSavedAt. */
   background?: boolean
+  /**
+   * Deletes: the server no longer has the row (deleted on another device, or by an earlier
+   * attempt whose answer was lost), so the user's intent is already true — keep the optimistic
+   * removal and resync instead of rolling back.
+   */
+  missingIsDone?: boolean
 }
 
 /** Creates an independent workspace store (the app uses `useWorkspaceStore`; tests make their own). */
@@ -421,6 +418,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
   const randomId = options.randomId ?? (() => crypto.randomUUID())
   const storage = options.storage === undefined ? getBrowserStorage() : options.storage
   const environment = options.environment ?? null
+  const signal = options.signal
   const source = options.repository
   let repositoryInstance: Repository | null = typeof source === 'function' ? null : source
   const repository = (): Repository => (repositoryInstance ??= (source as () => Repository)())
@@ -437,7 +435,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
   let queue: Promise<unknown> = Promise.resolve()
   const pendingWrites: PendingWrite[] = [] // in send order; the head is in flight
   let confirmedPreferences: Preferences = defaultPreferences()
-  let lastFailedRetry: (() => Promise<Result<unknown>>) | null = null
+  /** A snapshot of this session's account has been applied (preferences are known). */
+  let workspaceLoaded = false
+  /** User writes not yet answered (background housekeeping excluded). */
+  let userWritesPending = 0
+  /** True once the account has a stored preferences row (later saves send changed fields only). */
+  let preferencesStored = false
+  /** Preference changes made before the workspace loaded: saved on top of the stored values. */
+  let deferredPreferences: Partial<Preferences> = {}
+  let deferredWaiters: ((result: Result) => void)[] = []
+  let lastFailedRetry: RetryHandle | null = null
+  /** sync.lastError came from a load/refresh (a later successful load clears it). */
+  let lastErrorFromLoad = false
   let lastRefreshAt = 0
   let preferencesSeeded = false
   let resyncWhenIdle = false
@@ -449,10 +458,22 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
 
     function updateSync(patch: Partial<SyncState>): void {
       set((state) => ({ sync: { ...state.sync, ...patch } }))
-      if (resyncWhenIdle && get().sync.pending === 0) {
-        resyncWhenIdle = false
-        queueMicrotask(() => void refresh({ silent: true }))
-      }
+      if (resyncWhenIdle && get().sync.pending === 0) scheduleResync()
+    }
+
+    /** Fetches the current server state once no write is pending (silent refresh). */
+    function requestResync(): void {
+      resyncWhenIdle = true
+      if (get().sync.pending === 0) scheduleResync()
+    }
+
+    function scheduleResync(): void {
+      resyncWhenIdle = false
+      queueMicrotask(() => {
+        // A write started meanwhile: try again when it is done.
+        if (get().sync.pending > 0) resyncWhenIdle = true
+        else void refresh({ silent: true })
+      })
     }
 
     function enqueue<T>(task: () => Promise<T>): Promise<T> {
@@ -465,7 +486,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     function settle(write: PendingWrite | null): PendingWrite[] | null {
       if (!write) return pendingWrites.slice()
       const index = pendingWrites.indexOf(write)
-      if (index < 0) return null // a fresh snapshot replaced the data meanwhile
+      if (index < 0) return null // no longer tracked (defensive: reset() clears the list)
       pendingWrites.splice(index, 1)
       return pendingWrites.slice(index)
     }
@@ -485,6 +506,16 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       const doc = getDoc()
       const applicable = undo.filter((patch) => canApply(doc, patch))
       if (applicable.length > 0) setDoc(applyPatches(doc, applicable))
+    }
+
+    /** Reconcile/afterSuccess must never break the pipeline: on a surprise, fetch the truth. */
+    function safely(step: () => void): void {
+      try {
+        step()
+      } catch (error) {
+        console.error('[cairn] Unexpected server answer; reloading the workspace.', error)
+        requestResync()
+      }
     }
 
     function reconcile(updates: readonly RowUpdate[], later: readonly PendingWrite[]): void {
@@ -514,15 +545,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
 
     function onWriteFailed<T>(spec: WriteSpec<T>, error: AppError): void {
       spec.onFailure?.(error)
+      if (!spec.background) userWritesPending -= 1
       if (spec.background) {
         updateSync({ pending: get().sync.pending - 1 })
         return
       }
-      // Someone else changed the data (other device): fetch the current state once idle.
-      if (error.kind === 'not_found' || error.kind === 'conflict') resyncWhenIdle = true
+      // The server rejected a change that passed our own checks: this device is behind (another
+      // device changed the data). Fetch the current state once idle.
+      if (error.kind === 'not_found' || error.kind === 'conflict' || error.kind === 'validation') {
+        requestResync()
+      }
       const retryable = isRetryable(error)
-      const retry = retryable ? once(spec.retry) : null
+      const retry: RetryHandle | null = retryable ? { run: once(spec.retry), epoch } : null
       lastFailedRetry = retry
+      lastErrorFromLoad = false
       updateSync({ pending: get().sync.pending - 1, lastError: error, canRetry: retryable })
       notifier.error(`Couldn't ${spec.label}`, {
         id: SYNC_ERROR_TOAST_ID,
@@ -532,11 +568,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     }
 
     function onWriteSucceeded<T>(spec: WriteSpec<T>): void {
+      if (!spec.background) userWritesPending -= 1
       if (spec.background) {
         updateSync({ pending: get().sync.pending - 1 })
         return
       }
       lastFailedRetry = null
+      lastErrorFromLoad = false
       updateSync({
         pending: get().sync.pending - 1,
         lastSavedAt: now(),
@@ -553,48 +591,61 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       if (spec.recipe) {
         const [next, patches, inverse] = produceWithPatches(getDoc(), spec.recipe)
         if (patches.length > 0) {
-          pending = { inverse }
+          pending = { patches, inverse }
           pendingWrites.push(pending)
           setDoc(next)
         }
       }
+      if (!spec.background) userWritesPending += 1
       updateSync({ pending: get().sync.pending + 1 })
 
       return enqueue(async (): Promise<Result<T>> => {
-        if (startEpoch !== epoch) {
-          return failed({
-            kind: 'auth',
-            message: 'You were signed out before this change was saved.',
-          })
-        }
+        if (startEpoch !== epoch) return failed(SIGNED_OUT_ERROR)
         let value: T
         try {
           value = await spec.persist(repository())
         } catch (thrown) {
           const error = toAppError(thrown)
+          if (spec.missingIsDone && error.kind === 'not_found') {
+            // Already gone on the server: the deletion the user asked for is in place.
+            if (startEpoch === epoch) {
+              settle(pending)
+              requestResync()
+              onWriteSucceeded(spec)
+            }
+            return { ok: true, value: undefined as T }
+          }
           if (startEpoch === epoch) {
             const later = settle(pending)
-            if (pending && later) rollback(pending, later)
+            if (pending && later) safely(() => rollback(pending, later))
             onWriteFailed(spec, error)
           }
           return failed(error)
         }
         if (startEpoch === epoch) {
           const later = settle(pending)
-          if (later && spec.reconcile) reconcile(spec.reconcile(value), later)
-          spec.afterSuccess?.(value)
+          if (later && spec.reconcile) {
+            const { reconcile: rows } = spec
+            safely(() => reconcile(rows(value), later))
+          }
+          if (spec.afterSuccess) {
+            const { afterSuccess } = spec
+            safely(() => afterSuccess(value))
+          }
           onWriteSucceeded(spec)
         }
         return { ok: true, value }
       })
     }
 
-    async function runRetry(retry: () => Promise<Result<unknown>>): Promise<Result> {
+    async function runRetry(retry: RetryHandle): Promise<Result> {
+      // A Retry from before a sign-out (perhaps another account now) must never run.
+      if (retry.epoch !== epoch) return OK
       if (lastFailedRetry === retry) {
         lastFailedRetry = null
         updateSync({ canRetry: false })
       }
-      const result = await retry()
+      const result = await retry.run()
       if (!result.ok && result.error.kind === 'validation') {
         // The retried change no longer fits the current data; there is no form to show it.
         notifier.error("Couldn't retry", {
@@ -607,14 +658,46 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
 
     // -- loading ---------------------------------------------------------------
 
+    /**
+     * Replaces the workspace with a server snapshot. Writes still waiting for the server keep
+     * their optimistic changes on top of it (and their rollbacks now restore the snapshot's
+     * values), so a load never reverts or loses them.
+     */
     function applySnapshot(snapshot: WorkspaceSnapshot): void {
-      pendingWrites.length = 0 // the snapshot is authoritative
       const preferences = snapshot.preferences ?? defaultPreferences()
       confirmedPreferences = preferences
-      set({ data: toWorkspaceData(snapshot), preferences })
+      preferencesStored = snapshot.preferences !== null
+      workspaceLoaded = true
+      let doc: Doc = { data: toWorkspaceData(snapshot), preferences }
+      for (const write of pendingWrites) {
+        const base = doc
+        const applicable = write.patches.filter((patch) => canApply(base, patch))
+        const [next, patches, inverse] = produceWithPatches(base, (draft) => {
+          applyPatches(draft, applicable)
+        })
+        write.patches = patches
+        write.inverse = inverse
+        doc = next
+      }
+      setDoc(doc)
     }
 
-    /** First run on this account: save the default preferences once (never over existing ones). */
+    /** A successful load/refresh: the error of an earlier failed load is over. */
+    function loadedSync(sync: SyncState): SyncState {
+      const cleared = lastErrorFromLoad ? { lastError: null, canRetry: false } : {}
+      lastErrorFromLoad = false
+      return { ...sync, ...cleared, lastLoadedAt: now() }
+    }
+
+    function afterSnapshot(snapshot: WorkspaceSnapshot): void {
+      seedPreferences(snapshot)
+      flushDeferredPreferences()
+    }
+
+    /**
+     * First run on this account: save the default preferences once. Only inserts — preferences
+     * another device saved in the meantime win, and are applied here.
+     */
     function seedPreferences(snapshot: WorkspaceSnapshot): void {
       if (snapshot.preferences !== null || preferencesSeeded) return
       preferencesSeeded = true
@@ -622,10 +705,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       void write<Preferences>({
         label: 'save preferences',
         background: true,
-        persist: (repo) => repo.upsertPreferences(defaults),
+        persist: (repo) => repo.upsertPreferences(defaults, { onlyIfMissing: true }),
         reconcile: (stored) => [{ path: ['preferences'], row: stored }],
         afterSuccess: (stored) => {
           confirmedPreferences = stored
+          preferencesStored = true
         },
         onFailure: () => {
           preferencesSeeded = false
@@ -634,24 +718,35 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       })
     }
 
+    /** Saves the preference changes made before the load on top of the loaded (stored) values. */
+    function flushDeferredPreferences(): void {
+      const changes = deferredPreferences
+      const waiters = deferredWaiters
+      deferredPreferences = {}
+      deferredWaiters = []
+      if (isEmpty(changes)) return
+      void updatePreferences(changes).then((result) => {
+        for (const resolve of waiters) resolve(result)
+      })
+    }
+
     async function load(): Promise<Result> {
       const token = ++loadToken
       lastRefreshAt = now()
       set({ status: 'loading', loadError: null })
       try {
-        const snapshot = await repository().loadWorkspace()
+        // Read behind the writes already sent (same queue), so the snapshot includes them;
+        // writes made meanwhile wait behind the read and are re-applied on top of it.
+        const snapshot = await enqueue(() => repository().loadWorkspace())
         if (token !== loadToken) return OK
         applySnapshot(snapshot)
-        set((state) => ({
-          status: 'ready',
-          loadError: null,
-          sync: { ...state.sync, lastLoadedAt: now() },
-        }))
-        seedPreferences(snapshot)
+        set((state) => ({ status: 'ready', loadError: null, sync: loadedSync(state.sync) }))
+        afterSnapshot(snapshot)
         return OK
       } catch (thrown) {
         if (token !== loadToken) return OK
         const error = toAppError(thrown)
+        lastErrorFromLoad = true
         set((state) => ({
           status: 'error',
           loadError: error,
@@ -679,14 +774,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           return OK
         }
         applySnapshot(snapshot)
-        set((state) => ({ status: 'ready', sync: { ...state.sync, lastLoadedAt: now() } }))
-        seedPreferences(snapshot)
+        set((state) => ({ status: 'ready', sync: loadedSync(state.sync) }))
+        afterSnapshot(snapshot)
         return OK
       } catch (thrown) {
         const error = toAppError(thrown)
         if (token !== loadToken) return OK
         if (!silent) {
-          set((state) => ({ status: 'ready', sync: { ...state.sync, lastError: error } }))
+          // A failed write awaiting Retry stays the error reported.
+          const keepWriteError = lastFailedRetry !== null
+          if (!keepWriteError) lastErrorFromLoad = true
+          set((state) => ({
+            status: 'ready',
+            sync: keepWriteError ? state.sync : { ...state.sync, lastError: error },
+          }))
           notifier.error("Couldn't refresh", {
             id: SYNC_ERROR_TOAST_ID,
             description: error.message,
@@ -697,12 +798,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     }
 
     function reset(): void {
+      const unsaved = userWritesPending > 0
       epoch += 1
       loadToken += 1
       pendingWrites.length = 0
+      userWritesPending = 0
       lastFailedRetry = null
+      lastErrorFromLoad = false
       preferencesSeeded = false
+      preferencesStored = false
+      workspaceLoaded = false
       resyncWhenIdle = false
+      const waiters = deferredWaiters
+      deferredPreferences = {}
+      deferredWaiters = []
+      for (const resolve of waiters) resolve(failed(SIGNED_OUT_ERROR))
       const preferences = defaultPreferences()
       confirmedPreferences = preferences
       set((state) => ({
@@ -719,6 +829,14 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           canRetry: false,
         },
       }))
+      // The previous session's error toast (and its Retry) no longer applies.
+      notifier.dismiss?.(SYNC_ERROR_TOAST_ID)
+      if (unsaved) {
+        notifier.error('Some changes may not have been saved', {
+          id: UNSAVED_ON_RESET_TOAST_ID,
+          description: 'You were signed out while they were still being saved.',
+        })
+      }
     }
 
     // -- projects --------------------------------------------------------------
@@ -809,6 +927,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             }
           },
           persist: (repo) => repo.deleteProject(id),
+          missingIsDone: true,
           retry: () => deleteProject(id),
         }),
       )
@@ -820,7 +939,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       if (!project) return missing('project')
       const siblings = Object.values(projects).filter((p) => p.id !== id)
       const placement = { afterId: afterProjectId }
-      if (isAlreadyPlaced(project, siblings, placement)) return OK
+      if (isAtPlacement(project, siblings, placement)) return OK
       const sortOrder = keyForPlacement(siblings, placement)
       return toVoid(
         await write({
@@ -909,6 +1028,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             }
           },
           persist: (repo) => repo.deletePhase(id),
+          missingIsDone: true,
           retry: () => deletePhase(id),
         }),
       )
@@ -922,7 +1042,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         (p) => p.projectId === phase.projectId && p.id !== id,
       )
       const placement = { afterId: afterPhaseId }
-      if (isAlreadyPlaced(phase, siblings, placement)) return OK
+      if (isAtPlacement(phase, siblings, placement)) return OK
       const sortOrder = keyForPlacement(siblings, placement)
       return toVoid(
         await write({
@@ -991,15 +1111,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     function parentError(data: WorkspaceData, task: Task, parentId: string): AppError | null {
       const parent = own(data.tasks, parentId)
       if (!parent) return { kind: 'validation', message: 'The parent task no longer exists.' }
-      const verdict = canBecomeSubtaskOf(task, parent, Object.values(data.tasks))
-      if (!verdict.ok) return verdict.error
-      if (linkedByDependency(data.dependencies, task.id, parentId)) {
-        return {
-          kind: 'validation',
-          message: "A task can't depend on its own parent. Remove that dependency first.",
-        }
-      }
-      return null
+      const verdict = canBecomeSubtaskOf(
+        task,
+        parent,
+        Object.values(data.tasks),
+        Object.values(data.dependencies),
+      )
+      return verdict.ok ? null : verdict.error
     }
 
     function phaseError(
@@ -1166,7 +1284,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           ? topLevelSiblings(data.tasks, task.projectId, task.id)
           : subtaskSiblings(data.tasks, parentId, task.id)
       const placement: Placement = { afterId: input.afterId, beforeId: input.beforeId }
-      if (parentChanged || !isAlreadyPlaced(task, siblings, placement)) {
+      if (parentChanged || !isAtPlacement(task, siblings, placement)) {
         changes.sortOrder = keyForPlacement(siblings, placement)
       }
       if (isEmpty(changes)) return OK
@@ -1217,11 +1335,16 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
               }
             }
           },
+          // keepSubtasks is sent as asked even when this device sees no subtasks: subtasks added
+          // on another device are then refused by the server instead of deleted unseen.
           persist: (repo) =>
             repo.deleteTask(
               id,
-              keep ? { keepSubtasks: true, promotedSortOrders: promoted } : { keepSubtasks: false },
+              options.keepSubtasks
+                ? { keepSubtasks: true, promotedSortOrders: promoted }
+                : { keepSubtasks: false },
             ),
+          missingIsDone: true,
           retry: () => deleteTask(id, options),
         }),
       )
@@ -1303,6 +1426,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             delete draft.data.milestones[id]
           },
           persist: (repo) => repo.deleteMilestone(id),
+          missingIsDone: true,
           retry: () => deleteMilestone(id),
         }),
       )
@@ -1351,6 +1475,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             delete draft.data.dependencies[id]
           },
           persist: (repo) => repo.deleteDependency(id),
+          missingIsDone: true,
           retry: () => removeDependency(id),
         }),
       )
@@ -1411,6 +1536,15 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           ? null
           : { kind: 'validation' as const, message: 'The week must start on Sunday or Monday.' })
       if (error) return failed(error)
+      if (!workspaceLoaded) {
+        // Not loaded yet, so the stored values are unknown (a new device has only defaults):
+        // apply now, save on top of the stored values once the workspace has loaded.
+        const fields = definedFields(patch)
+        if (isEmpty(fields)) return OK
+        deferredPreferences = { ...deferredPreferences, ...fields }
+        set((state) => ({ preferences: { ...state.preferences, ...fields } }))
+        return new Promise<Result>((resolve) => deferredWaiters.push(resolve))
+      }
       const changes = changedFields(get().preferences, patch)
       if (isEmpty(changes)) return OK
       return toVoid(
@@ -1419,11 +1553,19 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           recipe: (draft) => {
             Object.assign(draft.preferences, changes)
           },
-          // Saved value = last stored preferences + this change (never another pending change).
-          persist: (repo) => repo.upsertPreferences({ ...confirmedPreferences, ...changes }),
+          // Only the changed fields are saved (another device's newer values stay); the full
+          // value (last stored + this change, never another pending change) creates the row.
+          persist: (repo) =>
+            repo.upsertPreferences(
+              { ...confirmedPreferences, ...changes },
+              preferencesStored
+                ? { fields: Object.keys(changes) as (keyof Preferences)[] }
+                : undefined,
+            ),
           reconcile: (stored) => [{ path: ['preferences'], row: stored }],
           afterSuccess: (stored) => {
             confirmedPreferences = stored
+            preferencesStored = true
           },
           retry: () => updatePreferences(patch),
         }),
@@ -1467,7 +1609,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       return structuredClone(file)
     }
 
-    /** Fresh ids everywhere; projects appended after the existing ones in their original order. */
+    /**
+     * Fresh ids everywhere; projects appended after the existing ones in their original order.
+     * Rows are shaped the way the database stores them (a subtask carries its parent's phase).
+     */
     function remapBackup(data: BackupData): BackupData {
       const timestamp = isoNow()
       const maps = {
@@ -1488,6 +1633,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       const projects = sortByOrder(data.projects)
       const lastKey = sortByOrder(Object.values(get().data.projects)).at(-1)?.sortOrder ?? null
       const keys = keysBetween(lastKey, null, projects.length)
+      const phaseOf = new Map(data.tasks.map((task) => [task.id, task.phaseId]))
+      const phaseOfTask = (task: { parentTaskId: string | null; phaseId: string | null }) =>
+        task.parentTaskId !== null && phaseOf.has(task.parentTaskId)
+          ? (phaseOf.get(task.parentTaskId) ?? null)
+          : task.phaseId
       return {
         projects: projects.map((project, i) => ({
           ...project,
@@ -1507,7 +1657,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           ...task,
           id: fresh(maps.tasks, task.id),
           projectId: fresh(maps.projects, task.projectId),
-          phaseId: ref(maps.phases, task.phaseId),
+          phaseId: ref(maps.phases, phaseOfTask(task)),
           parentTaskId: ref(maps.tasks, task.parentTaskId),
           completedAt: task.status === 'done' ? (task.completedAt ?? timestamp) : null,
           createdAt: timestamp,
@@ -1535,10 +1685,32 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     async function importBackup(file: BackupFile): Promise<Result<ImportSummary>> {
       const parsed = parseBackupFile(file)
       if (!parsed.ok) return failed(parsed.error)
-      const copy = remapBackup(parsed.value.data)
+      return importCopy(remapBackup(parsed.value.data), false)
+    }
+
+    /**
+     * Retries send the SAME copy (same ids): when the first attempt reached the server but its
+     * answer was lost, the retry is refused as a duplicate instead of importing a second copy —
+     * and that refusal means the copy is stored.
+     */
+    function importCopy(copy: BackupData, retrying: boolean): Promise<Result<ImportSummary>> {
       return write<ImportSummary>({
         label: 'import the backup',
-        persist: (repo) => repo.importWorkspace(copy),
+        persist: async (repo) => {
+          try {
+            return await repo.importWorkspace(copy)
+          } catch (error) {
+            if (!retrying || toAppError(error).kind !== 'conflict') throw error
+            requestResync() // already imported by the attempt whose answer was lost
+            return {
+              projects: copy.projects.length,
+              phases: copy.phases.length,
+              tasks: copy.tasks.length,
+              milestones: copy.milestones.length,
+              dependencies: copy.dependencies.length,
+            }
+          }
+        },
         // Not optimistic: the copy appears once the server stored all of it.
         afterSuccess: () => {
           setDoc(
@@ -1556,7 +1728,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             }),
           )
         },
-        retry: () => importBackup(file),
+        retry: () => importCopy(copy, true),
       })
     }
 
@@ -1614,7 +1786,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
 
   // Theme + sidebar cache for the next startup (and the no-flash script in index.html).
   if (storage) {
-    store.subscribe((state, previous) => {
+    const unsubscribe = store.subscribe((state, previous) => {
       const { theme, sidebarCollapsed } = state.preferences
       if (
         theme !== previous.preferences.theme ||
@@ -1623,12 +1795,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         writeUiPrefsCache(storage, state.preferences)
       }
     })
+    signal?.addEventListener('abort', unsubscribe, { once: true })
   }
 
-  // Cross-device freshness: silent refresh on focus / visibility (throttled), and when back online.
-  if (environment) {
+  // Cross-device freshness: silent refresh on focus / visibility (throttled), and when back online
+  // (which also retries a load that failed, e.g. offline at startup).
+  if (environment && !signal?.aborted) {
     const autoRefresh = (force: boolean) => {
       const { status, sync, actions } = store.getState()
+      if (status === 'error' && force) {
+        void actions.load()
+        return
+      }
       if (status !== 'ready' || sync.pending > 0) return
       const last = Math.max(lastRefreshAt, sync.lastLoadedAt ?? 0)
       if (!force && now() - last < AUTO_REFRESH_INTERVAL_MS) return
@@ -1636,15 +1814,24 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     }
     const setOnline = (online: boolean) =>
       store.setState((state) => ({ sync: { ...state.sync, online } }))
-    environment.window.addEventListener('focus', () => autoRefresh(false))
-    environment.document?.addEventListener('visibilitychange', () => {
-      if (environment.document?.visibilityState !== 'hidden') autoRefresh(false)
-    })
-    environment.window.addEventListener('online', () => {
-      setOnline(true)
-      autoRefresh(true)
-    })
-    environment.window.addEventListener('offline', () => setOnline(false))
+    const listen = { signal }
+    environment.window.addEventListener('focus', () => autoRefresh(false), listen)
+    environment.document?.addEventListener(
+      'visibilitychange',
+      () => {
+        if (environment.document?.visibilityState !== 'hidden') autoRefresh(false)
+      },
+      listen,
+    )
+    environment.window.addEventListener(
+      'online',
+      () => {
+        setOnline(true)
+        autoRefresh(true)
+      },
+      listen,
+    )
+    environment.window.addEventListener('offline', () => setOnline(false), listen)
   }
 
   return store
@@ -1658,8 +1845,16 @@ export interface AuthStoreOptions {
   mode: DataMode
   /** The service, or a factory called on first use. */
   auth: AuthService | (() => AuthService)
-  /** The workspace to load on sign-in and clear on sign-out. */
-  workspace: Pick<StoreApi<WorkspaceState>, 'getState'>
+  /**
+   * The workspace to load on sign-in and clear on sign-out. With `subscribe`, the auth store also
+   * re-checks the session when the server rejects it, and sign-out waits for pending writes.
+   */
+  workspace: Pick<StoreApi<WorkspaceState>, 'getState'> &
+    Partial<Pick<StoreApi<WorkspaceState>, 'subscribe'>>
+  /** Aborting it unsubscribes from the auth service and the workspace (HMR, tests). */
+  signal?: AbortSignal
+  /** Longest wait for pending writes before signing out (default 10 s). */
+  signOutFlushTimeoutMs?: number
 }
 
 function credentialsError(email: string, password?: string): { ok: false; error: AppError } | null {
@@ -1668,18 +1863,40 @@ function credentialsError(email: string, password?: string): { ok: false; error:
   return null
 }
 
+/** Resolves once `workspace` has no pending write, or after `timeoutMs`. */
+function whenWritesSaved(
+  workspace: AuthStoreOptions['workspace'],
+  timeoutMs: number,
+): Promise<void> {
+  const subscribe = workspace.subscribe
+  if (!subscribe || workspace.getState().sync.pending === 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    let unsubscribe = () => {}
+    const done = () => {
+      clearTimeout(timer)
+      unsubscribe()
+      resolve()
+    }
+    const timer = setTimeout(done, timeoutMs)
+    unsubscribe = subscribe((state) => {
+      if (state.sync.pending === 0) done()
+    })
+  })
+}
+
 /** Creates an auth store wired to `workspace` (the app uses `useAuthStore`). */
 export function createAuthStore(options: AuthStoreOptions) {
   const source = options.auth
   let serviceInstance: AuthService | null = typeof source === 'function' ? null : source
   const service = (): AuthService => (serviceInstance ??= (source as () => AuthService)())
   const workspace = () => options.workspace.getState().actions
+  const flushTimeoutMs = options.signOutFlushTimeoutMs ?? 10_000
   let initPromise: Promise<void> | null = null
   /** The user whose data the workspace holds (null = none loaded). */
   let workspaceUserId: string | null = null
 
   return create<AuthState>()((set, get) => {
-    function applyUser(user: AuthUser | null): void {
+    function applyUser(user: AuthUser | null, event?: AuthChangeEvent): void {
       const state = get()
       if (user) {
         if (
@@ -1691,12 +1908,18 @@ export function createAuthStore(options: AuthStoreOptions) {
         }
         if (workspaceUserId !== user.id) {
           if (workspaceUserId !== null) workspace().reset()
+          if (get().passwordRecovery && event !== 'password_recovery') {
+            set({ passwordRecovery: false })
+          }
           workspaceUserId = user.id
           void workspace().load()
         }
+        if (event === 'password_recovery' && options.mode === 'supabase') {
+          set({ passwordRecovery: true })
+        }
       } else {
-        if (state.status !== 'signed_out' || state.user !== null)
-          set({ status: 'signed_out', user: null })
+        if (state.status !== 'signed_out' || state.user !== null || state.passwordRecovery)
+          set({ status: 'signed_out', user: null, passwordRecovery: false })
         if (workspaceUserId !== null) {
           workspaceUserId = null
           workspace().reset()
@@ -1712,10 +1935,42 @@ export function createAuthStore(options: AuthStoreOptions) {
       }
     }
 
+    /** Re-reads the session; when it cannot be read (offline) the current state stays. */
+    async function recheckSession(): Promise<void> {
+      let user: AuthUser | null
+      try {
+        user = await service().getUser()
+      } catch {
+        return
+      }
+      applyUser(user)
+    }
+
+    /** The server rejected the session (expired / revoked): see whether it is still valid. */
+    function watchSessionRejections(): void {
+      const subscribe = options.workspace.subscribe
+      if (!subscribe || options.mode !== 'supabase') return
+      const unsubscribe = subscribe((state, previous) => {
+        const rejected = (error: AppError | null, before: AppError | null) =>
+          error !== null && error !== before && error.kind === 'auth'
+        if (
+          get().status === 'signed_in' &&
+          (rejected(state.sync.lastError, previous.sync.lastError) ||
+            rejected(state.loadError, previous.loadError))
+        ) {
+          void recheckSession()
+        }
+      })
+      options.signal?.addEventListener('abort', unsubscribe, { once: true })
+    }
+
     const actions: AuthState['actions'] = {
       init() {
         initPromise ??= (async () => {
-          service().onChange((user) => applyUser(user))
+          if (options.signal?.aborted) return
+          const unsubscribe = service().onChange((user, event) => applyUser(user, event))
+          options.signal?.addEventListener('abort', unsubscribe, { once: true })
+          watchSessionRejections()
           await syncUser()
         })()
         return initPromise
@@ -1743,6 +1998,8 @@ export function createAuthStore(options: AuthStoreOptions) {
         }
       },
       async signOut() {
+        // Changes made just before signing out are still saved (they would be dropped by the reset).
+        await whenWritesSaved(options.workspace, flushTimeoutMs)
         try {
           await service().signOut()
           return OK
@@ -1762,12 +2019,28 @@ export function createAuthStore(options: AuthStoreOptions) {
           return failed(toAppError(error))
         }
       },
+      async updatePassword(newPassword) {
+        if (typeof newPassword !== 'string' || newPassword === '') {
+          return invalid('Enter a new password.')
+        }
+        try {
+          await service().updatePassword(newPassword)
+        } catch (error) {
+          return failed(toAppError(error))
+        }
+        set({ passwordRecovery: false })
+        return OK
+      },
+      dismissPasswordRecovery() {
+        if (get().passwordRecovery) set({ passwordRecovery: false })
+      },
     }
 
     return {
       mode: options.mode,
       status: options.mode === 'local' ? 'signed_in' : 'loading',
       user: options.mode === 'local' ? { ...LOCAL_USER } : null,
+      passwordRecovery: false,
       actions,
     }
   })
@@ -1780,10 +2053,46 @@ export function createAuthStore(options: AuthStoreOptions) {
 const dataMode = getDataMode()
 const browserStorage = getBrowserStorage()
 let localRepository: LocalRepository | null = null
+/** Hot module replacement re-creates the stores: the old ones stop listening. */
+const lifetime = new AbortController()
+import.meta.hot?.dispose(() => lifetime.abort())
+
+/** Local mode: the stored workspace could not be read and a new one started. Tell the user. */
+function reportUnreadableLocalData({ backupKey, raw }: UnreadableLocalData): void {
+  notify.error("Your saved data couldn't be read", {
+    id: 'cairn-unreadable-local-data',
+    duration: Number.POSITIVE_INFINITY,
+    description: backupKey
+      ? 'A copy was kept in this browser and a new, empty workspace was started.'
+      : "This browser's storage is too full to keep a copy, and your next change replaces it. Download it now to keep it.",
+    action: {
+      label: 'Download copy',
+      onClick: () =>
+        downloadTextFile(
+          `cairn-unreadable-data-${todayInTimeZone(getBrowserTimeZone())}.json`,
+          raw,
+          'application/json',
+        ),
+    },
+  })
+}
 
 function defaultRepository(): Repository {
   if (dataMode === 'supabase') return new SupabaseRepository(getSupabaseClient())
-  localRepository ??= new LocalRepository({ storage: browserStorage ?? undefined })
+  if (!localRepository) {
+    localRepository = new LocalRepository({
+      storage: browserStorage ?? createMemoryStorage(),
+      onUnreadableData: reportUnreadableLocalData,
+    })
+    if (!browserStorage) {
+      notify.error("This browser isn't keeping your data", {
+        id: 'cairn-no-local-storage',
+        duration: Number.POSITIVE_INFINITY,
+        description:
+          'Site storage is blocked, so your changes last only until this tab is closed. Allow site data for this page to keep them.',
+      })
+    }
+  }
   return localRepository
 }
 
@@ -1793,6 +2102,7 @@ export const useWorkspaceStore = createWorkspaceStore({
   repository: defaultRepository,
   storage: browserStorage,
   environment: typeof window === 'undefined' ? null : { window, document, navigator },
+  signal: lifetime.signal,
 })
 
 /** The auth store. Call `actions.init()` once at startup (idempotent). */
@@ -1800,6 +2110,7 @@ export const useAuthStore = createAuthStore({
   mode: dataMode,
   auth: () => createAuthService(dataMode),
   workspace: useWorkspaceStore,
+  signal: lifetime.signal,
 })
 
 if (dataMode === 'local' && isTestHooksEnabled() && typeof window !== 'undefined') {
