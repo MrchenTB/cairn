@@ -1,0 +1,351 @@
+/* ==========================================================================
+   Cairn design tokens — v1.0
+   :root = light (default) · .dark = dark (class on <html>)
+   Values, contrast checks and rationale: docs/design-research.md §4.
+   Rule: components never use raw hex — only these tokens (via the Tailwind
+   utilities mapped in src/index.css, or `bg-(--token)` for one-offs).
+   This file only declares custom properties (unlayered on purpose, so the
+   tokens win over Tailwind's default theme variables of the same name).
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* ---------- Typography ---------- */
+  --font-family-sans:
+    'Inter Variable', 'Inter', 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei UI',
+    'Microsoft JhengHei', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-family-mono:
+    ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --font-size-micro: 11px; /* Gantt lower header, kbd, small counts */
+  --line-height-micro: 16px;
+  --font-size-meta: 12px; /* meta, chips, group headings */
+  --line-height-meta: 16px;
+  --font-size-ui: 13px; /* base: lists, sidebar, buttons, inputs */
+  --line-height-ui: 20px;
+  --font-size-body: 14px; /* descriptions, modal fields, empty-state copy */
+  --line-height-body: 22px;
+  --font-size-heading: 16px; /* modal / section titles, search input */
+  --line-height-heading: 24px;
+  --font-size-title: 20px; /* page titles, task name in the modal */
+  --line-height-title: 28px;
+  --font-size-display: 24px; /* overview title, first-run empty state */
+  --line-height-display: 32px;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600; /* never 501–599: CJK falls onto the bold face (§4.5) */
+  --letter-spacing-title: -0.01em; /* 20/24px titles only; everything else 0 */
+
+  /* ---------- Spacing (4px grid + 2px half steps; matches Tailwind --spacing) ---------- */
+  --space-0: 0px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ---------- Radii (same names/values as Tailwind's rounded-sm/md/lg/xl) ---------- */
+  --radius-sm: 4px; /* Gantt bars, kbd, small markers */
+  --radius-md: 6px; /* buttons, inputs, menu items, sidebar items, tabs */
+  --radius-lg: 8px; /* cards, popovers, menus, toasts, board columns */
+  --radius-xl: 12px; /* main panel, modals, command overlay */
+  --radius-full: 9999px; /* pills, switches, progress bars */
+
+  /* ---------- Layout & control heights ---------- */
+  --sidebar-width: 240px;
+  --sidebar-width-collapsed: 52px;
+  --shell-gap: 8px;
+  --topbar-height: 44px;
+  --viewbar-height: 40px;
+  --content-max-width: 1200px;
+  --h-sidebar-item: 28px;
+  --h-row: 36px;
+  --h-row-group: 32px;
+  --h-btn-sm: 24px;
+  --h-btn-md: 28px;
+  --h-btn-lg: 32px;
+  --h-input: 32px;
+  --h-chip: 24px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-stroke: 1.75;
+
+  /* ---------- Gantt geometry ---------- */
+  --gantt-pane-width: 300px;
+  --gantt-header-tier-height: 24px;
+  --gantt-row-height: 32px;
+  --gantt-bar-height: 20px;
+  --gantt-summary-height: 6px;
+  --gantt-milestone-size: 12px;
+  --gantt-handle-width: 8px;
+  --gantt-connector-size: 8px;
+  --gantt-day-width-day: 32px;
+  --gantt-day-width-week: 14px;
+  --gantt-day-width-month: 4px;
+
+  /* ---------- Motion ---------- */
+  --duration-instant: 0ms; /* hover background in */
+  --duration-fast: 120ms; /* hover out, press, tooltip, menu close */
+  --duration-base: 160ms; /* popover / menu open, tab indicator, list reorder */
+  --duration-slow: 200ms; /* modal, sidebar collapse, toast */
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-move: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ---------- Z-index ---------- */
+  --z-sticky: 10;
+  --z-sidebar: 20;
+  --z-dropdown: 50;
+  --z-overlay: 60;
+  --z-modal: 61;
+  --z-command: 70;
+  --z-toast: 80;
+  --z-tooltip: 90;
+
+  /* ======================= Color · Light ======================= */
+  /* Backgrounds */
+  --bg-app: #f2f2f5;
+  --bg-sidebar: #f2f2f5;
+  --bg-main: #ffffff;
+  --bg-muted: #f8f8fa; /* board columns, table headers, group rows, kbd */
+  --bg-surface: #ffffff; /* cards, inputs */
+  --bg-elevated: #ffffff; /* popovers, menus, modals, toasts */
+  --bg-hover: rgba(36, 38, 49, 0.045);
+  --bg-active: rgba(36, 38, 49, 0.07); /* current page, active tab, pressed */
+  --bg-selected: rgba(104, 106, 195, 0.1);
+  --bg-inverse: #242631; /* tooltips */
+  --bg-overlay: rgba(24, 25, 38, 0.28);
+
+  /* Borders (subtle/default/strong are decorative, < 3:1 on purpose) */
+  --border-subtle: rgba(36, 38, 49, 0.07);
+  --border-default: rgba(36, 38, 49, 0.11);
+  --border-strong: rgba(36, 38, 49, 0.18);
+  --border-input: rgba(36, 38, 49, 0.24);
+  --border-contrast: #868793; /* ≥ 3:1: checkbox, radio, switch outlines */
+
+  /* Text */
+  --fg-primary: #242631;
+  --fg-secondary: #50525e;
+  --fg-tertiary: #63646f;
+  --fg-disabled: #a6a7ae;
+  --fg-inverse: #ffffff;
+
+  /* Accent */
+  --accent: #686ac3;
+  --accent-hover: #5e5fba;
+  --accent-active: #5757b2;
+  --accent-subtle: rgba(104, 106, 195, 0.1);
+  --accent-subtle-hover: rgba(104, 106, 195, 0.16);
+  --accent-fg: #ffffff; /* text/icons ON a solid accent fill */
+  --accent-text: #6162bd; /* accent-coloured text, links and icons */
+
+  /* Focus */
+  --focus-ring: #686ac3;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Status */
+  --status-todo: #868793;
+  --status-in-progress: #bf7b00;
+  --status-done: #2c965d;
+
+  /* Priority (low/medium are neutral on purpose — the shape is the primary cue) */
+  --priority-none: #a6a7ae;
+  --priority-low: #868793;
+  --priority-medium: #50525e;
+  --priority-high: #d06217;
+  --priority-urgent: #c72e2b;
+
+  /* Semantic */
+  --danger: #c72e2b;
+  --danger-hover: #bc2122;
+  --danger-subtle: rgba(199, 46, 43, 0.08);
+  --danger-fg: #ffffff;
+  --warning: #9a5d00;
+  --warning-subtle: rgba(154, 93, 0, 0.08);
+  --success: #157b48;
+  --success-subtle: rgba(21, 123, 72, 0.08);
+  --info: #1c70aa;
+  --info-subtle: rgba(28, 112, 170, 0.08);
+
+  /* Project colours (ProjectColor → dot/swatch; ≥ 3:1 on main and sidebar) */
+  --project-gray: #868793;
+  --project-blue: #3a7bd5;
+  --project-violet: #7a5fd6;
+  --project-pink: #c8487f;
+  --project-red: #d1453b;
+  --project-orange: #c46511;
+  --project-yellow: #a47f00;
+  --project-green: #2d9459;
+  --project-teal: #14897f;
+
+  /* Controls */
+  --switch-thumb: #ffffff; /* unchecked thumb on --border-contrast (3.56:1) */
+
+  /* Gantt */
+  --gantt-bg: var(--bg-main);
+  --gantt-header-bg: var(--bg-main);
+  --gantt-grid: rgba(36, 38, 49, 0.06);
+  --gantt-grid-strong: rgba(36, 38, 49, 0.11);
+  --gantt-weekend: rgba(36, 38, 49, 0.032);
+  --gantt-row-hover: rgba(36, 38, 49, 0.03);
+  --gantt-row-selected: rgba(104, 106, 195, 0.08);
+  --gantt-bar-fill: rgba(104, 106, 195, 0.14);
+  --gantt-bar-fill-active: rgba(104, 106, 195, 0.24);
+  --gantt-bar-fill-done: rgba(36, 38, 49, 0.06);
+  --gantt-bar-border: rgba(104, 106, 195, 0.8);
+  --gantt-bar-border-done: #868793;
+  --gantt-bar-text: #242631;
+  --gantt-bar-text-done: #63646f;
+  --gantt-summary: #63646f;
+  --gantt-milestone: #3a3c49;
+  --gantt-milestone-past: #868793;
+  --gantt-due-marker: #50525e;
+  --gantt-dependency: #858692;
+  --gantt-dependency-active: #6162bd;
+  --gantt-conflict: #c72e2b;
+  --gantt-today: #686ac3;
+  --gantt-today-label-bg: #686ac3;
+  --gantt-today-label-fg: #ffffff;
+  --gantt-drag-ghost: rgba(104, 106, 195, 0.1);
+  --gantt-drag-ghost-border: rgba(104, 106, 195, 0.6);
+
+  /* Shadows (components add their own borders; shadows only lift) */
+  --shadow-panel: 0 1px 2px rgba(23, 24, 40, 0.04), 0 0 1px rgba(23, 24, 40, 0.04);
+  --shadow-popover: 0 8px 24px -6px rgba(23, 24, 40, 0.14), 0 2px 6px rgba(23, 24, 40, 0.06);
+  --shadow-modal: 0 24px 64px -16px rgba(23, 24, 40, 0.24), 0 8px 20px -6px rgba(23, 24, 40, 0.1);
+  --shadow-drag: 0 12px 28px -8px rgba(23, 24, 40, 0.22), 0 0 0 1px rgba(104, 106, 195, 0.35);
+
+  /* Misc */
+  --selection-bg: rgba(104, 106, 195, 0.22);
+  --scrollbar-thumb: rgba(36, 38, 49, 0.18);
+  --scrollbar-thumb-hover: rgba(36, 38, 49, 0.32);
+}
+
+/* ======================= Color · Dark ======================= */
+.dark {
+  color-scheme: dark;
+
+  --bg-app: #111216;
+  --bg-sidebar: #111216;
+  --bg-main: #16171c;
+  --bg-muted: #1a1b21;
+  --bg-surface: #1e1f26;
+  --bg-elevated: #22232b;
+  --bg-hover: rgba(255, 255, 255, 0.045);
+  --bg-active: rgba(255, 255, 255, 0.07);
+  --bg-selected: rgba(144, 147, 232, 0.16);
+  --bg-inverse: #e8e9f1;
+  --bg-overlay: rgba(5, 6, 9, 0.62);
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-input: rgba(255, 255, 255, 0.14);
+  --border-contrast: #6e6f7a;
+
+  --fg-primary: #e8e9f1;
+  --fg-secondary: #b8bac4;
+  --fg-tertiary: #9697a2;
+  --fg-disabled: #5c5d66;
+  --fg-inverse: #16171c;
+
+  --accent: #9093e8;
+  --accent-hover: #9da0ee;
+  --accent-active: #8789de;
+  --accent-subtle: rgba(144, 147, 232, 0.16);
+  --accent-subtle-hover: rgba(144, 147, 232, 0.24);
+  --accent-fg: #121318; /* white on the dark accent is only 2.79:1 */
+  --accent-text: #a2a5f2;
+
+  --focus-ring: #a2a5f2;
+
+  --status-todo: #9697a2;
+  --status-in-progress: #e9b452;
+  --status-done: #6ac48c;
+
+  --priority-none: #5c5d66;
+  --priority-low: #9697a2;
+  --priority-medium: #b8bac4;
+  --priority-high: #f1944f;
+  --priority-urgent: #f76560;
+
+  --danger: #f76560;
+  --danger-hover: #fd736d;
+  --danger-subtle: rgba(247, 101, 96, 0.14);
+  --danger-fg: #121318;
+  --warning: #e9b452;
+  --warning-subtle: rgba(233, 180, 82, 0.14);
+  --success: #6ac48c;
+  --success-subtle: rgba(106, 196, 140, 0.14);
+  --info: #65b4e9;
+  --info-subtle: rgba(101, 180, 233, 0.14);
+
+  --project-gray: #9697a2;
+  --project-blue: #62a2ee;
+  --project-violet: #a28cf0;
+  --project-pink: #ea7ab0;
+  --project-red: #f07068;
+  --project-orange: #ee954f;
+  --project-yellow: #ddba4a;
+  --project-green: #62c48a;
+  --project-teal: #4dbfb4;
+
+  --switch-thumb: #e8e9f1;
+
+  --gantt-bg: var(--bg-main); /* re-declared so nested .dark scopes resolve correctly */
+  --gantt-header-bg: var(--bg-main);
+  --gantt-grid: rgba(255, 255, 255, 0.045);
+  --gantt-grid-strong: rgba(255, 255, 255, 0.09);
+  --gantt-weekend: rgba(255, 255, 255, 0.022);
+  --gantt-row-hover: rgba(255, 255, 255, 0.03);
+  --gantt-row-selected: rgba(144, 147, 232, 0.1);
+  --gantt-bar-fill: rgba(144, 147, 232, 0.22);
+  --gantt-bar-fill-active: rgba(144, 147, 232, 0.34);
+  --gantt-bar-fill-done: rgba(255, 255, 255, 0.07);
+  --gantt-bar-border: rgba(144, 147, 232, 0.7);
+  --gantt-bar-border-done: #6e6f7a;
+  --gantt-bar-text: #e8e9f1;
+  --gantt-bar-text-done: #9697a2;
+  --gantt-summary: #9697a2;
+  --gantt-milestone: #d6d7e1;
+  --gantt-milestone-past: #6e6f7a;
+  --gantt-due-marker: #b8bac4;
+  --gantt-dependency: #71737f;
+  --gantt-dependency-active: #a2a5f2;
+  --gantt-conflict: #f76560;
+  --gantt-today: #a2a5f2;
+  --gantt-today-label-bg: #9093e8;
+  --gantt-today-label-fg: #121318;
+  --gantt-drag-ghost: rgba(144, 147, 232, 0.12);
+  --gantt-drag-ghost-border: rgba(144, 147, 232, 0.6);
+
+  --shadow-panel: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-popover: 0 8px 24px -4px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-modal: 0 24px 64px -12px rgba(0, 0, 0, 0.65), 0 8px 20px -4px rgba(0, 0, 0, 0.35);
+  --shadow-drag: 0 12px 28px -6px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(144, 147, 232, 0.4);
+
+  --selection-bg: rgba(144, 147, 232, 0.32);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+}
+
+/* ---------- Reduced motion: zero the motion tokens (see also the base layer) ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+}

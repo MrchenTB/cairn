@@ -1,0 +1,1020 @@
+import { describe, expect, it, vi } from 'vitest'
+import { bySortOrder } from '@/domain/ordering'
+import {
+  makeDependency,
+  makeMilestone,
+  makePhase,
+  makeProject,
+  makeTask,
+} from '@/domain/testFactories'
+import type {
+  BackupFile,
+  Dependency,
+  Milestone,
+  Phase,
+  Project,
+  Task,
+  WorkspaceSnapshot,
+} from '@/domain/types'
+import { parseBackupFile } from '@/domain/validation'
+import type { WorkspaceState } from './contracts'
+import { DEFAULT_PREFERENCES, EMPTY_WORKSPACE } from './defaults'
+import { NETWORK_ERROR_MESSAGE, RepositoryError } from './errors'
+import { createMemoryStorage, LocalRepository, type StorageLike } from './localRepository'
+import {
+  AUTO_REFRESH_INTERVAL_MS,
+  createWorkspaceStore,
+  SYNC_ERROR_TOAST_ID,
+  UI_PREFS_STORAGE_KEY,
+  type WorkspaceEnvironment,
+} from './store'
+
+// ---------------------------------------------------------------------------
+// Harness: a real LocalRepository (in-memory storage) behind an isolated store.
+// ---------------------------------------------------------------------------
+
+interface Rows {
+  projects?: Project[]
+  phases?: Phase[]
+  tasks?: Task[]
+  milestones?: Milestone[]
+  dependencies?: Dependency[]
+}
+
+async function seed(repo: LocalRepository, rows: Rows) {
+  for (const row of rows.projects ?? []) await repo.insertProject(row)
+  for (const row of rows.phases ?? []) await repo.insertPhase(row)
+  const tasks = [...(rows.tasks ?? [])].sort(
+    (a, b) => Number(!!a.parentTaskId) - Number(!!b.parentTaskId),
+  )
+  for (const row of tasks) await repo.insertTask(row)
+  for (const row of rows.milestones ?? []) await repo.insertMilestone(row)
+  for (const row of rows.dependencies ?? []) await repo.insertDependency(row)
+}
+
+interface SetupOptions {
+  rows?: Rows
+  repo?: LocalRepository
+  storage?: StorageLike
+  uiStorage?: StorageLike
+  environment?: WorkspaceEnvironment
+  now?: () => number
+  randomId?: () => string
+  load?: boolean
+}
+
+/** Server clock far from the client clock, so reconciled timestamps are always recognisable. */
+let serverTick = 0
+const serverClock = () => new Date(Date.UTC(2030, 0, 1, 0, 0, 0, ++serverTick)).toISOString()
+
+async function setup(options: SetupOptions = {}) {
+  const storage = options.storage ?? createMemoryStorage()
+  const repo = options.repo ?? new LocalRepository({ storage, now: serverClock })
+  if (options.rows) await seed(repo, options.rows)
+  const notifier = { error: vi.fn() }
+  let sequence = 0
+  const store = createWorkspaceStore({
+    mode: 'local',
+    repository: repo,
+    notify: notifier,
+    storage: options.uiStorage ?? null,
+    environment: options.environment,
+    now: options.now,
+    randomId: options.randomId ?? (() => `new-${++sequence}`),
+  })
+  const harness = {
+    store,
+    repo,
+    storage,
+    notifier,
+    actions: store.getState().actions,
+    state: (): WorkspaceState => store.getState(),
+  }
+  if (options.load !== false) {
+    await harness.actions.load()
+    await idle(harness)
+  }
+  return harness
+}
+
+type Harness = Awaited<ReturnType<typeof setup>>
+
+async function idle(h: { state: () => WorkspaceState }) {
+  await vi.waitFor(() => expect(h.state().sync.pending).toBe(0))
+}
+
+/** p1 (phases ph1, ph2; tasks a, b in ph1 and c, d in ph2) and an empty p2. */
+function workspaceRows(): Rows {
+  return {
+    projects: [
+      makeProject({ id: 'p1', name: 'Alpha', sortOrder: 'a0' }),
+      makeProject({ id: 'p2', name: 'Beta', sortOrder: 'a1' }),
+    ],
+    phases: [
+      makePhase({ id: 'ph1', projectId: 'p1', name: 'Plan', sortOrder: 'a0' }),
+      makePhase({ id: 'ph2', projectId: 'p1', name: 'Build', sortOrder: 'a1' }),
+    ],
+    tasks: [
+      makeTask({ id: 'a', projectId: 'p1', phaseId: 'ph1', title: 'A', sortOrder: 'a0' }),
+      makeTask({ id: 'b', projectId: 'p1', phaseId: 'ph1', title: 'B', sortOrder: 'a1' }),
+      makeTask({ id: 'c', projectId: 'p1', phaseId: 'ph2', title: 'C', sortOrder: 'a2' }),
+      makeTask({ id: 'd', projectId: 'p1', phaseId: 'ph2', title: 'D', sortOrder: 'a3' }),
+    ],
+  }
+}
+
+const sortedIds = (rows: readonly (Task | Project | Phase)[]) =>
+  [...rows].sort(bySortOrder).map((row) => row.id)
+const topLevel = (h: Harness, projectId = 'p1') =>
+  sortedIds(
+    Object.values(h.state().data.tasks).filter((t) => t.projectId === projectId && !t.parentTaskId),
+  )
+const storedSnapshot = (h: Harness): Promise<WorkspaceSnapshot> =>
+  new LocalRepository({ storage: h.storage }).loadWorkspace()
+const storedTask = async (h: Harness, id: string) =>
+  (await storedSnapshot(h)).tasks.find((t) => t.id === id)
+
+// ---------------------------------------------------------------------------
+
+describe('load', () => {
+  it('goes idle → loading → ready and normalises the snapshot', async () => {
+    const h = await setup({ rows: workspaceRows(), load: false })
+    expect(h.state().status).toBe('idle')
+    const loading = h.actions.load()
+    expect(h.state().status).toBe('loading')
+    expect(await loading).toEqual({ ok: true, value: undefined })
+    expect(h.state().status).toBe('ready')
+    expect(Object.keys(h.state().data.tasks).sort()).toEqual(['a', 'b', 'c', 'd'])
+    expect(h.state().sync.lastLoadedAt).not.toBeNull()
+  })
+
+  it('reports a failed load as status error and recovers through refresh()', async () => {
+    const h = await setup({ rows: workspaceRows(), load: false })
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const result = await h.actions.load()
+    expect(result).toMatchObject({ ok: false, error: { kind: 'network' } })
+    expect(h.state()).toMatchObject({ status: 'error', loadError: { kind: 'network' } })
+    expect(await h.actions.refresh()).toEqual({ ok: true, value: undefined })
+    expect(h.state()).toMatchObject({ status: 'ready', loadError: null })
+  })
+
+  it('saves default preferences once when the account has none', async () => {
+    const repo = new LocalRepository({ storage: createMemoryStorage() })
+    const upsert = vi.spyOn(repo, 'upsertPreferences')
+    const h = await setup({ repo })
+    expect(upsert).toHaveBeenCalledOnce()
+    expect(upsert).toHaveBeenCalledWith({ ...DEFAULT_PREFERENCES })
+    expect((await repo.loadWorkspace()).preferences).toEqual(DEFAULT_PREFERENCES)
+    await h.actions.load()
+    await idle(h)
+    expect(upsert).toHaveBeenCalledOnce()
+    // background housekeeping is not reported as a user save
+    expect(h.state().sync.lastSavedAt).toBeNull()
+  })
+
+  it('never overwrites existing preferences (new device with a different cache)', async () => {
+    const stored = {
+      theme: 'dark',
+      sidebarCollapsed: true,
+      timezone: 'Europe/Paris',
+      weekStartsOn: 0,
+    } as const
+    const repo = new LocalRepository({ storage: createMemoryStorage() })
+    await repo.upsertPreferences(stored)
+    const upsert = vi.spyOn(repo, 'upsertPreferences')
+    const uiStorage = createMemoryStorage({
+      [UI_PREFS_STORAGE_KEY]: JSON.stringify({ theme: 'light', sidebarCollapsed: false }),
+    })
+    const h = await setup({ repo, uiStorage, load: false })
+    expect(h.state().preferences.theme).toBe('light') // cached value before the load
+    await h.actions.load()
+    await idle(h)
+    expect(h.state().preferences).toEqual(stored)
+    expect(upsert).not.toHaveBeenCalled()
+    expect(JSON.parse(uiStorage.getItem(UI_PREFS_STORAGE_KEY) ?? '')).toEqual({
+      theme: 'dark',
+      sidebarCollapsed: true,
+    })
+  })
+})
+
+describe('optimistic writes', () => {
+  it('apply instantly, then reconcile with the stored row', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(20)
+    const saving = h.actions.updateTask('a', { title: '  Renamed  ' })
+    expect(h.state().data.tasks.a.title).toBe('Renamed')
+    expect(h.state().sync.pending).toBe(1)
+    expect(await saving).toEqual({ ok: true, value: undefined })
+    expect(h.state().sync).toMatchObject({ pending: 0, lastError: null, canRetry: false })
+    expect(h.state().sync.lastSavedAt).not.toBeNull()
+    expect(h.state().data.tasks.a).toEqual(await storedTask(h, 'a'))
+  })
+
+  it('a failed write is rolled back exactly, with a Retry toast', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const before = h.state().data.tasks.a
+    h.repo.failNextWrites(1)
+    const result = await h.actions.updateTask('a', { title: 'Lost', status: 'done' })
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: 'network', message: NETWORK_ERROR_MESSAGE },
+    })
+    expect(h.state().data.tasks.a).toEqual(before)
+    expect(h.state().sync).toMatchObject({
+      pending: 0,
+      canRetry: true,
+      lastError: { kind: 'network' },
+    })
+    expect(h.notifier.error).toHaveBeenCalledOnce()
+    const [title, options] = h.notifier.error.mock.calls[0]
+    expect(title).toBe("Couldn't update task")
+    expect(options).toMatchObject({
+      id: SYNC_ERROR_TOAST_ID,
+      description: NETWORK_ERROR_MESSAGE,
+      action: { label: 'Retry' },
+    })
+  })
+
+  it('two concurrent writes, the first fails: only the first is rolled back', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    const first = h.actions.updateTask('a', { title: 'A2' })
+    const second = h.actions.updateTask('b', { title: 'B2' })
+    expect([h.state().data.tasks.a.title, h.state().data.tasks.b.title]).toEqual(['A2', 'B2'])
+    expect(h.state().sync.pending).toBe(2)
+    const [r1, r2] = await Promise.all([first, second])
+    expect([r1.ok, r2.ok]).toEqual([false, true])
+    expect([h.state().data.tasks.a.title, h.state().data.tasks.b.title]).toEqual(['A', 'B2'])
+    expect([(await storedTask(h, 'a'))?.title, (await storedTask(h, 'b'))?.title]).toEqual([
+      'A',
+      'B2',
+    ])
+    expect(h.state().sync.pending).toBe(0)
+  })
+
+  it('two concurrent writes, the second fails: only the second is rolled back', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const original = h.repo.updateTask.bind(h.repo)
+    vi.spyOn(h.repo, 'updateTask')
+      .mockImplementationOnce((id, patch) => original(id, patch))
+      .mockRejectedValueOnce(new RepositoryError('network', NETWORK_ERROR_MESSAGE))
+    const [r1, r2] = await Promise.all([
+      h.actions.updateTask('a', { title: 'A2' }),
+      h.actions.updateTask('b', { title: 'B2' }),
+    ])
+    expect([r1.ok, r2.ok]).toEqual([true, false])
+    expect([h.state().data.tasks.a.title, h.state().data.tasks.b.title]).toEqual(['A2', 'B'])
+    expect([(await storedTask(h, 'a'))?.title, (await storedTask(h, 'b'))?.title]).toEqual([
+      'A2',
+      'B',
+    ])
+  })
+
+  describe('two pending writes to the same field', () => {
+    it('the older fails: the newer value stays (it is what the server ends up with)', async () => {
+      const h = await setup({ rows: workspaceRows() })
+      h.repo.setLatency(20)
+      h.repo.failNextWrites(1)
+      const older = h.actions.updateTask('a', { status: 'in_progress' })
+      const newer = h.actions.updateTask('a', { status: 'done' })
+      expect((await older).ok).toBe(false)
+      // no flicker back to the old value while the newer write is still on its way
+      expect(h.state().data.tasks.a.status).toBe('done')
+      expect((await newer).ok).toBe(true)
+      const stored = await storedTask(h, 'a')
+      expect(stored?.status).toBe('done')
+      expect(h.state().data.tasks.a).toEqual(stored)
+    })
+
+    it('both fail: the field returns to the last saved value', async () => {
+      const h = await setup({ rows: workspaceRows() })
+      const before = h.state().data.tasks.a
+      h.repo.failNextWrites(2)
+      await Promise.all([
+        h.actions.updateTask('a', { status: 'in_progress' }),
+        h.actions.updateTask('a', { status: 'done', title: 'Both lost' }),
+      ])
+      expect(h.state().data.tasks.a).toEqual(before)
+    })
+
+    it('the older succeeds and the newer fails: the older (stored) value comes back', async () => {
+      const h = await setup({ rows: workspaceRows() })
+      const original = h.repo.updateTask.bind(h.repo)
+      let failNewer = () => {}
+      const update = vi
+        .spyOn(h.repo, 'updateTask')
+        .mockImplementationOnce((id, patch) => original(id, patch))
+        .mockImplementationOnce(
+          () =>
+            new Promise((_, reject) => {
+              failNewer = () => reject(new RepositoryError('network', NETWORK_ERROR_MESSAGE))
+            }),
+        )
+      const older = h.actions.updateTask('a', { status: 'in_progress' })
+      const newer = h.actions.updateTask('a', { status: 'done' })
+      expect((await older).ok).toBe(true)
+      // the older write's stored row must not overwrite the newer pending value
+      expect(h.state().data.tasks.a.status).toBe('done')
+      expect(h.state().data.tasks.a.completedAt).not.toBeNull()
+      await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+      failNewer()
+      expect((await newer).ok).toBe(false)
+      const stored = await storedTask(h, 'a')
+      expect(stored?.status).toBe('in_progress')
+      expect(h.state().data.tasks.a).toEqual(stored)
+    })
+
+    it('a deleted entity is not resurrected by the reconcile of an earlier write', async () => {
+      const h = await setup({ rows: workspaceRows() })
+      h.repo.setLatency(5)
+      await Promise.all([
+        h.actions.updateTask('a', { title: 'Edited' }),
+        h.actions.deleteTask('a', { keepSubtasks: false }),
+      ])
+      expect(h.state().data.tasks.a).toBeUndefined()
+      expect(await storedTask(h, 'a')).toBeUndefined()
+    })
+  })
+
+  it('a create followed at once by an edit reaches the server in order', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    // A slow insert: without in-order sending, the edit would arrive first and fail.
+    const insert = h.repo.insertTask.bind(h.repo)
+    vi.spyOn(h.repo, 'insertTask').mockImplementation(async (task) => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return insert(task)
+    })
+    const created = h.actions.createTask({ projectId: 'p1', title: 'Fresh' })
+    const edited = h.actions.updateTask('new-1', { priority: 'high' })
+    expect((await created).ok).toBe(true)
+    expect((await edited).ok).toBe(true)
+    expect(await storedTask(h, 'new-1')).toMatchObject({ title: 'Fresh', priority: 'high' })
+  })
+})
+
+describe('retry', () => {
+  it('retryLastFailed re-runs the failed write (same id for creates)', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    const failed = await h.actions.createTask({ projectId: 'p1', title: 'Retry me' })
+    expect(failed.ok).toBe(false)
+    expect(h.state().data.tasks['new-1']).toBeUndefined()
+    expect(h.state().sync.canRetry).toBe(true)
+
+    expect(await h.actions.retryLastFailed()).toEqual({ ok: true, value: undefined })
+    expect(h.state().data.tasks['new-1']).toMatchObject({ title: 'Retry me' })
+    expect(await storedTask(h, 'new-1')).toBeDefined()
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    // nothing left to retry
+    expect(await h.actions.retryLastFailed()).toEqual({ ok: true, value: undefined })
+    expect(Object.keys(h.state().data.tasks)).not.toContain('new-2')
+  })
+
+  it("the toast's Retry action re-runs the write once", async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Second try' })
+    const { action } = h.notifier.error.mock.calls[0][1] as { action: { onClick: () => void } }
+    action.onClick()
+    action.onClick()
+    await vi.waitFor(async () => expect((await storedTask(h, 'a'))?.title).toBe('Second try'))
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('Second try')
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+  })
+
+  it('a successful write clears the last error', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'x' })
+    expect(h.state().sync.lastError).not.toBeNull()
+    await h.actions.updateTask('b', { title: 'y' })
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+  })
+
+  it('server rejections that would fail again offer no Retry and trigger a resync', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    // another device deletes task "a"
+    await new LocalRepository({ storage: h.storage }).deleteTask('a', { keepSubtasks: false })
+    const result = await h.actions.updateTask('a', { title: 'gone' })
+    expect(result).toMatchObject({ ok: false, error: { kind: 'not_found' } })
+    expect(h.state().sync.canRetry).toBe(false)
+    expect(h.notifier.error.mock.calls[0][1]).toMatchObject({ action: undefined })
+    await vi.waitFor(() => expect(h.state().data.tasks.a).toBeUndefined())
+  })
+})
+
+describe('validation', () => {
+  it('returns { kind: validation } without state change, toast or write', async () => {
+    const h = await setup({
+      rows: {
+        ...workspaceRows(),
+        tasks: [
+          ...(workspaceRows().tasks ?? []),
+          makeTask({ id: 'sub', projectId: 'p1', parentTaskId: 'a', sortOrder: 'a0' }),
+        ],
+        dependencies: [
+          makeDependency({ id: 'ab', projectId: 'p1', predecessorId: 'a', successorId: 'b' }),
+        ],
+      },
+    })
+    const writes = [
+      'insertTask',
+      'insertProject',
+      'updateTask',
+      'applySchedule',
+      'insertDependency',
+      'upsertPreferences',
+      'insertMilestone',
+    ] as const
+    const spies = writes.map((method) => vi.spyOn(h.repo, method))
+    const data = h.state().data
+    const preferences = h.state().preferences
+
+    const results = [
+      await h.actions.createTask({ projectId: 'p1', title: '   ' }),
+      await h.actions.createTask({ projectId: 'missing', title: 'x' }),
+      await h.actions.createTask({ projectId: 'p1', title: 'x', parentTaskId: 'sub' }),
+      await h.actions.createProject({ name: 'x'.repeat(201) }),
+      await h.actions.updateTask('b', { startDate: '2026-11-10', dueDate: '2026-11-01' }),
+      await h.actions.updateTask('c', { parentTaskId: 'sub' }),
+      await h.actions.updateTask('b', { parentTaskId: 'a' }), // b depends on a
+      await h.actions.moveTask({ taskId: 'a', parentTaskId: 'c' }), // a has a subtask
+      await h.actions.applySchedule([
+        { taskId: 'a', startDate: '2026-11-10', dueDate: '2026-11-09' },
+      ]),
+      await h.actions.addDependency('a', 'a'),
+      await h.actions.addDependency('b', 'a'), // cycle
+      await h.actions.addDependency('a', 'sub'), // parent/subtask
+      await h.actions.updatePreferences({ timezone: 'Mars/Olympus_Mons' }),
+      await h.actions.createMilestone({ projectId: 'p1', name: 'M', date: '2026-02-30' }),
+    ]
+    for (const result of results)
+      expect(result).toMatchObject({ ok: false, error: { kind: 'validation' } })
+    expect(h.state().data).toBe(data)
+    expect(h.state().preferences).toBe(preferences)
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled()
+    expect(h.state().sync).toMatchObject({ pending: 0, lastError: null })
+  })
+
+  it('unknown ids are not_found (no toast); no-op changes skip the write', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const update = vi.spyOn(h.repo, 'updateTask')
+    expect(await h.actions.updateTask('nope', { title: 'x' })).toMatchObject({
+      error: { kind: 'not_found' },
+    })
+    expect(await h.actions.deleteProject('nope')).toMatchObject({ error: { kind: 'not_found' } })
+    expect(await h.actions.updateTask('a', { title: 'A', status: 'todo' })).toEqual({
+      ok: true,
+      value: undefined,
+    })
+    expect(
+      await h.actions.applySchedule([{ taskId: 'a', startDate: null, dueDate: null }]),
+    ).toEqual({ ok: true, value: undefined })
+    expect(update).not.toHaveBeenCalled()
+    expect(h.notifier.error).not.toHaveBeenCalled()
+  })
+})
+
+describe('ordering', () => {
+  it('createTask honours placement among top-level tasks; createPhase/moveProject place correctly', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    await h.actions.createTask({
+      projectId: 'p1',
+      title: 'Between',
+      placement: { afterId: 'a', beforeId: 'b' },
+    })
+    await h.actions.createTask({ projectId: 'p1', title: 'Last' })
+    expect(topLevel(h)).toEqual(['a', 'new-1', 'b', 'c', 'd', 'new-2'])
+
+    await h.actions.createPhase({ projectId: 'p1', name: 'Middle', afterPhaseId: 'ph1' })
+    await h.actions.createPhase({ projectId: 'p1', name: 'End' })
+    const phases = Object.values(h.state().data.phases).filter((p) => p.projectId === 'p1')
+    expect(sortedIds(phases)).toEqual(['ph1', 'new-3', 'ph2', 'new-4'])
+    await h.actions.movePhase('new-4', null)
+    expect(sortedIds(Object.values(h.state().data.phases))[0]).toBe('new-4')
+
+    await h.actions.moveProject('p2', null)
+    expect(sortedIds(Object.values(h.state().data.projects))).toEqual(['p2', 'p1'])
+    expect(sortedIds((await storedSnapshot(h)).projects)).toEqual(['p2', 'p1'])
+  })
+
+  it('moveTask across List phase groups computes the key among destination siblings', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    await h.actions.moveTask({ taskId: 'a', phaseId: 'ph2', afterId: 'c', beforeId: 'd' })
+    expect(topLevel(h)).toEqual(['b', 'c', 'a', 'd'])
+    const group = (phaseId: string) =>
+      sortedIds(Object.values(h.state().data.tasks).filter((t) => t.phaseId === phaseId))
+    expect(group('ph1')).toEqual(['b'])
+    expect(group('ph2')).toEqual(['c', 'a', 'd'])
+    expect(h.state().data.tasks.a.status).toBe('todo')
+
+    // top of the "Plan" group
+    await h.actions.moveTask({ taskId: 'd', phaseId: 'ph1', beforeId: 'b' })
+    expect(group('ph1')).toEqual(['d', 'b'])
+    // ungroup (null phase)
+    await h.actions.moveTask({ taskId: 'c', phaseId: null, afterId: null })
+    expect(topLevel(h)[0]).toBe('c')
+    expect(h.state().data.tasks.c.phaseId).toBeNull()
+
+    // the stored order matches
+    const stored = await storedSnapshot(h)
+    expect(sortedIds(stored.tasks)).toEqual(topLevel(h))
+  })
+
+  it('moveTask between Board columns changes status and order only as asked', async () => {
+    const h = await setup({
+      rows: {
+        projects: [makeProject({ id: 'p1' })],
+        tasks: [
+          makeTask({
+            id: 't1',
+            projectId: 'p1',
+            status: 'todo',
+            sortOrder: 'a0',
+            dueDate: '2026-11-20',
+          }),
+          makeTask({ id: 't2', projectId: 'p1', status: 'in_progress', sortOrder: 'a1' }),
+          makeTask({ id: 't3', projectId: 'p1', status: 'todo', sortOrder: 'a2' }),
+          makeTask({ id: 't4', projectId: 'p1', status: 'in_progress', sortOrder: 'a3' }),
+          makeTask({ id: 's1', projectId: 'p1', parentTaskId: 't1', sortOrder: 'a0' }),
+        ],
+      },
+    })
+    const column = (status: Task['status']) =>
+      sortedIds(
+        Object.values(h.state().data.tasks).filter((t) => !t.parentTaskId && t.status === status),
+      )
+
+    await h.actions.moveTask({ taskId: 't1', status: 'in_progress', afterId: 't2', beforeId: 't4' })
+    expect(column('in_progress')).toEqual(['t2', 't1', 't4'])
+    expect(column('todo')).toEqual(['t3'])
+    expect(h.state().data.tasks.t1).toMatchObject({
+      status: 'in_progress',
+      completedAt: null,
+      dueDate: '2026-11-20',
+    })
+
+    await h.actions.moveTask({ taskId: 't3', status: 'done' })
+    expect(column('done')).toEqual(['t3'])
+    expect(h.state().data.tasks.t3.completedAt).toEqual(expect.any(String))
+
+    // pure reorder inside a column: only sortOrder is sent
+    const update = vi.spyOn(h.repo, 'updateTask')
+    await h.actions.moveTask({ taskId: 't4', beforeId: 't2' })
+    expect(column('in_progress')).toEqual(['t4', 't2', 't1'])
+    expect(update).toHaveBeenCalledWith('t4', { sortOrder: expect.any(String) })
+
+    // dropping a card where it already is writes nothing
+    await h.actions.moveTask({ taskId: 't4', beforeId: 't2' })
+    expect(update).toHaveBeenCalledOnce()
+
+    const stored = await storedSnapshot(h)
+    expect(stored.tasks.find((t) => t.id === 't1')?.status).toBe('in_progress')
+    expect(sortedIds(stored.tasks.filter((t) => !t.parentTaskId))).toEqual(topLevel(h))
+  })
+
+  it('moveTask re-parents a subtask among the new siblings in the new parent phase', async () => {
+    const h = await setup({
+      rows: {
+        ...workspaceRows(),
+        tasks: [
+          ...(workspaceRows().tasks ?? []),
+          makeTask({ id: 's1', projectId: 'p1', parentTaskId: 'a', sortOrder: 'a0' }),
+          makeTask({ id: 's2', projectId: 'p1', parentTaskId: 'c', sortOrder: 'a0' }),
+        ],
+      },
+    })
+    await h.actions.moveTask({ taskId: 's1', parentTaskId: 'c', afterId: null })
+    expect(h.state().data.tasks.s1).toMatchObject({ parentTaskId: 'c', phaseId: 'ph2' })
+    const children = sortedIds(
+      Object.values(h.state().data.tasks).filter((t) => t.parentTaskId === 'c'),
+    )
+    expect(children).toEqual(['s1', 's2'])
+    expect(await storedTask(h, 's1')).toMatchObject({ parentTaskId: 'c', phaseId: 'ph2' })
+  })
+})
+
+describe('hierarchy', () => {
+  it('subtasks inherit and follow their parent phase; a re-parented task goes last', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const sub = await h.actions.createTask({
+      projectId: 'p1',
+      title: 'Sub',
+      parentTaskId: 'a',
+      phaseId: 'ph2',
+    })
+    expect(sub.ok && sub.value.phaseId).toBe('ph1')
+
+    await h.actions.updateTask('d', { parentTaskId: 'a' })
+    expect(h.state().data.tasks.d).toMatchObject({ parentTaskId: 'a', phaseId: 'ph1' })
+    const children = sortedIds(
+      Object.values(h.state().data.tasks).filter((t) => t.parentTaskId === 'a'),
+    )
+    expect(children).toEqual(['new-1', 'd'])
+
+    const saving = h.actions.updateTask('a', { phaseId: 'ph2' })
+    expect(h.state().data.tasks.d.phaseId).toBe('ph2') // optimistic cascade
+    await saving
+    expect((await storedTask(h, 'd'))?.phaseId).toBe('ph2')
+    expect((await storedTask(h, 'new-1'))?.phaseId).toBe('ph2')
+
+    // promoting back to top level appends at the end of the project's top-level tasks
+    await h.actions.updateTask('d', { parentTaskId: null })
+    expect(topLevel(h).at(-1)).toBe('d')
+  })
+
+  it('deleteTask with keepSubtasks promotes them in order at the parent position', async () => {
+    const h = await setup({
+      rows: {
+        projects: [makeProject({ id: 'p1' })],
+        phases: [makePhase({ id: 'ph1', projectId: 'p1' })],
+        tasks: [
+          makeTask({ id: 'x', projectId: 'p1', sortOrder: 'a0' }),
+          makeTask({ id: 'P', projectId: 'p1', phaseId: 'ph1', sortOrder: 'a1' }),
+          makeTask({ id: 'y', projectId: 'p1', sortOrder: 'a2' }),
+          makeTask({ id: 's3', projectId: 'p1', parentTaskId: 'P', sortOrder: 'a2' }),
+          makeTask({ id: 's1', projectId: 'p1', parentTaskId: 'P', sortOrder: 'a0' }),
+          makeTask({ id: 's2', projectId: 'p1', parentTaskId: 'P', sortOrder: 'a1' }),
+        ],
+        dependencies: [
+          makeDependency({ id: 'Py', projectId: 'p1', predecessorId: 'P', successorId: 'y' }),
+          makeDependency({ id: 's1x', projectId: 'p1', predecessorId: 's1', successorId: 'x' }),
+        ],
+      },
+    })
+    const deleting = h.actions.deleteTask('P', { keepSubtasks: true })
+    expect(topLevel(h)).toEqual(['x', 's1', 's2', 's3', 'y'])
+    expect(await deleting).toEqual({ ok: true, value: undefined })
+    expect(topLevel(h)).toEqual(['x', 's1', 's2', 's3', 'y'])
+    for (const id of ['s1', 's2', 's3']) {
+      expect(h.state().data.tasks[id]).toMatchObject({ parentTaskId: null, phaseId: 'ph1' })
+    }
+    expect(Object.keys(h.state().data.dependencies)).toEqual(['s1x'])
+    const stored = await storedSnapshot(h)
+    expect(sortedIds(stored.tasks)).toEqual(['x', 's1', 's2', 's3', 'y'])
+    expect(stored.dependencies.map((d) => d.id)).toEqual(['s1x'])
+  })
+
+  it('deleteTask without keepSubtasks removes the subtasks and their dependencies', async () => {
+    const h = await setup({
+      rows: {
+        projects: [makeProject({ id: 'p1' })],
+        tasks: [
+          makeTask({ id: 'x', projectId: 'p1', sortOrder: 'a0' }),
+          makeTask({ id: 'P', projectId: 'p1', sortOrder: 'a1' }),
+          makeTask({ id: 's1', projectId: 'p1', parentTaskId: 'P', sortOrder: 'a0' }),
+        ],
+        dependencies: [
+          makeDependency({ id: 's1x', projectId: 'p1', predecessorId: 's1', successorId: 'x' }),
+        ],
+      },
+    })
+    await h.actions.deleteTask('P', { keepSubtasks: false })
+    expect(Object.keys(h.state().data.tasks)).toEqual(['x'])
+    expect(h.state().data.dependencies).toEqual({})
+    expect((await storedSnapshot(h)).tasks.map((t) => t.id)).toEqual(['x'])
+  })
+
+  it('deletePhase ungroups and deleteProject cascades', async () => {
+    const h = await setup({
+      rows: {
+        ...workspaceRows(),
+        milestones: [
+          makeMilestone({ id: 'm1', projectId: 'p1', phaseId: 'ph1', date: '2026-12-01' }),
+        ],
+        dependencies: [
+          makeDependency({ id: 'ab', projectId: 'p1', predecessorId: 'a', successorId: 'b' }),
+        ],
+      },
+    })
+    await h.actions.deletePhase('ph1')
+    expect(h.state().data.tasks.a.phaseId).toBeNull()
+    expect(h.state().data.milestones.m1.phaseId).toBeNull()
+    expect((await storedTask(h, 'a'))?.phaseId).toBeNull()
+
+    await h.actions.deleteProject('p1')
+    const { data } = h.state()
+    expect(Object.keys(data.projects)).toEqual(['p2'])
+    expect([data.phases, data.tasks, data.milestones, data.dependencies]).toEqual([{}, {}, {}, {}])
+    const stored = await storedSnapshot(h)
+    expect([stored.tasks, stored.milestones, stored.dependencies]).toEqual([[], [], []])
+  })
+})
+
+describe('dependencies and schedule', () => {
+  it('addDependency / applySchedule / removeDependency round trip', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const added = await h.actions.addDependency('a', 'b')
+    expect(added).toMatchObject({
+      ok: true,
+      value: { projectId: 'p1', predecessorId: 'a', successorId: 'b', type: 'FS' },
+    })
+    const result = await h.actions.applySchedule([
+      { taskId: 'a', startDate: '2026-11-02', dueDate: '2026-11-04' },
+      { taskId: 'b', startDate: '2026-11-05', dueDate: '2026-11-06' },
+    ])
+    expect(result.ok).toBe(true)
+    expect(h.state().data.tasks.b).toMatchObject({ startDate: '2026-11-05', dueDate: '2026-11-06' })
+    expect(await storedTask(h, 'b')).toMatchObject({
+      startDate: '2026-11-05',
+      dueDate: '2026-11-06',
+    })
+    if (added.ok) await h.actions.removeDependency(added.value.id)
+    expect(h.state().data.dependencies).toEqual({})
+  })
+
+  it('a failed schedule write rolls every task back', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.applySchedule([
+      { taskId: 'a', startDate: '2026-11-02', dueDate: '2026-11-04' },
+      { taskId: 'b', startDate: '2026-11-05', dueDate: null },
+    ])
+    expect([h.state().data.tasks.a.startDate, h.state().data.tasks.b.startDate]).toEqual([
+      null,
+      null,
+    ])
+    expect(h.notifier.error.mock.calls[0][0]).toBe("Couldn't reschedule tasks")
+  })
+})
+
+describe('preferences', () => {
+  it('saves only the last stored preferences plus this change', async () => {
+    const h = await setup()
+    h.repo.failNextWrites(1)
+    await Promise.all([
+      h.actions.updatePreferences({ theme: 'dark' }),
+      h.actions.updatePreferences({ weekStartsOn: 0 }),
+    ])
+    expect(h.state().preferences).toMatchObject({ theme: 'system', weekStartsOn: 0 })
+    expect((await h.repo.loadWorkspace()).preferences).toMatchObject({
+      theme: 'system',
+      weekStartsOn: 0,
+    })
+  })
+
+  it('never saves a later pending change as part of an earlier write', async () => {
+    const h = await setup()
+    const original = h.repo.upsertPreferences.bind(h.repo)
+    vi.spyOn(h.repo, 'upsertPreferences')
+      .mockImplementationOnce((preferences) => original(preferences))
+      .mockRejectedValueOnce(new RepositoryError('network', NETWORK_ERROR_MESSAGE))
+    await Promise.all([
+      h.actions.updatePreferences({ theme: 'dark' }),
+      h.actions.updatePreferences({ sidebarCollapsed: true }), // fails
+    ])
+    expect(h.state().preferences).toMatchObject({ theme: 'dark', sidebarCollapsed: false })
+    expect((await h.repo.loadWorkspace()).preferences).toMatchObject({
+      theme: 'dark',
+      sidebarCollapsed: false,
+    })
+  })
+
+  it('caches theme and sidebar state for the next startup', async () => {
+    const uiStorage = createMemoryStorage({
+      [UI_PREFS_STORAGE_KEY]: JSON.stringify({ theme: 'dark', sidebarCollapsed: true, junk: 1 }),
+    })
+    const h = await setup({ uiStorage, load: false })
+    expect(h.state().preferences).toMatchObject({ theme: 'dark', sidebarCollapsed: true })
+    await h.actions.load()
+    await idle(h)
+    // the first-run defaults keep the cached choices
+    expect((await h.repo.loadWorkspace()).preferences).toMatchObject({
+      theme: 'dark',
+      sidebarCollapsed: true,
+    })
+    await h.actions.updatePreferences({ theme: 'light', sidebarCollapsed: false })
+    expect(JSON.parse(uiStorage.getItem(UI_PREFS_STORAGE_KEY) ?? '')).toEqual({
+      theme: 'light',
+      sidebarCollapsed: false,
+    })
+  })
+})
+
+describe('backup', () => {
+  const backup = (): BackupFile => ({
+    app: 'cairn',
+    formatVersion: 1,
+    exportedAt: '2026-10-01T00:00:00.000Z',
+    preferences: null,
+    data: {
+      projects: [
+        makeProject({ id: 'X', name: 'Xray', sortOrder: 'a5' }),
+        makeProject({ id: 'Y', name: 'Yankee', sortOrder: 'a1' }),
+      ],
+      phases: [makePhase({ id: 'PH', projectId: 'X', name: 'Phase' })],
+      tasks: [
+        makeTask({ id: 'T2', projectId: 'X', phaseId: 'PH', parentTaskId: 'T1', title: 'child' }),
+        makeTask({
+          id: 'T1',
+          projectId: 'X',
+          phaseId: 'PH',
+          title: 'parent',
+          status: 'done',
+          completedAt: '2026-09-01T00:00:00.000Z',
+        }),
+        makeTask({ id: 'T4', projectId: 'X', title: 'next' }),
+        makeTask({ id: 'T3', projectId: 'Y', title: 'other' }),
+      ],
+      milestones: [makeMilestone({ id: 'M', projectId: 'X', phaseId: 'PH', date: '2026-12-01' })],
+      dependencies: [
+        makeDependency({ id: 'D', projectId: 'X', predecessorId: 'T1', successorId: 'T4' }),
+      ],
+    },
+  })
+
+  it('importBackup remaps every id, appends projects in order and merges after the server', async () => {
+    const h = await setup({
+      rows: { projects: [makeProject({ id: 'E', name: 'Existing', sortOrder: 'a9' })] },
+      randomId: () => crypto.randomUUID(),
+    })
+    const existing = h.state().data.projects.E
+    h.repo.setLatency(5)
+    const importing = h.actions.importBackup(backup())
+    expect(Object.keys(h.state().data.projects)).toEqual(['E']) // not optimistic
+    const result = await importing
+    expect(result).toEqual({
+      ok: true,
+      value: { projects: 2, phases: 1, tasks: 4, milestones: 1, dependencies: 1 },
+    })
+
+    const { data } = h.state()
+    expect(data.projects.E).toBe(existing)
+    const projects = Object.values(data.projects).sort(bySortOrder)
+    expect(projects.map((p) => p.name)).toEqual(['Existing', 'Yankee', 'Xray'])
+
+    const oldIds = new Set(['X', 'Y', 'PH', 'T1', 'T2', 'T3', 'T4', 'M', 'D'])
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    for (const table of ['projects', 'phases', 'tasks', 'milestones', 'dependencies'] as const) {
+      for (const row of Object.values(data[table])) {
+        if (row.id === 'E') continue
+        expect(oldIds.has(row.id)).toBe(false)
+        expect(row.id).toMatch(uuid)
+      }
+    }
+    const byTitle = (title: string) =>
+      Object.values(data.tasks).find((t) => t.title === title) as Task
+    const xray = projects[2]
+    const phase = Object.values(data.phases)[0]
+    expect(phase.projectId).toBe(xray.id)
+    expect(byTitle('parent')).toMatchObject({
+      projectId: xray.id,
+      phaseId: phase.id,
+      completedAt: '2026-09-01T00:00:00.000Z',
+    })
+    expect(byTitle('child')).toMatchObject({
+      parentTaskId: byTitle('parent').id,
+      phaseId: phase.id,
+    })
+    expect(byTitle('other').projectId).toBe(projects[1].id)
+    expect(Object.values(data.milestones)[0]).toMatchObject({
+      projectId: xray.id,
+      phaseId: phase.id,
+    })
+    expect(Object.values(data.dependencies)[0]).toMatchObject({
+      projectId: xray.id,
+      predecessorId: byTitle('parent').id,
+      successorId: byTitle('next').id,
+    })
+
+    // the server holds exactly the same rows
+    const stored = await storedSnapshot(h)
+    expect(stored.tasks.map((t) => t.id).sort()).toEqual(Object.keys(data.tasks).sort())
+
+    // importing again creates another independent copy
+    await h.actions.importBackup(backup())
+    expect(Object.keys(h.state().data.projects)).toHaveLength(5)
+  })
+
+  it('rejects an invalid backup without writing', async () => {
+    const h = await setup()
+    const importSpy = vi.spyOn(h.repo, 'importWorkspace')
+    const broken = backup()
+    broken.data.tasks[0] = { ...broken.data.tasks[0], parentTaskId: 'missing' }
+    expect(await h.actions.importBackup(broken)).toMatchObject({
+      ok: false,
+      error: { kind: 'validation' },
+    })
+    expect(importSpy).not.toHaveBeenCalled()
+    expect(h.notifier.error).not.toHaveBeenCalled()
+  })
+
+  it('exportBackup produces a valid backup of the current workspace', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const file = h.actions.exportBackup()
+    const parsed = parseBackupFile(JSON.parse(JSON.stringify(file)))
+    expect(parsed.ok).toBe(true)
+    expect(file.data.tasks).toHaveLength(4)
+    expect(file.preferences).toEqual(h.state().preferences)
+    // round trip: importing an export duplicates the workspace
+    expect(await h.actions.importBackup(file)).toMatchObject({
+      ok: true,
+      value: { projects: 2, tasks: 4 },
+    })
+  })
+})
+
+describe('refresh', () => {
+  class GatedRepository extends LocalRepository {
+    gate: Promise<void> | null = null
+    override async loadWorkspace() {
+      const snapshot = await super.loadWorkspace() // read at the start of the refresh
+      if (this.gate) await this.gate
+      return snapshot
+    }
+  }
+
+  it('discards a refresh when a write started after it began', async () => {
+    const storage = createMemoryStorage()
+    const repo = new GatedRepository({ storage })
+    const h = await setup({ repo, storage, rows: workspaceRows() })
+    const loadedAt = h.state().sync.lastLoadedAt
+    let release = () => {}
+    repo.gate = new Promise((resolve) => {
+      release = resolve
+    })
+    const refreshing = h.actions.refresh({ silent: true })
+    const created = await h.actions.createTask({ projectId: 'p1', title: 'Written meanwhile' })
+    release()
+    expect(await refreshing).toEqual({ ok: true, value: undefined })
+    expect(created.ok && h.state().data.tasks[created.value.id]).toBeTruthy()
+    expect(h.state().sync.lastLoadedAt).toBe(loadedAt)
+  })
+
+  it("applies another device's changes when nothing was written meanwhile", async () => {
+    const h = await setup({ rows: workspaceRows() })
+    await new LocalRepository({ storage: h.storage }).insertProject(
+      makeProject({ id: 'remote', sortOrder: 'b0' }),
+    )
+    await h.actions.refresh({ silent: true })
+    expect(h.state().data.projects.remote).toBeDefined()
+  })
+
+  it('is skipped while writes are pending; non-silent refresh shows loading', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const load = vi.spyOn(h.repo, 'loadWorkspace')
+    h.repo.setLatency(10)
+    const writing = h.actions.updateTask('a', { title: 'busy' })
+    expect(await h.actions.refresh({ silent: true })).toEqual({ ok: true, value: undefined })
+    expect(load).not.toHaveBeenCalled()
+    await writing
+    const refreshing = h.actions.refresh()
+    expect(h.state().status).toBe('loading')
+    await refreshing
+    expect(h.state().status).toBe('ready')
+    expect(load).toHaveBeenCalledOnce()
+  })
+
+  it('refreshes on focus/visibility at most every 30 s, and when back online', async () => {
+    const win = new EventTarget()
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+    let clock = 1_000_000
+    const h = await setup({
+      rows: workspaceRows(),
+      environment: { window: win, document: doc, navigator: { onLine: true } },
+      now: () => clock,
+    })
+    const load = vi.spyOn(h.repo, 'loadWorkspace')
+    clock += 10_000
+    win.dispatchEvent(new Event('focus'))
+    expect(load).not.toHaveBeenCalled()
+
+    clock += AUTO_REFRESH_INTERVAL_MS
+    win.dispatchEvent(new Event('focus'))
+    doc.dispatchEvent(new Event('visibilitychange'))
+    expect(load).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(h.state().sync.lastLoadedAt).toBe(clock))
+
+    clock += AUTO_REFRESH_INTERVAL_MS
+    doc.visibilityState = 'hidden'
+    doc.dispatchEvent(new Event('visibilitychange'))
+    expect(load).toHaveBeenCalledOnce()
+    doc.visibilityState = 'visible'
+    doc.dispatchEvent(new Event('visibilitychange'))
+    expect(load).toHaveBeenCalledTimes(2)
+    await idle(h)
+
+    win.dispatchEvent(new Event('offline'))
+    expect(h.state().sync.online).toBe(false)
+    win.dispatchEvent(new Event('online')) // forced, even inside the 30 s window
+    expect(h.state().sync.online).toBe(true)
+    expect(load).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('reset', () => {
+  it('clears everything and ignores answers to earlier requests', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(10)
+    const writing = h.actions.updateTask('a', { title: 'late' })
+    h.actions.reset()
+    expect(h.state()).toMatchObject({ status: 'idle', data: EMPTY_WORKSPACE, loadError: null })
+    expect(h.state().sync).toMatchObject({ pending: 0, lastError: null, lastLoadedAt: null })
+    await writing
+    expect(h.state().data).toBe(EMPTY_WORKSPACE)
+    expect(h.state().sync.pending).toBe(0)
+  })
+})

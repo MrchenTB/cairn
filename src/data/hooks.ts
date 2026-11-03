@@ -4,7 +4,7 @@
  * selector (zustand v5 + React 19 would loop). Use these hooks instead of reaching into the
  * store in views, so every view shares the same rules.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import { todayInTimeZone } from '@/domain/dates'
 import { bySortOrder } from '@/domain/ordering'
 import type {
@@ -122,6 +122,30 @@ export function useMilestones(projectId?: string | null): Milestone[] {
 export function useMilestone(milestoneId: string | null | undefined): Milestone | undefined {
   return useWorkspaceStore((s) => (milestoneId ? s.data.milestones[milestoneId] : undefined))
 }
+export function usePhase(phaseId: string | null | undefined): Phase | undefined {
+  return useWorkspaceStore((s) => (phaseId ? s.data.phases[phaseId] : undefined))
+}
+
+/**
+ * What the sidebar sync indicator should say, in priority order:
+ * 'error' (Couldn't save · Retry when canRetry) → 'offline' (Supabase mode) → 'saving' →
+ * 'local' (Local only — not synced) → 'saved' → 'idle'.
+ */
+export type SyncIndicator = 'error' | 'offline' | 'saving' | 'local' | 'saved' | 'idle'
+
+export function syncIndicator(mode: DataMode, sync: SyncState): SyncIndicator {
+  if (sync.lastError) return 'error'
+  if (!sync.online && mode === 'supabase') return 'offline'
+  if (sync.pending > 0) return 'saving'
+  if (mode === 'local') return 'local'
+  return sync.lastSavedAt !== null ? 'saved' : 'idle'
+}
+
+export function useSyncIndicator(): { indicator: SyncIndicator; canRetry: boolean } {
+  const mode = useDataMode()
+  const sync = useSyncState()
+  return { indicator: syncIndicator(mode, sync), canRetry: sync.canRetry }
+}
 /** Dependencies of a project. */
 export function useDependencies(projectId: string | null | undefined): Dependency[] {
   const deps = useWorkspaceStore((s) => s.data.dependencies)
@@ -131,17 +155,16 @@ export function useDependencies(projectId: string | null | undefined): Dependenc
   )
 }
 
+function subscribeToClock(onTick: () => void): () => void {
+  const id = window.setInterval(onTick, 30_000)
+  return () => window.clearInterval(id)
+}
+
 /**
  * Today's calendar date in the user's configured time zone (Preferences.timezone).
- * Re-evaluates every 30 s so views roll over at midnight.
+ * Re-evaluates every 30 s so views roll over at midnight; re-renders only when the date changes.
  */
 export function useToday(): ISODate {
   const timeZone = useWorkspaceStore((s) => s.preferences.timezone)
-  const [today, setToday] = useState(() => todayInTimeZone(timeZone))
-  useEffect(() => {
-    setToday(todayInTimeZone(timeZone))
-    const id = window.setInterval(() => setToday(todayInTimeZone(timeZone)), 30_000)
-    return () => window.clearInterval(id)
-  }, [timeZone])
-  return today
+  return useSyncExternalStore(subscribeToClock, () => todayInTimeZone(timeZone))
 }

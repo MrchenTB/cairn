@@ -197,6 +197,11 @@ Shared UI contracts (provided by the foundation):
 - Shortcuts (`src/app/shortcuts.ts`): ⌘/Ctrl+K search · C new task · `[` toggle sidebar ·
   G then O/M/P/T navigate · `?` shortcuts help · Esc closes overlays. Features may register their own
   (project view 1/2/3, Gantt T = today). Shortcuts never fire while typing in inputs.
+- `src/features/projects/viewBar.tsx` — `ProjectLayout` renders the view bar (List/Board/Gantt tabs)
+  with a slot; views put their controls there with `<ViewBarActions>…</ViewBarActions>`.
+- `src/features/gantt/planner.ts` — `planScheduleChange(change, { source })`: the ONLY way any view
+  changes task dates (Gantt drag, Task Modal, List date fields), so Manual/Auto dependency rules
+  (warn vs. preview + atomic apply) behave the same everywhere.
 
 ## 8. Design system
 

@@ -2,9 +2,30 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>scratch-2026-11-02-c206b4</title>
+    <title>Cairn</title>
+    <meta
+      name="description"
+      content="Cairn — a calm, keyboard-friendly personal project manager. Plan clearly. Work simply."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f2f2f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111216" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Applies the cached theme before first paint. Its sha256 is allow-listed in public/_headers (CSP); keep both in sync (src/test/csp.test.ts). -->
+    <script>
+      (function () {
+        var theme = 'system'
+        try {
+          var prefs = JSON.parse(localStorage.getItem('cairn:ui-prefs') || '{}')
+          if (prefs && (prefs.theme === 'light' || prefs.theme === 'dark')) theme = prefs.theme
+        } catch (e) {}
+        var dark =
+          theme === 'dark' ||
+          (theme === 'system' && !!window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches)
+        if (dark) document.documentElement.classList.add('dark')
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

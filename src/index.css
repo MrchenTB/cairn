@@ -1,1 +1,277 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+@import './styles/tokens.css';
+
+/* Dark mode is a class on <html> (set before first paint by the inline script in index.html). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Fonts are emitted as theme variables so Preflight's --default-font-family uses our stack. */
+@theme inline {
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+}
+
+/*
+ * Semantic utilities → design tokens. `reference` = no theme variables are emitted: every
+ * utility points straight at the token from src/styles/tokens.css, which switches per theme.
+ * e.g. bg-surface, text-fg-muted, border-subtle, ring-focus, shadow-popover, rounded-lg, text-ui.
+ */
+@theme inline reference {
+  /* surfaces → bg-* */
+  --color-app: var(--bg-app);
+  --color-sidebar: var(--bg-sidebar);
+  --color-main: var(--bg-main);
+  --color-muted: var(--bg-muted);
+  --color-surface: var(--bg-surface);
+  --color-elevated: var(--bg-elevated);
+  --color-hover: var(--bg-hover);
+  --color-active: var(--bg-active);
+  --color-selected: var(--bg-selected);
+  --color-overlay: var(--bg-overlay);
+  --color-inverse: var(--bg-inverse);
+
+  /* lines → border-* / divide-* / outline-* (these five names are for lines only) */
+  --color-subtle: var(--border-subtle);
+  --color-default: var(--border-default);
+  --color-strong: var(--border-strong);
+  --color-input: var(--border-input);
+  --color-contrast: var(--border-contrast);
+
+  /* text → text-* */
+  --color-fg: var(--fg-primary);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-fg-muted: var(--fg-secondary);
+  --color-fg-tertiary: var(--fg-tertiary);
+  --color-fg-subtle: var(--fg-tertiary);
+  --color-fg-disabled: var(--fg-disabled);
+  --color-fg-inverse: var(--fg-inverse);
+
+  /* accent & focus (text in accent colour: text-accent-text; on a solid accent: text-accent-fg) */
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-subtle-hover: var(--accent-subtle-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
+  --color-focus: var(--focus-ring);
+
+  /* status / priority */
+  --color-status-todo: var(--status-todo);
+  --color-status-in-progress: var(--status-in-progress);
+  --color-status-done: var(--status-done);
+  --color-priority-none: var(--priority-none);
+  --color-priority-low: var(--priority-low);
+  --color-priority-medium: var(--priority-medium);
+  --color-priority-high: var(--priority-high);
+  --color-priority-urgent: var(--priority-urgent);
+
+  /* semantic */
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-danger-fg: var(--danger-fg);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+
+  /* project colours */
+  --color-project-gray: var(--project-gray);
+  --color-project-blue: var(--project-blue);
+  --color-project-violet: var(--project-violet);
+  --color-project-pink: var(--project-pink);
+  --color-project-red: var(--project-red);
+  --color-project-orange: var(--project-orange);
+  --color-project-yellow: var(--project-yellow);
+  --color-project-green: var(--project-green);
+  --color-project-teal: var(--project-teal);
+
+  /* type scale → text-micro … text-display (font-size + line-height) */
+  --text-micro: var(--font-size-micro);
+  --text-micro--line-height: var(--line-height-micro);
+  --text-meta: var(--font-size-meta);
+  --text-meta--line-height: var(--line-height-meta);
+  --text-ui: var(--font-size-ui);
+  --text-ui--line-height: var(--line-height-ui);
+  --text-body: var(--font-size-body);
+  --text-body--line-height: var(--line-height-body);
+  --text-heading: var(--font-size-heading);
+  --text-heading--line-height: var(--line-height-heading);
+  --text-title: var(--font-size-title);
+  --text-title--line-height: var(--line-height-title);
+  --text-display: var(--font-size-display);
+  --text-display--line-height: var(--line-height-display);
+
+  /* radii (rounded-sm/md/lg/xl) and elevation (shadow-panel/popover/modal/drag) */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --shadow-panel: var(--shadow-panel);
+  --shadow-popover: var(--shadow-popover);
+  --shadow-modal: var(--shadow-modal);
+  --shadow-drag: var(--shadow-drag);
+
+  /* motion → duration-fast/base/slow, ease-enter/exit/move */
+  --transition-duration-instant: var(--duration-instant);
+  --transition-duration-fast: var(--duration-fast);
+  --transition-duration-base: var(--duration-base);
+  --transition-duration-slow: var(--duration-slow);
+  --ease-enter: var(--ease-enter);
+  --ease-exit: var(--ease-exit);
+  --ease-move: var(--ease-move);
+}
+
+@theme {
+  /* Quiet skeleton "breathing" (no shimmer). Disabled by prefers-reduced-motion below. */
+  --animate-breathe: cairn-breathe 1.2s ease-in-out infinite alternate;
+  /* Loading placeholders fade in after a short delay so fast loads never flash. */
+  --animate-fade-in-delayed: cairn-fade-in 200ms ease-out 150ms both;
+
+  @keyframes cairn-breathe {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.5;
+    }
+  }
+
+  @keyframes cairn-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@layer base {
+  html {
+    font-family: var(--font-family-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg-app);
+    color: var(--fg-primary);
+    font-size: var(--font-size-ui);
+    line-height: var(--line-height-ui);
+    font-weight: var(--font-weight-regular);
+  }
+
+  ::selection {
+    background: var(--selection-bg);
+  }
+
+  :focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  ::placeholder {
+    color: var(--fg-tertiary);
+    opacity: 1;
+  }
+
+  /* Tailwind v4 Preflight uses the default cursor on buttons; clickable controls get a pointer. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+
+  /* Native date/number inputs and selects follow the theme through color-scheme (tokens). */
+  input,
+  textarea,
+  select {
+    color: inherit;
+  }
+
+  /* Set for one frame while the theme switches (ThemeProvider). */
+  html.no-transitions *,
+  html.no-transitions *::before,
+  html.no-transitions *::after {
+    transition: none !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/*
+ * sonner (toasts) — themed through its own variables (set inline on <Toaster/>), plus a few
+ * overrides that need more specificity than sonner's injected stylesheet. No richColors:
+ * semantic colour appears only on the icon.
+ */
+[data-sonner-toaster][data-sonner-theme] {
+  font-family: var(--font-family-sans);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] {
+  padding: 10px 12px;
+  gap: 8px;
+  align-items: flex-start;
+  box-shadow: var(--shadow-popover);
+  font-size: var(--font-size-ui);
+  line-height: var(--line-height-ui);
+  transition-duration: var(--duration-slow);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-icon] {
+  margin: 2px 0 0;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-title] {
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-ui);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-description] {
+  color: var(--fg-secondary);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-button] {
+  height: 24px;
+  align-self: center;
+  border-radius: var(--radius-md);
+  padding: 0 8px;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  background: var(--bg-active);
+  color: var(--fg-primary);
+  transition: background-color var(--duration-fast);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-button]:hover {
+  background: var(--bg-hover);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-button]:focus-visible,
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-close-button]:focus-visible,
+[data-sonner-toaster] [data-sonner-toast]:focus-visible {
+  box-shadow: none;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-close-button] {
+  background: var(--bg-elevated);
+  border-color: var(--border-default);
+  color: var(--fg-tertiary);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled='true']:hover [data-close-button]:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  color: var(--fg-primary);
+}
