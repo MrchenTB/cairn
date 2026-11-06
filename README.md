@@ -69,5 +69,6 @@ E2E 測試需要 Playwright 的 Chromium（第一次執行前：`npx playwright 
 - [`docs/design-research.md`](docs/design-research.md)：Linear 設計研究與 design tokens
 - [`docs/gantt-evaluation.md`](docs/gantt-evaluation.md)：甘特圖套件評估
 - [`docs/platform-notes.md`](docs/platform-notes.md)：Supabase／Cloudflare 免費方案與限制
+- [`docs/task-autosave-implementation.md`](docs/task-autosave-implementation.md)：Task Modal 自動儲存的互動規則、測試結果與限制
 - [`docs/progress.md`](docs/progress.md)：進度與驗收結果（已完成／待你操作／尚未完成）、測試結果、已知限制
 - [`supabase/README.md`](supabase/README.md)：資料庫 migration、RLS 檢查與 Auth 設定的詳細步驟

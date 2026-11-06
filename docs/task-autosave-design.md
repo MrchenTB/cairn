@@ -1,6 +1,6 @@
 # Task Modal 自動儲存（auto-save）設計評估
 
-> 狀態：**設計提案，尚未實作**。本文件只描述現況與建議；`src/`、`e2e/`、`supabase/` 均未修改。
+> 狀態：**已實作**，實際規則與結果見 [`task-autosave-implementation.md`](task-autosave-implementation.md)，決策見 `decisions.md` D26–D32。以下保留撰寫當時的現況分析與建議（行號為當時的程式碼），與實作不同之處以實作報告為準。
 > 分支：`ux/iteration-3`（含他人尚未提交的 UI 修改；`src/features/list/*` 正由他人修改，本文只引用其行為作對照，行號以撰寫當下的工作區為準）。
 > 對應問題：`docs/ux-audit.md` X-1（兩種儲存模型並存）、X-9（從子任務 Save 後整個 Modal 關閉）。
 

@@ -7,8 +7,8 @@
 > file disagree, fix one of them deliberately — never silently drift.
 >
 > **Where decisions go.** This file states the rules as they are. Why a rule was chosen (and what was
-> given up) is recorded in `docs/decisions.md` as numbered entries (D1…D23 so far). A new trade-off
-> gets the next number (D24, …) with background → decision → reason/trade-off; if it changes a rule
+> given up) is recorded in `docs/decisions.md` as numbered entries (D1…D32 so far). A new trade-off
+> gets the next number (D33, …) with background → decision → reason/trade-off; if it changes a rule
 > described here, update this file in the same change and cite the number. Current completion,
 > test results and known limitations live in `docs/progress.md`.
 
@@ -169,8 +169,19 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
   after `REQUEST_TIMEOUT_MS` (30 s) so a hung request cannot block the write queue or a form; the
   caller's own abort passes through.
 - Feedback rules: a successful Retry shows one generic "Saved" toast (D13). In cloud mode, closing or
-  reloading the tab while `sync.pending > 0` asks first (`UnsavedWritesGuard`, D14); it is not an
-  offline queue and lost writes are not re-sent.
+  reloading the tab while `sync.pending > 0` or a failed write waits for Retry asks first, and in both
+  modes while task text is unsaved (`UnsavedWritesGuard`, D14, D28); it is not an offline queue and
+  lost writes are not re-sent.
+- Write options: `updateTask` and `applySchedule` take an optional `WriteOptions` (`label` for the
+  failure toast's title, `secondaryAction` for a second button); their Retry keeps them.
+  `withdrawFailedChanges(taskId, fields)` withdraws a failed change the user gave up on without
+  writing anything (typing the stored value back, discarding a draft).
+- Task Modal autosave (`src/features/task-modal/autosave/`, D26–D30): `textDraft.ts` is one text
+  field's rules (no React, no store: debounce, max-wait, IME gate, coalescing, failure); `draftManager.ts`
+  keeps drafts per task and field beyond the modal's life, mirrors them to `sessionStorage` and
+  isolates accounts; `taskDrafts.ts` wires the app's instance to the stores; `useTaskAutosave.ts`
+  binds the form. Every write still goes through the store (or the planner); nothing here talks to
+  a repository. `sessionStorage` is a safety net for this tab, not a backup.
 - Hooks (`src/data/hooks.ts`): `useProjects`, `useProject`, `usePhases`, `useProjectTasks`, `useTask`,
   `useSubtasks`, `useMilestones`, `useMilestone`, `useDependencies`, `useWorkspaceData`, `usePreferences`,
   `useSyncState`, `useActions`, `useAuth`, `useToday`, `useWorkspaceStatus`, `useDataMode`.
@@ -209,7 +220,10 @@ Shared UI contracts (provided by the foundation):
   `useCloseTask(): () => void` (manipulate `?task=` preserving other params). Opening pushes a history
   entry and records how many task entries were stacked on the page (`cairnTaskDepth` in history state);
   closing walks back over exactly those, so the first Back afterwards leaves the page. A task URL that
-  was not opened from the page (deep link, new tab) is replaced instead of stepped back.
+  was not opened from the page (deep link, new tab) is replaced instead of stepped back. An entry
+  also records the task it was opened from (`cairnTaskFrom`), so `useCloseTask()({ toParent })` returns
+  a subtask to the parent it was opened from (D32). `openTaskFromAnywhere` opens a task from outside
+  React (a toast's Open, the sidebar's draft list); the mounted host registers how.
 - `src/app/viewPrefs.ts` — per-project last view & Gantt scale (localStorage), recent projects
   (`recordProjectVisit`, `useRecentProjectIds`).
 - `src/components/ui/confirm.tsx` — `confirm({ title, description, confirmLabel, destructive }): Promise<boolean>`
@@ -228,7 +242,8 @@ Shared UI contracts (provided by the foundation):
 - `src/features/gantt/planner.ts` — `planScheduleChange(change, { source })` (boolean) and
   `planScheduleChangeDetailed` (tells why nothing was written): the ONLY way any view changes task
   dates (Gantt drag, Task Modal, List date fields), so Manual/Auto dependency rules (warn vs. preview +
-  atomic apply) behave the same everywhere. `reviewConflicts(projectId)` and `reviewNewDependency(id)`
+  atomic apply) behave the same everywhere. The Task Modal's banner replaces the Manual conflict toast
+  for `source: 'modal'` (D31). `reviewConflicts(projectId)` and `reviewNewDependency(id)`
   open the same preview. The logic is `createPlanner(env)` (injectable, unit-tested); the exported
   functions use the browser instance. The preview itself is `RescheduleDialog` through
   `rescheduleStore.ts`, mounted once in the shell.
