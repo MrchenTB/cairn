@@ -42,6 +42,7 @@ import { cn } from '@/lib/utils'
 import { InlineCreate } from './InlineCreate'
 import { addRowKey, useListContext } from './listContext'
 import { subtaskContainerId } from './listDnd'
+import { belowListHeader } from './listColumns'
 import { MilestoneRow } from './MilestoneRow'
 import { TaskRow } from './TaskRow'
 import type { ListDragData } from './useListDnd'
@@ -50,6 +51,14 @@ const validateTitle = (value: string) =>
   validateName(value, TITLE_MAX_LENGTH, 'Task title')?.message ?? null
 
 const taskCountLabel = (count: number) => `${count} ${count === 1 ? 'task' : 'tasks'}`
+
+/** "3 tasks, 2 subtasks, 1 milestone": what a group holds (the header number is the tasks). */
+function groupContentsLabel(tasks: number, subtasks: number, milestones: number): string {
+  const parts = [taskCountLabel(tasks)]
+  if (subtasks > 0) parts.push(`${subtasks} ${subtasks === 1 ? 'subtask' : 'subtasks'}`)
+  if (milestones > 0) parts.push(`${milestones} ${milestones === 1 ? 'milestone' : 'milestones'}`)
+  return parts.join(', ')
+}
 
 export interface ListGroupProps {
   group: OutlineGroup
@@ -188,7 +197,8 @@ export function NoPhaseDropZone({ containerId }: { containerId: string }) {
       aria-hidden
       data-drop-target={isTarget || undefined}
       className={cn(
-        'sticky top-0 z-[3] -mb-8 flex h-8 items-center gap-2 bg-muted pr-3 pl-6 text-meta',
+        'sticky z-[3] -mb-8 flex h-8 items-center gap-2 bg-muted pr-3 pl-6 text-meta',
+        belowListHeader,
         'shadow-[0_1px_0_0_var(--border-default)] transition-colors duration-fast',
         'data-[drop-target]:bg-selected data-[drop-target]:shadow-[inset_2px_0_0_var(--accent),0_1px_0_0_var(--border-default)]',
       )}
@@ -235,6 +245,7 @@ function GroupHeader({
   /** Enter / Esc ended the rename: focus goes back to the header (a click elsewhere keeps it). */
   const refocusToggle = useRef(false)
   const count = group.tasks.length
+  const subtaskCount = group.tasks.reduce((sum, entry) => sum + entry.subtasks.length, 0)
 
   useEffect(() => {
     if (!renaming && refocusToggle.current) {
@@ -252,7 +263,8 @@ function GroupHeader({
     <div
       data-drop-target={isDropTarget || undefined}
       className={cn(
-        'group/header sticky top-0 z-[2] flex h-8 items-center gap-1 bg-muted pr-3 pl-6',
+        'group/header sticky z-[2] flex h-8 items-center gap-1 bg-muted pr-3 pl-6',
+        belowListHeader,
         'transition-colors duration-fast',
         'data-[drop-target]:bg-selected data-[drop-target]:shadow-[inset_2px_0_0_var(--accent)]',
       )}
@@ -275,6 +287,8 @@ function GroupHeader({
           ref={toggleRef}
           type="button"
           aria-label={`${name}, ${taskCountLabel(count)}`}
+          // The number counts top-level tasks only; the tooltip spells out what else is inside.
+          title={groupContentsLabel(count, subtaskCount, group.milestones.length)}
           aria-expanded={!collapsed}
           aria-controls={collapsed ? undefined : bodyId}
           onClick={() => onCollapsedChange(!collapsed)}

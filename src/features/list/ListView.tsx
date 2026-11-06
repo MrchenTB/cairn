@@ -1,9 +1,9 @@
 /**
  * /projects/:projectId/list — the project outline as a dense list (domain buildProjectOutline):
- * flat when the project has no phases; otherwise "No phase" first (hidden when empty; while a
- * task is dragged it is offered as a drop zone) and one collapsible group per phase. Rows edit
- * status / priority / dates in place, open the Task Modal, expand subtasks and reorder by drag
- * (or the row menu).
+ * flat when the project has no phases; otherwise one collapsible group per phase, then "No phase"
+ * last (hidden when empty; while a task is dragged it is offered as a drop zone). A quiet column
+ * header names the Start / Due columns. Rows edit status / priority / dates in place, open the
+ * Task Modal, expand subtasks and reorder by drag (or the row menu).
  */
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
@@ -51,7 +51,6 @@ import {
   useDropAnimation,
   usePrefersReducedMotion,
 } from '@/features/projects/dnd'
-import { usePhaseDialog } from '@/features/projects/phaseDialogStore'
 import { stepAfterId } from '@/features/projects/projectOrder'
 import { deletePhaseDescription, phaseContents, plural } from '@/features/projects/projectStats'
 import { ViewBarActions } from '@/features/projects/viewBar'
@@ -69,6 +68,7 @@ import {
   stepMove,
   type Containers,
 } from './listDnd'
+import { ListColumnHeader } from './ListColumnHeader'
 import { ListGroup, NoPhaseDropZone } from './ListGroup'
 import {
   groupKey,
@@ -116,7 +116,6 @@ function ProjectList({ project }: { project: Project }) {
   const dependencies = useDependencies(project.id)
   const openTask = useOpenTask()
   const openMilestoneDialog = useUIStore((s) => s.openMilestoneDialog)
-  const openPhaseDialog = usePhaseDialog((s) => s.open)
   const expanded = useExpandedTasks()
   const collapsedGroups = useCollapsedGroups()
   const dropAnimation = useDropAnimation()
@@ -173,9 +172,10 @@ function ProjectList({ project }: { project: Project }) {
     [actions, topLevelOrder],
   )
 
-  // "No phase" is hidden while it is empty (unless its add row is open). While a task is dragged
-  // it is offered as a drop zone over the top of the list instead, so the rows never move.
-  const noPhaseGroup = outline.groups[0]
+  // "No phase" (the outline's last group) is hidden while it is empty (unless its add row is
+  // open). While a task is dragged it is offered as a drop zone over the top of the list instead,
+  // so the rows never move.
+  const noPhaseGroup = outline.groups[outline.groups.length - 1]
   const showNoPhase =
     !outline.hasPhases ||
     noPhaseGroup.tasks.length > 0 ||
@@ -415,7 +415,13 @@ function ProjectList({ project }: { project: Project }) {
     onDragCancel: ({ active }) => `Moving ${titleOf(active.id)} was cancelled.`,
   }
 
-  const isEmpty = tasks.length === 0 && phases.length === 0 && milestones.length === 0
+  // "Add a phase first" opens the inline phase row inside the list (not a dialog), so the cursor
+  // stays on the page: the empty state yields to the list while that row is open.
+  const isEmpty =
+    tasks.length === 0 &&
+    phases.length === 0 &&
+    milestones.length === 0 &&
+    editingRow !== addRowKey.phase
   const showNoPhaseDropZone =
     !showNoPhase && dnd.drag?.kind === 'task' && dnd.drag.via === 'pointer'
   const activeTask = dnd.drag ? taskById.get(dnd.drag.activeId) : undefined
@@ -464,7 +470,7 @@ function ProjectList({ project }: { project: Project }) {
               </div>
             }
             secondaryAction={
-              <Button variant="link" size="sm" onClick={() => openPhaseDialog(project.id)}>
+              <Button variant="link" size="sm" onClick={() => setEditingRow(addRowKey.phase)}>
                 Add a phase first
               </Button>
             }
@@ -478,7 +484,8 @@ function ProjectList({ project }: { project: Project }) {
           accessibility={{ announcements, screenReaderInstructions: SCREEN_READER_INSTRUCTIONS }}
           {...dnd.handlers}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto pt-1 pb-16" data-list-scroll>
+          <div className="min-h-0 flex-1 overflow-y-auto pb-16" data-list-scroll>
+            <ListColumnHeader />
             {showNoPhaseDropZone ? <NoPhaseDropZone containerId={NO_PHASE_CONTAINER} /> : null}
             {outline.groups.map((group, index) => {
               const containerId = groupContainerId(group.phase?.id ?? null)
@@ -495,7 +502,7 @@ function ProjectList({ project }: { project: Project }) {
                   onCollapsedChange={(collapsed) =>
                     setGroupCollapsed(groupKey(project.id, containerId), collapsed)
                   }
-                  phaseIndex={index - 1}
+                  phaseIndex={index}
                   phaseCount={phases.length}
                 />
               )

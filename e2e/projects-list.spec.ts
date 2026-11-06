@@ -250,6 +250,7 @@ interface StoredWorkspace {
       parentTaskId: string | null
       status: string
       priority: string
+      startDate: string | null
       dueDate: string | null
       sortOrder: string
     }
@@ -798,7 +799,7 @@ test.describe('list view (local mode)', () => {
     page,
   }) => {
     await openApp(page, '/projects/p-research/list')
-    // "No phase" first (it has a task), then the phases in order.
+    // The phases in order, then "No phase" (it has a task) last.
     await expect(group(page, 'No phase')).toBeVisible()
     await expect.poll(() => rowTitles(group(page, 'No phase'))).toEqual(['Inbox idea'])
     await expect
@@ -1163,6 +1164,97 @@ test.describe('list view (local mode)', () => {
     await expect(
       taskRow(page, 'Alpha').getByRole('button', { name: 'Alpha', exact: true }),
     ).toBeFocused()
+  })
+
+  test('names the priority and date columns, and a row without dates can get a start date', async ({
+    page,
+  }) => {
+    await openApp(page, '/projects/p-flat/list')
+    await expect(page.locator('[data-list-scroll] > div[aria-hidden]').first()).toHaveText(
+      'PriorityStartDue',
+    )
+    const beta = taskRow(page, 'Beta')
+    await expect(beta.getByRole('button', { name: 'Start date: not set' })).toHaveCount(1)
+    await beta.getByRole('button', { name: 'Start date: not set' }).click({ force: true })
+    await page
+      .getByRole('button', { name: /^Today/ })
+      .first()
+      .click()
+    await expect
+      .poll(async () => (await stored(page)).tasks['f-beta'].startDate !== null)
+      .toBe(true)
+  })
+
+  for (const width of [1440, 1024, 768]) {
+    test(`the Priority / Start / Due column names line up with the row controls at ${width}px, and a long title never overlaps them`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 800 })
+      const workspace = seedWorkspace() as { tasks: Record<string, Record<string, unknown>> }
+      workspace.tasks['f-alpha'] = {
+        ...workspace.tasks['f-alpha'],
+        title: `Alpha ${'with a very long name '.repeat(12)}`,
+        priority: 'high',
+        startDate: '2027-01-04',
+        dueDate: '2027-02-01',
+      }
+      await openApp(page, '/projects/p-flat/list', workspace)
+      const row = page.locator('[data-task-row]').first()
+      await expect(row).toBeVisible()
+      const m = await page.evaluate(() => {
+        const box = (element: Element | null | undefined) => {
+          const rect = element?.getBoundingClientRect()
+          if (!rect) throw new Error('element not found')
+          return { left: rect.left, right: rect.right, center: (rect.left + rect.right) / 2 }
+        }
+        const header = document.querySelector('[data-list-scroll] > div[aria-hidden]')
+        const labelCell = (text: string) =>
+          [...(header?.querySelectorAll('span') ?? [])].find(
+            (span) =>
+              span.textContent === text && span.children.length === (text === 'Priority' ? 1 : 0),
+          )
+        const row = document.querySelector('[data-task-row]') as HTMLElement
+        const scroller = document.querySelector('[data-list-scroll]') as HTMLElement
+        const title = row.querySelector('button.flex-1') as HTMLElement
+        const titleText = title.firstElementChild as HTMLElement
+        const priority = row.querySelector('[aria-label^="Priority"]')
+        return {
+          priorityLabel: box(header?.querySelector('span span')),
+          startLabel: box(labelCell('Start')),
+          dueLabel: box(labelCell('Due')),
+          priority: box(priority),
+          start: box(row.querySelector('[aria-label^="Start date"]')),
+          due: box(row.querySelector('[aria-label^="Due date"]')),
+          title: box(title),
+          overflow: scroller.scrollWidth - scroller.clientWidth,
+          titleScrolls: titleText.scrollWidth > titleText.clientWidth,
+        }
+      })
+      // the label is centred over the priority icon; the date labels end where the dates end
+      expect(Math.abs(m.priorityLabel.center - m.priority.center)).toBeLessThanOrEqual(0.5)
+      expect(Math.abs(m.startLabel.right - m.start.right)).toBeLessThanOrEqual(0.5)
+      expect(Math.abs(m.dueLabel.right - m.due.right)).toBeLessThanOrEqual(0.5)
+      // the long title is cut with an ellipsis inside its own column, no sideways scrolling
+      expect(m.titleScrolls).toBe(true)
+      expect(m.title.right).toBeLessThanOrEqual(m.priority.left + 0.5)
+      expect(m.overflow).toBeLessThanOrEqual(0)
+    })
+  }
+
+  test('"Add a phase first" adds the phase inline and keeps the cursor in the list', async ({
+    page,
+  }) => {
+    await openApp(page, '/projects/p-empty/list')
+    await page.getByRole('button', { name: 'Add a phase first' }).click()
+    const input = page.getByRole('textbox', { name: 'New phase name' })
+    await expect(input).toBeFocused()
+    await input.fill('Research')
+    await input.press('Enter')
+    await expect(group(page, 'Research')).toBeVisible()
+    await expect(input).toBeFocused() // not <body>: the next phase can be typed right away
+    await expect
+      .poll(async () => Object.values((await stored(page)).phases).map((phase) => phase.name))
+      .toContain('Research')
   })
 
   test('a failed edit rolls back, shows a toast with Retry, and Retry saves it', async ({

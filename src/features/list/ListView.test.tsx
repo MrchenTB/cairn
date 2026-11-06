@@ -419,7 +419,7 @@ describe('ListView — editing in place', () => {
 })
 
 describe('ListView — "No phase"', () => {
-  it('is hidden while empty; moving a task there from the menu brings it back first', async () => {
+  it('is hidden while empty; moving a task there from the menu brings it back, after the phases', async () => {
     const a = getWorkspaceActions()
     const project = must(await a.createProject({ name: 'Research' }))
     const discovery = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
@@ -443,11 +443,105 @@ describe('ListView — "No phase"', () => {
 
     await waitFor(() => expect(byTitle(project.id, 'Survey')?.phaseId).toBeNull())
     expect(screen.getByRole('button', { name: 'No phase, 1 task' })).toBeInTheDocument()
-    expect(rowTitles()).toEqual(['Survey', 'Interview users'])
+    // "No phase" is the last group of a project with phases (not the first).
+    expect(rowTitles()).toEqual(['Interview users', 'Survey'])
+  })
+
+  it('stays visible, after the phases, when it only holds milestones', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const discovery = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
+    must(
+      await a.createTask({
+        projectId: project.id,
+        title: 'Interview users',
+        phaseId: discovery.id,
+      }),
+    )
+    must(await a.createMilestone({ projectId: project.id, name: 'Kick-off', date: '2026-10-20' }))
+    renderList(project.id)
+
+    const headers = screen.getAllByRole('button', { name: /, \d+ tasks?$/ })
+    expect(headers.map((header) => header.getAttribute('aria-label'))).toEqual([
+      'Discovery, 1 task',
+      'No phase, 0 tasks',
+    ])
+    expect(screen.getByRole('button', { name: 'No phase, 0 tasks' })).toHaveAttribute(
+      'title',
+      '0 tasks, 1 milestone',
+    )
+    expect(screen.getByRole('button', { name: /^Milestone Kick-off/ })).toBeInTheDocument()
+  })
+})
+
+describe('ListView — columns and counts', () => {
+  it('names the priority and date columns and offers a start date on a row that has none', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const task = must(await a.createTask({ projectId: project.id, title: 'Draft guide' }))
+    const { user } = renderList(project.id)
+
+    const header = document.querySelector('[data-list-scroll] > div[aria-hidden]') as HTMLElement
+    expect(header).toHaveTextContent('PriorityStartDue')
+
+    const row = document.querySelector(`[data-task-row="${task.id}"]`) as HTMLElement
+    await user.click(within(row).getByRole('button', { name: 'Start date: not set' }))
+    await user.click(await screen.findByRole('button', { name: /^Tomorrow/ }))
+    const tomorrow = addDays(todayInTimeZone(useWorkspaceStore.getState().preferences.timezone), 1)
+    await waitFor(() =>
+      expect(useWorkspaceStore.getState().data.tasks[task.id].startDate).toBe(tomorrow),
+    )
+  })
+
+  it('counts top-level tasks in a phase header and spells out subtasks and milestones in its tooltip', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const discovery = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
+    const parent = must(
+      await a.createTask({
+        projectId: project.id,
+        title: 'Interview users',
+        phaseId: discovery.id,
+      }),
+    )
+    must(
+      await a.createTask({
+        projectId: project.id,
+        title: 'Recruit',
+        parentTaskId: parent.id,
+        phaseId: discovery.id,
+      }),
+    )
+    must(
+      await a.createMilestone({
+        projectId: project.id,
+        name: 'Interviews done',
+        date: '2026-10-20',
+        phaseId: discovery.id,
+      }),
+    )
+    renderList(project.id)
+    const header = screen.getByRole('button', { name: 'Discovery, 1 task' })
+    expect(header).toHaveAttribute('title', '1 task, 1 subtask, 1 milestone')
   })
 })
 
 describe('ListView — empty project', () => {
+  it('"Add a phase first" opens the inline phase row in the list, with the cursor in it', async () => {
+    const project = must(await getWorkspaceActions().createProject({ name: 'Side project' }))
+    const { user } = renderList(project.id)
+
+    await user.click(screen.getByRole('button', { name: 'Add a phase first' }))
+    const input = screen.getByRole('textbox', { name: 'New phase name' })
+    expect(input).toHaveFocus()
+    await user.type(input, 'Research{Enter}')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Research, 0 tasks' })).toBeInTheDocument(),
+    )
+    // Rapid entry: the cursor stays in the phase row after the list took over.
+    expect(screen.getByRole('textbox', { name: 'New phase name' })).toHaveFocus()
+  })
+
   it('invites to add the first task inline (phases optional)', async () => {
     const project = must(await getWorkspaceActions().createProject({ name: 'Side project' }))
     const { user } = renderList(project.id)

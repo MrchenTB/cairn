@@ -40,6 +40,7 @@ import { dueBucket } from '@/domain/buckets'
 import type { ISODate, Phase, Task, TaskPriority, TaskStatus } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { contextKit, dropdownKit, type MenuKit } from '@/features/projects/menuKit'
+import { listColumn } from './listColumns'
 
 /** Row actions. The List view passes ONE stable object (it reads the latest data when called). */
 export interface TaskCommands {
@@ -91,6 +92,12 @@ export interface TaskRowProps {
 
 const revealOnRowHover =
   'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100'
+
+/**
+ * The unset priority is an empty glyph (three dim stones in the lightest grey): once the row shows
+ * it on hover / focus, darken it so the control reads as something to click, not as a smudge.
+ */
+const unsetPriorityEntry = cn(revealOnRowHover, '[&_svg]:text-fg-tertiary [&_svg_rect]:opacity-50')
 
 export const TaskRow = memo(function TaskRow({
   task,
@@ -200,6 +207,7 @@ export const TaskRow = memo(function TaskRow({
               )}
             >
               <span
+                title={task.title}
                 className={cn(
                   'truncate',
                   done ? 'text-fg-tertiary line-through decoration-fg-tertiary' : 'text-fg',
@@ -228,25 +236,23 @@ export const TaskRow = memo(function TaskRow({
             <PriorityMenu
               value={task.priority}
               onChange={(priority) => commands.setPriority(task, priority)}
-              triggerClassName={cn(insetFocus, task.priority === 'none' && revealOnRowHover)}
+              triggerClassName={cn(insetFocus, task.priority === 'none' && unsetPriorityEntry)}
             />
-            <span className="flex w-20 justify-end">
-              {task.startDate ? (
-                <DateField
-                  variant="ghost"
-                  label="Start date"
-                  value={task.startDate}
-                  max={task.dueDate}
-                  rangeHint="The start can’t be after the due date."
-                  onChange={(startDate) =>
-                    commands.setDates(task, { startDate, dueDate: task.dueDate })
-                  }
-                  align="end"
-                  className={cn('text-fg-tertiary', insetFocus)}
-                />
-              ) : null}
+            <span className={cn('flex justify-end', listColumn.start)}>
+              <DateField
+                variant="ghost"
+                label="Start date"
+                value={task.startDate}
+                max={task.dueDate}
+                rangeHint="The start can’t be after the due date."
+                onChange={(startDate) =>
+                  commands.setDates(task, { startDate, dueDate: task.dueDate })
+                }
+                align="end"
+                className={cn('text-fg-tertiary', insetFocus, !task.startDate && revealOnRowHover)}
+              />
             </span>
-            <span className="flex w-24 items-center justify-end gap-0.5">
+            <span className={cn('flex items-center justify-end gap-0.5', listColumn.due)}>
               {overdue ? (
                 <CircleAlert className="size-3.5 shrink-0 text-danger" aria-hidden />
               ) : null}

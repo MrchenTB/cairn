@@ -2,6 +2,7 @@ import { formatDate, formatDateSmart } from '@/domain/dates'
 import type { ISODate, Milestone } from '@/domain/types'
 import { insetFocus } from '@/components/ui/styles'
 import { cn } from '@/lib/utils'
+import { listColumn } from './listColumns'
 
 /** Diamond glyph: filled for upcoming milestones, outlined once the date has passed. */
 export function MilestoneGlyph({ past, className }: { past: boolean; className?: string }) {
@@ -62,12 +63,17 @@ export function MilestoneRow({
         </span>
         {/* Same right-hand columns as a task row: priority · start · due · menu. */}
         <span className="flex shrink-0 items-center gap-1" aria-hidden>
-          <span className="w-6" />
-          <span className="w-20" />
-          <span className="w-24 pr-1.5 text-right text-meta text-fg-secondary tabular-nums">
+          <span className={listColumn.priority} />
+          <span className={listColumn.start} />
+          <span
+            className={cn(
+              'pr-1.5 text-right text-meta text-fg-secondary tabular-nums',
+              listColumn.due,
+            )}
+          >
             {formatDateSmart(milestone.date, today)}
           </span>
-          <span className="w-6" />
+          <span className={listColumn.menu} />
         </span>
       </button>
     </li>
