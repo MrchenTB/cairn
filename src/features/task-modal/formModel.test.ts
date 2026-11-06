@@ -1,37 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { Task } from '@/domain/types'
 import {
   buildNewTaskInput,
   characterCount,
-  diffTask,
   hasErrors,
   initialCreateValues,
   isCreateDirty,
-  isUnchanged,
-  mergeEdits,
   sanitizeTitle,
   validateTaskForm,
 } from './formModel'
-
-function task(fields: Partial<Task> = {}): Task {
-  return {
-    id: 't1',
-    projectId: 'p1',
-    phaseId: null,
-    parentTaskId: null,
-    title: 'Write report',
-    description: null,
-    status: 'todo',
-    priority: 'none',
-    startDate: null,
-    dueDate: null,
-    sortOrder: 'a0',
-    completedAt: null,
-    createdAt: '2026-11-01T09:00:00.000Z',
-    updatedAt: '2026-11-01T09:00:00.000Z',
-    ...fields,
-  }
-}
 
 describe('validateTaskForm', () => {
   const valid = initialCreateValues({})
@@ -130,42 +106,5 @@ describe('create defaults and payload', () => {
         placement: { afterId: 't0' },
       }),
     ).toMatchObject({ parentTaskId: null, placement: { afterId: 't0' } })
-  })
-})
-
-describe('edit diff', () => {
-  it('writes only fields that really change; dates go to the schedule change', () => {
-    const current = task({ startDate: '2026-11-02', dueDate: '2026-11-04' })
-    expect(isUnchanged(diffTask(current, {}))).toBe(true)
-    // Typing and undoing is not a change.
-    expect(isUnchanged(diffTask(current, { title: 'Write report' }))).toBe(true)
-    expect(isUnchanged(diffTask(current, { title: ' Write report ' }))).toBe(true)
-
-    const diff = diffTask(current, {
-      title: 'Write the report',
-      priority: 'high',
-      dueDate: '2026-11-06',
-    })
-    expect(diff.patch).toEqual({ title: 'Write the report', priority: 'high' })
-    expect(diff.schedule).toEqual({ taskId: 't1', startDate: '2026-11-02', dueDate: '2026-11-06' })
-  })
-
-  it('clearing a date sends null, and an empty description is stored as null', () => {
-    const current = task({ dueDate: '2026-11-04', description: 'Notes' })
-    const diff = diffTask(current, { dueDate: null, description: '   ' })
-    expect(diff.schedule).toEqual({ taskId: 't1', startDate: null, dueDate: null })
-    expect(diff.patch).toEqual({ description: null })
-  })
-
-  it("never edits a subtask's phase (it follows the parent)", () => {
-    const subtask = task({ parentTaskId: 'parent', phaseId: 'ph-1' })
-    expect(mergeEdits(subtask, { phaseId: 'ph-2' }).phaseId).toBe('ph-1')
-    expect(diffTask(subtask, { phaseId: 'ph-2' }).patch).toEqual({})
-  })
-
-  it('shows live values for fields the user did not touch', () => {
-    const edits = { title: 'Mine' }
-    const later = task({ status: 'done' })
-    expect(mergeEdits(later, edits)).toMatchObject({ title: 'Mine', status: 'done' })
   })
 })

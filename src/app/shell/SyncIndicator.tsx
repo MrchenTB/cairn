@@ -5,11 +5,14 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useActions, useDataMode, useSyncState } from '@/data/hooks'
+import { useUnsavedDrafts } from '@/features/task-modal/autosave/taskDrafts'
 import { cn } from '@/lib/utils'
 import { sidebarItemClass } from './sidebarStyles'
 import { deriveSyncStatus, type SyncKind } from './syncStatus'
+import { UnsavedDraftsList } from './UnsavedDraftsList'
 
-const DOT: Record<SyncKind, string> = {
+const DOT: Record<SyncKind | 'drafts', string> = {
+  drafts: 'bg-warning',
   local: 'bg-fg-tertiary',
   saving: 'bg-accent motion-safe:animate-breathe',
   saved: 'bg-success',
@@ -32,7 +35,19 @@ export function SyncIndicator({ collapsed }: { collapsed: boolean }) {
   const sync = useSyncState()
   const actions = useActions()
   const [retrying, setRetrying] = useState(false)
-  const status = deriveSyncStatus(mode, sync)
+  const drafts = useUnsavedDrafts()
+  const synced = deriveSyncStatus(mode, sync)
+  // Text that isn't saved outranks a calm "Saved" or "Local only": it needs somewhere to be seen.
+  const showDrafts = drafts.length > 0 && synced.kind !== 'saving' && synced.kind !== 'failed'
+  const status = showDrafts
+    ? {
+        ...synced,
+        kind: 'drafts' as const,
+        label: drafts.length === 1 ? '1 unsaved text' : `${drafts.length} unsaved texts`,
+        title: 'Text that wasn’t saved',
+        detail: 'Open the task to save it, or discard it. It’s kept until this tab closes.',
+      }
+    : synced
 
   const retry = () => {
     setRetrying(true)
@@ -83,7 +98,8 @@ export function SyncIndicator({ collapsed }: { collapsed: boolean }) {
               Last saved at {formatTime(sync.lastSavedAt)}
             </p>
           ) : null}
-          <div className="mt-3 flex items-center gap-2">
+          <UnsavedDraftsList drafts={drafts} />
+          <div className="mt-3 flex items-center gap-2 empty:hidden">
             {status.canRetry ? (
               <Button variant="secondary" size="xs" onClick={retry} loading={retrying}>
                 {retrying ? null : <RefreshCw aria-hidden />}

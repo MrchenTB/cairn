@@ -1,7 +1,7 @@
 /**
  * How the host's Radix Dialog reaches the active form: Esc, overlay click and the dialog's own
- * dismiss events call `requestClose` (which asks "Discard changes?" when the form is dirty), and
- * ⌘↵ / Ctrl+↵ anywhere in the dialog calls `submit`.
+ * dismiss events call `requestClose` (edit mode keeps the changes and closes; create mode asks
+ * "Discard changes?" when it holds work), and ⌘↵ / Ctrl+↵ anywhere in the dialog calls `submit`.
  */
 export interface ModalControls {
   requestClose: () => void

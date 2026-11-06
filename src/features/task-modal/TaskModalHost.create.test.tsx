@@ -289,35 +289,30 @@ describe('Task Modal · create', { timeout: 20_000 }, () => {
     expect(titleBox()).toHaveValue('First try (renamed)')
   })
 
-  it('a "New task" request never replaces an edit form with unsaved changes without asking', async () => {
+  it('a "New task" request takes over from an edit form, which keeps what was typed', async () => {
     const { project, tasks } = await seedWorkspace()
     const review = tasks['Write literature review']
     const { user } = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
     await findModal(/^Edit task: Write literature review$/)
 
     await user.type(titleBox(), '!')
-    await user.type(screen.getByRole('textbox', { name: 'Add subtask' }), 'Not added yet')
+    await user.type(screen.getByRole('textbox', { name: 'Add subtask' }), 'Kept as well')
     openNewTask({ projectId: project.id })
 
-    // The form stays on screen while the prompt is up; Keep editing puts the request away.
-    const prompt = await screen.findByRole('alertdialog', { name: 'Discard changes?' })
-    expect(screen.queryByRole('dialog', { name: 'New task' })).not.toBeInTheDocument()
-    await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }))
-    await waitFor(() => expect(titleBox()).toHaveFocus())
-    expect(titleBox()).toHaveValue('Write literature review!')
-    expect(screen.getByRole('textbox', { name: 'Add subtask' })).toHaveValue('Not added yet')
-    expect(useUIStore.getState().newTask).toBeNull()
-
-    // Discard lets the Create form take over.
-    openNewTask({ projectId: project.id })
-    await user.click(
-      within(await screen.findByRole('alertdialog', { name: 'Discard changes?' })).getByRole(
-        'button',
-        { name: 'Discard' },
+    // Nothing to ask: the edit form saves as it goes.
+    await findModal()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(titleBox()).toHaveValue('')
+    await waitFor(() =>
+      expect(storeTasks().find((task) => task.id === review.id)?.title).toBe(
+        'Write literature review!',
       ),
     )
-    await findModal()
-    expect(titleBox()).toHaveValue('')
+    await waitFor(() =>
+      expect(storeTasks().find((task) => task.title === 'Kept as well')?.parentTaskId).toBe(
+        review.id,
+      ),
+    )
   })
 
   it('a "New task" request keeps a typed create form unless the user agrees to discard it', async () => {

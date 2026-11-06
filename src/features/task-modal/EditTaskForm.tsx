@@ -1,3 +1,12 @@
+/**
+ * Edit mode: every field saves by itself, so there is no Save and no Cancel.
+ * - Status, priority, phase and dates save when picked; subtasks and dependencies as before.
+ * - The title saves on Enter and blur, the description after a pause and on blur (useTaskAutosave).
+ * - Every way out (Esc, X, Done, a click outside, ⌘↵) keeps what was typed: closing hands valid text
+ *   to the store without waiting for the network. A later failure stays findable (the draft
+ *   registry, the store's toast and the sidebar).
+ * - Only text that can't be saved stops the way out, because leaving must not throw it away.
+ */
 import {
   useCallback,
   useEffect,
@@ -5,6 +14,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type RefObject,
 } from 'react'
 import { useNavigate } from 'react-router'
@@ -37,11 +47,13 @@ import {
 } from '@/data/hooks'
 import { findConflicts, findHistoricalInconsistencies } from '@/domain/scheduling'
 import type { Task } from '@/domain/types'
-import { planScheduleChangeDetailed } from '@/features/gantt/planner'
 import { notify } from '@/lib/notify'
+import { SaveStatus } from './autosave/SaveStatus'
+import { taskDrafts } from './autosave/taskDrafts'
+import { useTaskAutosave, type TextBinding } from './autosave/useTaskAutosave'
 import { ConflictBanner, HistoricalNote } from './ConflictBanner'
 import { DependenciesSection } from './DependenciesSection'
-import { confirmDiscard } from './discard'
+import { afterDialogsClosed, focusIfNotCovered } from './dialogGuards'
 import {
   CrumbSeparator,
   DateArrow,
@@ -52,34 +64,30 @@ import {
   PhasePicker,
   TitleField,
 } from './fields'
-import {
-  diffTask,
-  hasErrors,
-  isUnchanged,
-  mergeEdits,
-  validateTaskForm,
-  type TaskFormEdits,
-  type TaskFormValues,
-} from './formModel'
 import { ModalBody, ModalFooter, ModalHeader } from './modalParts'
 import { plural, type ModalControls } from './modalControls'
-import { NavigationGuard } from './NavigationGuard'
 import { ProjectLink } from './ProjectPicker'
-import { SubtasksSection } from './SubtasksSection'
+import { SubtasksSection, type SubtaskLineControls } from './SubtasksSection'
 import { formatTimestamp, formatTimestampFull } from './timestamps'
 
 const crumbButton =
   'inline-flex h-7 max-w-72 min-w-0 shrink items-center gap-1.5 rounded-md px-1.5 text-ui text-fg-secondary transition-colors duration-fast hover:bg-hover hover:text-fg hover:duration-instant'
 
+/** How long an unfinished IME composition may take to end before closing gives up and says so. */
+const COMPOSITION_GRACE_MS = 300
+/** How long "the title was kept" stays under the field. */
+const REVERT_NOTICE_MS = 6000
+
 export interface EditTaskFormProps {
   taskId: string
   controlsRef: RefObject<ModalControls | null>
-  /** Closes the modal right away (the form already asked whatever it had to ask). */
-  onClose: () => void
+  /**
+   * Leaves this task. With a parent id: a subtask that was opened from that parent goes back to it
+   * instead of closing the modal.
+   */
+  onClose: (toParent: string | null) => void
   /** Called right before the form deletes the task (so the host does not report it missing). */
   onDeleting: (taskId: string) => void
-  /** Whether the form holds unsaved work (so the host asks before replacing it). */
-  onDirtyChange?: (dirty: boolean) => void
 }
 
 /**
@@ -91,65 +99,90 @@ export function EditTaskForm(props: EditTaskFormProps) {
   const [last, setLast] = useState(live)
   if (live && live !== last) setLast(live)
   const task = live ?? last
-  return task ? <EditTaskFormBody {...props} task={task} exists={live !== undefined} /> : null
+  return task ? <EditTaskFormBody {...props} task={task} /> : null
+}
+
+const FIELD_LABEL = { title: 'title', description: 'description' } as const
+
+/** What to do with recovered text, and why a failed text is still in the field. */
+function DraftNote({ binding }: { binding: TextBinding }) {
+  const { snapshot, draft, field } = binding
+  const action = (label: string, onClick: () => void) => (
+    <Button
+      variant="link"
+      size="xs"
+      className="h-auto p-0 text-meta"
+      aria-label={`${label}: ${FIELD_LABEL[field]}`}
+      onClick={onClick}
+    >
+      {label}
+    </Button>
+  )
+  let content: ReactNode = null
+  if (snapshot.phase === 'failed') {
+    content = <span className="text-danger">Couldn’t save this. Your text is kept here.</span>
+  } else if (snapshot.phase === 'restored') {
+    content = (
+      <>
+        <span>
+          {snapshot.unconfirmed
+            ? 'Your input was interrupted before you confirmed it, so this wasn’t saved.'
+            : 'Recovered text that wasn’t saved.'}
+        </span>
+        {action('Save', () => draft.saveRestored())}
+        {action('Discard', () => draft.discard())}
+      </>
+    )
+  } else if (snapshot.phase === 'conflict') {
+    content = (
+      <>
+        <span>You have unsaved text from earlier, but this {field} has changed since.</span>
+        {action('Show my text', () => draft.useRecovered())}
+        {action('Discard', () => draft.discard())}
+      </>
+    )
+  } else if (snapshot.revertedTo !== null) {
+    content = <span>A task needs a title, so “{snapshot.revertedTo}” was kept.</span>
+  }
+  if (!content) return null
+  return (
+    <p className="mt-1 flex flex-wrap items-center gap-x-2 text-meta text-fg-secondary">
+      {content}
+    </p>
+  )
 }
 
 function EditTaskFormBody({
   task,
-  exists,
   controlsRef,
   onClose,
   onDeleting,
-  onDirtyChange,
-}: EditTaskFormProps & { task: Task; exists: boolean }) {
+}: EditTaskFormProps & { task: Task }) {
   const project = useProject(task.projectId)
   const parent = useTask(task.parentTaskId)
   const phases = usePhases(task.projectId)
   const projectTasks = useProjectTasks(task.projectId)
   const dependencies = useDependencies(task.projectId)
   const subtasks = useSubtasks(task.id)
-  const { updateTask, deleteTask } = useActions()
+  const { deleteTask } = useActions()
   const { timezone } = usePreferences()
   const today = useToday()
   const openTask = useOpenTask()
   const navigate = useNavigate()
-
-  const [edits, setEdits] = useState<TaskFormEdits>({})
-  const [saving, setSaving] = useState(false)
-  const [showErrors, setShowErrors] = useState(false)
-  const [formError, setFormError] = useState<string | null>(null)
-  const [subtaskDraft, setSubtaskDraft] = useState(false)
-
-  const values = useMemo(() => mergeEdits(task, edits), [task, edits])
-  const errors = validateTaskForm(values)
-  const formDirty = !isUnchanged(diffTask(task, edits))
-  const dirty = formDirty || subtaskDraft
-  const canSave = formDirty && !hasErrors(errors) && !saving
+  const autosave = useTaskAutosave(task, today)
+  const { title, description } = autosave
+  const [leaveNotice, setLeaveNotice] = useState<string | null>(null)
 
   const titleRef = useRef<HTMLTextAreaElement>(null)
-  const subtaskInputRef = useRef<HTMLInputElement>(null)
-  /** Set right before a navigation this form confirmed itself (the guard lets it through). */
-  const allowNavigationRef = useRef(false)
-  const savingRef = useRef(false)
-  const latest = useRef({ task, edits, dirty, subtaskDraft })
-  // The latest onClose: a write that resolves later must not close with an old location.
+  const descriptionRef = useRef<HTMLTextAreaElement>(null)
+  const subtaskLine = useRef<SubtaskLineControls | null>(null)
+  const latest = useRef({ task, title, description })
+  // The latest onClose: a close that resolves later must not use an old location.
   const onCloseRef = useRef(onClose)
   useLayoutEffect(() => {
-    latest.current = { task, edits, dirty, subtaskDraft }
+    latest.current = { task, title, description }
     onCloseRef.current = onClose
   })
-  const mountedRef = useRef(true)
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    onDirtyChange?.(dirty && !saving)
-    return () => onDirtyChange?.(false)
-  }, [dirty, saving, onDirtyChange])
 
   // Focus the title with the caret at the end whenever this form appears.
   useEffect(() => {
@@ -159,31 +192,114 @@ function EditTaskFormBody({
     el.setSelectionRange(el.value.length, el.value.length)
   }, [])
 
-  const setField = <K extends keyof TaskFormValues>(key: K, value: TaskFormValues[K]) => {
-    setEdits((current) => ({ ...current, [key]: value }))
-    setFormError(null)
+  // Leaving any other way (Back, a link, a search result): what was typed in "Add subtask" is kept.
+  useEffect(
+    () => () => {
+      subtaskLine.current?.commit()
+    },
+    [],
+  )
+
+  const { revertedTo } = title.snapshot
+  const titleDraft = title.draft
+  useEffect(() => {
+    if (revertedTo === null) return undefined
+    const timer = setTimeout(() => titleDraft.clearRevertedNotice(), REVERT_NOTICE_MS)
+    return () => clearTimeout(timer)
+  }, [revertedTo, titleDraft])
+
+  /** IME compositions in progress anywhere in this form. */
+  const composingRef = useRef(false)
+  const compositionWaiters = useRef<(() => void)[]>([])
+  const onCompositionStartCapture = () => {
+    composingRef.current = true
+  }
+  const onCompositionEndCapture = () => {
+    composingRef.current = false
+    setLeaveNotice(null)
+    // Fields handle compositionend while it bubbles: let them finish first.
+    queueMicrotask(() => {
+      for (const resolve of compositionWaiters.current.splice(0)) resolve()
+    })
   }
 
-  const closeNow = useCallback(() => {
-    allowNavigationRef.current = true
-    onCloseRef.current()
+  /** Resolves once no composition is in progress, or after the grace period. */
+  const compositionEnded = useCallback(async (): Promise<boolean> => {
+    if (!composingRef.current) return true
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, COMPOSITION_GRACE_MS)
+      compositionWaiters.current.push(() => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
+    return !composingRef.current
   }, [])
 
-  /** True when it is fine to leave this task (nothing unsaved, or the user chose Discard). */
-  const confirmLeave = useCallback(async (): Promise<boolean> => {
-    if (!latest.current.dirty || savingRef.current) return true
-    return confirmDiscard()
-  }, [])
+  /**
+   * Hands everything valid to the store. False: the form must stay, because some text can neither
+   * be saved nor silently dropped (the user decided to keep editing, or is still composing).
+   */
+  const prepareToLeave = useCallback(async (): Promise<boolean> => {
+    if (!(await compositionEnded())) {
+      setLeaveNotice('Finish or cancel the text you’re composing first.')
+      return false
+    }
+    setLeaveNotice(null)
+    const current = latest.current
+    const invalid: TextBinding[] = []
+    for (const binding of [current.title, current.description]) {
+      // Interrupted input on screen, with its Save and Discard right there: the user decides first.
+      if (binding.draft.getSnapshot().unconfirmed) {
+        setLeaveNotice('Save or discard the interrupted text first.')
+        return false
+      }
+      const outcome = binding.draft.commit({ revertEmpty: true })
+      if (outcome === 'invalid') invalid.push(binding)
+      if (outcome === 'reverted') {
+        notify.info('Title not changed', {
+          description: `A task needs a title, so “${current.task.title}” was kept.`,
+        })
+      }
+    }
+    if (invalid.length > 0) {
+      const names = invalid.map((binding) => FIELD_LABEL[binding.field]).join(' and ')
+      const discard = await confirm({
+        title: `Can’t save this ${names}`,
+        description: `${invalid[0].draft.getSnapshot().error ?? 'It can’t be stored as it is.'} Keep editing to fix it, or discard the text you changed.`,
+        confirmLabel: 'Discard text',
+        cancelLabel: 'Keep editing',
+        destructive: true,
+      })
+      if (!discard) {
+        const first = invalid[0].field === 'title' ? titleRef.current : descriptionRef.current
+        // After the prompt has returned focus to what opened it.
+        const modal = document.querySelector('[data-slot="dialog-content"]')
+        afterDialogsClosed(() => focusIfNotCovered(modal, () => first?.focus()), { except: modal })
+        return false
+      }
+      for (const binding of invalid) binding.draft.discard()
+    }
+    subtaskLine.current?.commit()
+    return true
+  }, [compositionEnded])
 
+  const closingRef = useRef(false)
   const requestClose = useCallback(async () => {
-    if (await confirmLeave()) closeNow()
-  }, [confirmLeave, closeNow])
+    if (closingRef.current) return
+    closingRef.current = true
+    try {
+      if (await prepareToLeave()) onCloseRef.current(latest.current.task.parentTaskId)
+    } finally {
+      closingRef.current = false
+    }
+  }, [prepareToLeave])
 
-  const submitRef = useRef<() => void>(() => {})
   useEffect(() => {
     const controls: ModalControls = {
       requestClose: () => void requestClose(),
-      submit: () => submitRef.current(),
+      // ⌘↵: everything is saved by now, so "save" and "close" are the same thing.
+      submit: () => void requestClose(),
       focus: () => titleRef.current?.focus({ preventScroll: true }),
     }
     controlsRef.current = controls
@@ -191,66 +307,6 @@ function EditTaskFormBody({
       if (controlsRef.current === controls) controlsRef.current = null
     }
   }, [controlsRef, requestClose])
-
-  /** Leaves this task for another place (another task, the project page) after the guard. */
-  const leave = async (go: () => void) => {
-    if (!(await confirmLeave())) return
-    allowNavigationRef.current = true
-    go()
-  }
-  const openOther = (taskId: string) => void leave(() => openTask(taskId))
-
-  const save = async () => {
-    if (savingRef.current) return
-    const current = latest.current
-    const { schedule, patch } = diffTask(current.task, current.edits)
-    if (schedule === null && Object.keys(patch).length === 0) return
-    const currentErrors = validateTaskForm(mergeEdits(current.task, current.edits))
-    if (hasErrors(currentErrors)) {
-      setShowErrors(true)
-      if (currentErrors.title) titleRef.current?.focus()
-      return
-    }
-    savingRef.current = true
-    setSaving(true)
-    setFormError(null)
-    try {
-      // Dates first, through the planner (Manual warns, Auto previews). Cancelled, rejected or
-      // failed: keep the modal open and save nothing else.
-      if (schedule) {
-        const outcome = await planScheduleChangeDetailed(schedule, { source: 'modal' })
-        if (outcome.status === 'invalid') setFormError(outcome.error.message)
-        if (outcome.status !== 'written' && outcome.status !== 'unchanged') return
-      }
-      if (Object.keys(patch).length > 0) {
-        const result = await updateTask(current.task.id, patch)
-        if (!result.ok) {
-          // Remote failures were toasted (with Retry) and rolled back by the store.
-          if (result.error.kind === 'validation' || result.error.kind === 'not_found') {
-            setFormError(result.error.message)
-          }
-          return
-        }
-      }
-    } finally {
-      savingRef.current = false
-      setSaving(false)
-    }
-    // Closed (and maybe replaced by another task) while the write was in flight: nothing to do.
-    if (!mountedRef.current) return
-    // Close unless more was typed while the write was in flight.
-    const after = latest.current
-    if (!isUnchanged(diffTask(after.task, after.edits))) return
-    if (after.subtaskDraft) {
-      // An "Add subtask" line that was never added would be lost: stay and point at it.
-      subtaskInputRef.current?.focus()
-      return
-    }
-    closeNow()
-  }
-  useLayoutEffect(() => {
-    submitRef.current = () => void save()
-  })
 
   const remove = async () => {
     const current = latest.current.task
@@ -281,8 +337,11 @@ function EditTaskFormBody({
       })
       if (!ok) return
     }
+    // Text not sent yet goes with the task (never an update of a deleted task).
+    taskDrafts.discardTask(current.id)
+    subtaskLine.current?.clear()
     onDeleting(current.id)
-    closeNow()
+    onCloseRef.current(null)
     const result = await deleteTask(current.id, { keepSubtasks })
     if (result.ok) {
       notify.success(keepSubtasks ? 'Task deleted · subtasks kept' : 'Task deleted')
@@ -298,20 +357,17 @@ function EditTaskFormBody({
     }
   }
 
-  // Conflicts as they would be with the dates in the form (updates live while editing); a range
-  // that can't be saved (due before start) falls back to the saved dates.
+  const shownStart = autosave.pendingDates ? autosave.pendingDates.startDate : task.startDate
+  const shownDue = autosave.pendingDates ? autosave.pendingDates.dueDate : task.dueDate
+
+  // Conflicts as they are with the dates shown (a pick waiting for its preview included).
   const tasksById = useMemo(
     () => Object.fromEntries(projectTasks.map((t) => [t.id, t])) as Record<string, Task>,
     [projectTasks],
   )
-  const datesEdited =
-    errors.dates === null &&
-    (values.startDate !== task.startDate || values.dueDate !== task.dueDate)
-  const plannedStart = datesEdited ? values.startDate : task.startDate
-  const plannedDue = datesEdited ? values.dueDate : task.dueDate
   const { conflicts, historical } = useMemo(() => {
     const planned = projectTasks.map((t) =>
-      t.id === task.id ? { ...t, startDate: plannedStart, dueDate: plannedDue } : t,
+      t.id === task.id ? { ...t, startDate: shownStart, dueDate: shownDue } : t,
     )
     const involvesThisTask = (c: { successorId: string; predecessorId: string }) =>
       c.successorId === task.id || c.predecessorId === task.id
@@ -320,15 +376,20 @@ function EditTaskFormBody({
       // Done tasks that finished before their predecessor did: kept as history, not a to-do.
       historical: findHistoricalInconsistencies(planned, dependencies).filter(involvesThisTask),
     }
-  }, [projectTasks, dependencies, task.id, plannedStart, plannedDue])
+  }, [projectTasks, dependencies, task.id, shownStart, shownDue])
 
   const isSubtask = task.parentTaskId !== null
-  const currentPhase = phases.find((phase) => phase.id === values.phaseId) ?? null
+  const currentPhase = phases.find((phase) => phase.id === task.phaseId) ?? null
   const showPhase = phases.length > 0 || task.phaseId !== null
-  const showTitleError = showErrors || edits.title !== undefined
+  const shownError = (binding: TextBinding) =>
+    binding.snapshot.phase === 'failed' ? null : binding.snapshot.error
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onCompositionStartCapture={onCompositionStartCapture}
+      onCompositionEndCapture={onCompositionEndCapture}
+    >
       <DialogTitle className="sr-only">{`Edit task: ${task.title}`}</DialogTitle>
       <ModalHeader
         onClose={() => void requestClose()}
@@ -359,9 +420,7 @@ function EditTaskFormBody({
           {project ? (
             <ProjectLink
               project={project}
-              onOpen={() =>
-                void leave(() => navigate(`/projects/${encodeURIComponent(project.id)}`))
-              }
+              onOpen={() => navigate(`/projects/${encodeURIComponent(project.id)}`)}
             />
           ) : null}
           {parent ? (
@@ -370,7 +429,7 @@ function EditTaskFormBody({
               <button
                 type="button"
                 className={crumbButton}
-                onClick={() => openOther(parent.id)}
+                onClick={() => openTask(parent.id)}
                 aria-label={`Subtask of ${parent.title}. Open parent task`}
               >
                 <CornerDownRight className="size-3.5 shrink-0 text-fg-tertiary" aria-hidden />
@@ -384,46 +443,52 @@ function EditTaskFormBody({
       <ModalBody>
         <TitleField
           ref={titleRef}
-          value={values.title}
-          onChange={(title) => setField('title', title)}
-          error={showTitleError ? errors.title : null}
+          value={title.value}
+          onChange={title.onChange}
+          onEnter={() => title.draft.commit({ revertEmpty: true })}
+          onFocus={title.onFocus}
+          onBlur={title.onBlur}
+          onCompositionStart={title.onCompositionStart}
+          onCompositionEnd={title.onCompositionEnd}
+          error={shownError(title)}
+          note={<DraftNote binding={title} />}
         />
         <div className="mt-2">
           <DescriptionField
-            value={values.description}
-            onChange={(description) => setField('description', description)}
-            error={errors.description}
+            ref={descriptionRef}
+            value={description.value}
+            onChange={description.onChange}
+            onFocus={description.onFocus}
+            onBlur={description.onBlur}
+            onCompositionStart={description.onCompositionStart}
+            onCompositionEnd={description.onCompositionEnd}
+            error={shownError(description)}
+            note={<DraftNote binding={description} />}
           />
         </div>
+        <FieldError>{leaveNotice}</FieldError>
 
         <div
           role="group"
           aria-label="Properties"
           className="mt-4 flex flex-wrap items-center gap-1.5"
         >
-          <StatusMenu
-            trigger="chip"
-            value={values.status}
-            onChange={(status) => setField('status', status)}
-          />
-          <PriorityMenu
-            trigger="chip"
-            value={values.priority}
-            onChange={(priority) => setField('priority', priority)}
-          />
+          <StatusMenu trigger="chip" value={task.status} onChange={autosave.setStatus} />
+          <PriorityMenu trigger="chip" value={task.priority} onChange={autosave.setPriority} />
           <DateField
             label="Start date"
-            value={values.startDate}
-            onChange={(startDate) => setField('startDate', startDate)}
+            value={shownStart}
+            max={shownDue}
+            rangeHint="The start can’t be after the due date."
+            onChange={(startDate) => autosave.setDates(startDate, shownDue)}
           />
           <DateArrow />
           <DateField
             label="Due date"
-            value={values.dueDate}
-            min={values.startDate}
+            value={shownDue}
+            min={shownStart}
             rangeHint="Due date can’t be before the start date."
-            aria-invalid={errors.dates !== null}
-            onChange={(dueDate) => setField('dueDate', dueDate)}
+            onChange={(dueDate) => autosave.setDates(shownStart, dueDate)}
           />
           {showPhase ? (
             isSubtask ? (
@@ -435,16 +500,14 @@ function EditTaskFormBody({
                 {currentPhase?.name ?? 'No phase'}
               </LockedChip>
             ) : (
-              <PhasePicker
-                phases={phases}
-                value={values.phaseId}
-                onChange={(phaseId) => setField('phaseId', phaseId)}
-              />
+              <PhasePicker phases={phases} value={task.phaseId} onChange={autosave.setPhase} />
             )
           ) : null}
         </div>
-        <FieldError>{errors.dates}</FieldError>
-        <FieldError>{formError}</FieldError>
+        {autosave.datesNote ? (
+          <p className="mt-1 text-meta text-fg-secondary">{autosave.datesNote}</p>
+        ) : null}
+        <FieldError>{autosave.formError}</FieldError>
 
         {conflicts.length > 0 ? (
           <div className="mt-4">
@@ -453,7 +516,7 @@ function EditTaskFormBody({
               conflicts={conflicts}
               tasksById={tasksById}
               today={today}
-              pending={datesEdited}
+              pending={autosave.pendingDates !== null}
             />
           </div>
         ) : null}
@@ -469,45 +532,34 @@ function EditTaskFormBody({
           </div>
         ) : null}
 
-        {/* Not part of the Save form: every change below is written immediately. */}
         <div className="mt-6 border-t border-subtle pt-3">
-          <p className="mb-2 text-meta text-fg-tertiary">
-            {isSubtask
-              ? 'Dependencies save right away. A subtask can’t have subtasks of its own (one level only).'
-              : 'Subtasks and dependencies save right away.'}
-          </p>
+          {isSubtask ? (
+            <p className="mb-2 text-meta text-fg-tertiary">
+              A subtask can’t have subtasks of its own (one level only).
+            </p>
+          ) : null}
           <div className="flex flex-col gap-5">
             {!isSubtask ? (
-              <SubtasksSection
-                parent={task}
-                onOpenTask={openOther}
-                onDraftChange={setSubtaskDraft}
-                inputRef={subtaskInputRef}
-              />
+              <SubtasksSection parent={task} onOpenTask={openTask} controlsRef={subtaskLine} />
             ) : null}
-            <DependenciesSection task={task} onOpenTask={openOther} />
+            <DependenciesSection task={task} onOpenTask={openTask} />
           </div>
         </div>
       </ModalBody>
 
       <ModalFooter meta={<Timestamps task={task} timeZone={timezone} today={today} />}>
-        <Button variant="secondary" size="md" onClick={() => void requestClose()}>
-          Cancel
-        </Button>
-        <Tooltip content="Save changes" shortcut="mod+enter" disabled={!canSave}>
-          <Button
-            variant="primary"
-            size="md"
-            disabled={!canSave}
-            loading={saving}
-            onClick={() => void save()}
-          >
-            Save
+        <SaveStatus
+          state={autosave.saveState}
+          failedWhat={autosave.failedWhat}
+          onRetry={autosave.retryFailed}
+          retrying={autosave.retrying}
+        />
+        <Tooltip content={parent ? `Back to “${parent.title}”` : 'Close'} shortcut="mod+enter">
+          <Button variant="secondary" size="md" onClick={() => void requestClose()}>
+            Done
           </Button>
         </Tooltip>
       </ModalFooter>
-
-      {dirty && exists ? <NavigationGuard taskId={task.id} allowRef={allowNavigationRef} /> : null}
     </div>
   )
 }

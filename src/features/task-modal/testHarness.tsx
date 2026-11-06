@@ -11,6 +11,7 @@ import { getWorkspaceActions, useWorkspaceStore } from '@/data/store'
 import type { Project, Result, Task } from '@/domain/types'
 import { MilestoneDialogHost } from '@/features/milestones/MilestoneDialogHost'
 import { renderUI } from '@/test/render'
+import { taskDrafts } from './autosave/taskDrafts'
 import { TaskModalHost } from './TaskModalHost'
 
 // findBy* / waitFor in the files using this harness: room for loaded, parallel runs (each test
@@ -26,6 +27,8 @@ export function must<T>(result: Result<T>): T {
 export function resetTestWorld(): void {
   vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-02T12:00:00Z') })
   localStorage.clear()
+  taskDrafts.resetForTests()
+  sessionStorage.clear()
   window.__cairnTest?.setLatency(0)
   window.__cairnTest?.failNextWrites(0)
   useWorkspaceStore.getState().actions.reset()

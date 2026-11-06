@@ -3,12 +3,13 @@
  * - EDIT mode: `?task=<id>` on any route (useTaskParam). An unknown or deleted id reports
  *   "Task not found" and removes the param.
  * - CREATE mode: `useUIStore().newTask` (defaults from the opener).
- * One centred Radix dialog hosts either form. Esc, overlay click and the close button ask the
- * active form first (unsaved changes → "Discard changes?"); focus returns to the element that
- * opened the modal.
+ * One centred Radix dialog hosts either form. Esc, overlay click and the close button go through
+ * the active form: edit mode saves as it goes, so it keeps the changes and closes; create mode
+ * still has a Create button and asks "Discard changes?". Focus returns to the element that opened
+ * the modal.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useCloseTask, useOpenTask, useTaskParam } from '@/app/taskModalRoute'
+import { registerTaskOpener, useCloseTask, useOpenTask, useTaskParam } from '@/app/taskModalRoute'
 import { useUIStore, type NewTaskDefaults } from '@/app/uiStore'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useProjects, useTask, useWorkspaceStatus } from '@/data/hooks'
@@ -83,8 +84,9 @@ export function TaskModalHost() {
     : taskParam
       ? { kind: 'edit', taskId: taskParam }
       : null
-  // ⌘K → "New task" works from inside the modal: a form with unsaved work stays on screen until
-  // the user agrees to discard it (see the effect below).
+  // ⌘K → "New task" works from inside the modal: a create form with unsaved work stays on screen
+  // until the user agrees to discard it (see the effect below). An edit form has nothing to ask:
+  // it keeps its changes when it goes away.
   const holding =
     requested?.kind === 'create' &&
     requested.defaults !== approvedCreate &&
@@ -111,6 +113,12 @@ export function TaskModalHost() {
     openTaskRef.current = openTask
     projectsRef.current = allProjects
   })
+
+  // A toast's "Open" and the sidebar's draft list reach tasks through here.
+  useEffect(() => {
+    registerTaskOpener((taskId) => openTaskRef.current(taskId))
+    return () => registerTaskOpener(null)
+  }, [])
 
   // Remember what had focus when the modal opened (before Radix moves focus into it); for an
   // item of a closing menu, that menu's trigger.
@@ -190,7 +198,7 @@ export function TaskModalHost() {
     }
   }, [])
 
-  const closeEdit = useCallback(() => closeTask(), [closeTask])
+  const closeEdit = useCallback((toParent: string | null) => closeTask({ toParent }), [closeTask])
 
   const handleCreated = useCallback((created: Task) => {
     notify.success('Task created', {
@@ -244,7 +252,8 @@ export function TaskModalHost() {
             event.preventDefault()
             returnFocus()
           }}
-          // ⌘↵ / Ctrl+↵ saves from anywhere in the modal (its menus and popovers included).
+          // ⌘↵ / Ctrl+↵ from anywhere in the modal (its menus and popovers included): create mode
+          // creates; edit mode, which has saved already, closes.
           onKeyDown={(event) => {
             if (!isSaveShortcut(event)) return
             event.preventDefault()
@@ -270,7 +279,6 @@ export function TaskModalHost() {
               onDeleting={(taskId) => {
                 deletingRef.current = taskId
               }}
-              onDirtyChange={setFormDirty}
             />
           )}
         </DialogContent>

@@ -2,7 +2,14 @@
  * Task Modal form fields: borderless title + description, the phase picker chip, and small
  * presentational helpers shared by the create and edit forms.
  */
-import { useId, type ComponentProps, type ReactNode, type Ref } from 'react'
+import {
+  useId,
+  type ComponentProps,
+  type CompositionEventHandler,
+  type FocusEventHandler,
+  type ReactNode,
+  type Ref,
+} from 'react'
 import { Lock } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/button-variants'
 import {
@@ -34,12 +41,22 @@ export function FieldError({ id, children }: { id?: string; children: ReactNode 
 const borderless =
   'border-0 bg-transparent px-0 shadow-none hover:border-0 focus-visible:outline-none disabled:bg-transparent'
 
-export interface TitleFieldProps {
+/** What autosave needs to know about a text field besides its value. */
+export interface TextFieldEvents {
+  onFocus?: () => void
+  onBlur?: FocusEventHandler<HTMLTextAreaElement>
+  onCompositionStart?: CompositionEventHandler<HTMLTextAreaElement>
+  onCompositionEnd?: CompositionEventHandler<HTMLTextAreaElement>
+}
+
+export interface TitleFieldProps extends TextFieldEvents {
   value: string
   onChange: (value: string) => void
-  /** Plain Enter (create mode saves; edit mode only blocks the line break). */
+  /** Plain Enter (create mode creates; edit mode saves the title). */
   onEnter?: () => void
   error?: string | null
+  /** A quieter line under the field (not an error). */
+  note?: ReactNode
   ref?: Ref<HTMLTextAreaElement>
   placeholder?: string
 }
@@ -50,8 +67,13 @@ export function TitleField({
   onChange,
   onEnter,
   error,
+  note,
   ref,
   placeholder = 'Task name',
+  onFocus,
+  onBlur,
+  onCompositionStart,
+  onCompositionEnd,
 }: TitleFieldProps) {
   const errorId = useId()
   return (
@@ -68,8 +90,12 @@ export function TitleField({
         maxRows={6}
         spellCheck
         onChange={(event) => onChange(sanitizeTitle(event.target.value))}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
         onKeyDown={(event) => {
-          // ⌘↵ bubbles to the modal (save); Enter that confirms an IME composition is left alone.
+          // ⌘↵ bubbles to the modal; Enter that confirms an IME composition is left alone.
           if (event.key !== 'Enter' || event.metaKey || event.ctrlKey || isComposing(event)) return
           // Never a line break in a title; plain Enter may submit (create mode).
           event.preventDefault()
@@ -82,18 +108,32 @@ export function TitleField({
         )}
       />
       <FieldError id={errorId}>{error}</FieldError>
+      {note}
     </div>
   )
 }
 
-export interface DescriptionFieldProps {
+export interface DescriptionFieldProps extends TextFieldEvents {
   value: string
   onChange: (value: string) => void
   error?: string | null
+  /** A quieter line under the field (not an error). */
+  note?: ReactNode
+  ref?: Ref<HTMLTextAreaElement>
 }
 
 /** Optional plain-text description: grows with its content; counter near the limit. */
-export function DescriptionField({ value, onChange, error }: DescriptionFieldProps) {
+export function DescriptionField({
+  value,
+  onChange,
+  error,
+  note,
+  ref,
+  onFocus,
+  onBlur,
+  onCompositionStart,
+  onCompositionEnd,
+}: DescriptionFieldProps) {
   const counterId = useId()
   const errorId = useId()
   // Only count code points when it can matter (the UTF-16 length is an upper bound).
@@ -106,6 +146,7 @@ export function DescriptionField({ value, onChange, error }: DescriptionFieldPro
   return (
     <div>
       <Textarea
+        ref={ref}
         aria-label="Description"
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy || undefined}
@@ -114,6 +155,10 @@ export function DescriptionField({ value, onChange, error }: DescriptionFieldPro
         minRows={2}
         maxRows={14}
         onChange={(event) => onChange(event.target.value)}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
         className={cn(borderless, 'py-0 text-body leading-(--line-height-body) text-fg')}
       />
       {showCounter ? (
@@ -128,6 +173,7 @@ export function DescriptionField({ value, onChange, error }: DescriptionFieldPro
         </p>
       ) : null}
       <FieldError id={errorId}>{error}</FieldError>
+      {note}
     </div>
   )
 }

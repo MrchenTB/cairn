@@ -4,6 +4,7 @@ import { LogOut } from 'lucide-react'
 import { LogoMark } from '@/components/brand/Logo'
 import { confirm } from '@/components/ui/confirm'
 import { useAuth, useDataMode, useSyncState } from '@/data/hooks'
+import { taskDrafts } from '@/features/task-modal/autosave/taskDrafts'
 import { APP_NAME, APP_TAGLINE, APP_VERSION } from './about'
 import { BusyButton } from './BusyButton'
 import { SettingRow, SettingsGroup } from './SettingsLayout'
@@ -17,12 +18,21 @@ export function AccountSection() {
 
   const signOut = async () => {
     setError(null)
+    // Text that can still go out goes out first; what can't is named, because it won't survive.
+    taskDrafts.flushAll()
+    const unsaved = taskDrafts.getOutstanding().length
     const agreed = await confirm({
       title: 'Sign out of Cairn?',
-      description:
+      description: [
+        unsaved > 0
+          ? `${unsaved === 1 ? '1 unsaved text' : `${unsaved} unsaved texts`} in your tasks will be discarded.`
+          : null,
         sync.pending > 0
           ? `${sync.pending === 1 ? '1 change is' : `${sync.pending} changes are`} still being saved. Cairn waits a moment for ${sync.pending === 1 ? 'it' : 'them'} before signing you out. Your data stays in the cloud.`
           : 'You will need to sign in again on this device. Your data stays in the cloud.',
+      ]
+        .filter(Boolean)
+        .join(' '),
       confirmLabel: 'Sign out',
     })
     if (!agreed) return
@@ -30,7 +40,8 @@ export function AccountSection() {
     const result = await auth.signOut()
     setSigningOut(false)
     // On success the auth gate takes over and this page goes away.
-    if (!result.ok) setError(result.error.message)
+    if (result.ok) taskDrafts.purgeStored()
+    else setError(result.error.message)
   }
 
   return (

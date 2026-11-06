@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import type { UserEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useWorkspaceStore } from '@/data/store'
 import { notify } from '@/lib/notify'
@@ -13,7 +14,7 @@ import {
 } from './testHarness'
 
 const titleBox = () => screen.getByRole('textbox', { name: 'Task title' })
-const saveButton = () => screen.getByRole('button', { name: 'Save' })
+const doneButton = () => screen.getByRole('button', { name: 'Done' })
 const dependencies = () => Object.values(useWorkspaceStore.getState().data.dependencies)
 const blockedByList = () => screen.getByRole('list', { name: 'Blocked by' })
 
@@ -58,7 +59,10 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
       `/projects/${project.id}`,
     )
     expect(within(modal).getByText(/^Created/)).toBeInTheDocument()
-    expect(saveButton()).toBeDisabled()
+    // Saves by itself: no Save, no Cancel, only a way to finish.
+    expect(doneButton()).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
 
     await user.click(within(modal).getByRole('button', { name: 'Close' }))
     await expectClosed()
@@ -75,7 +79,7 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('requires a title: an empty title shows the error and disables Save', async () => {
+  it('requires a title: empty on blur puts the saved title back and says so', async () => {
     const { project, tasks } = await seedWorkspace()
     const { user } = renderHosts(`/projects/${project.id}/list?task=${tasks['Book a room'].id}`)
     await findModal('Book a room')
@@ -83,102 +87,91 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     await user.clear(titleBox())
     expect(await screen.findByText('Task title is required.')).toBeInTheDocument()
     expect(titleBox()).toHaveAttribute('aria-invalid', 'true')
-    expect(saveButton()).toBeDisabled()
 
-    await user.type(titleBox(), 'Book the big room')
+    await user.tab()
+    await waitFor(() => expect(titleBox()).toHaveValue('Book a room'))
+    expect(screen.getByText('A task needs a title, so “Book a room” was kept.')).toBeInTheDocument()
     expect(screen.queryByText('Task title is required.')).not.toBeInTheDocument()
-    await user.keyboard('{Control>}{Enter}{/Control}')
-    await expectClosed()
-    expect(storeTask(tasks['Book a room'].id)?.title).toBe('Book the big room')
+    expect(storeTask(tasks['Book a room'].id)?.title).toBe('Book a room')
   })
 
-  it('a due date before the start date is explained inline and blocks Save', async () => {
+  it('the start can’t be picked after the due date, nor the due date before the start', async () => {
     const { project, tasks } = await seedWorkspace()
     const review = tasks['Write literature review']
     const { user } = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
     await findModal('Write literature review')
 
-    // Start after the current due date (Nov 12).
     await user.click(screen.getByRole('button', { name: /^Start date:/ }))
-    await user.click(await screen.findByRole('button', { name: /November 20th, 2026/ }))
-    expect(await screen.findByText("Due date can't be before the start date.")).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Due date:/ })).toHaveAttribute(
-      'aria-invalid',
-      'true',
-    )
-    expect(saveButton()).toBeDisabled()
-    // Unsavable dates: the conflict banner keeps describing the saved dates.
-    expect(screen.getByRole('status')).toHaveTextContent(/^Dependency conflict“Submit draft”/)
+    expect(await screen.findByRole('button', { name: /November 13th, 2026/ })).toBeDisabled()
+    expect(screen.getByText('The start can’t be after the due date.')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
 
-    // The due picker now refuses days before the start and says why.
     await user.click(screen.getByRole('button', { name: /^Due date:/ }))
-    expect(await screen.findByRole('button', { name: /November 19th, 2026/ })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: /November 4th, 2026/ })).toBeDisabled()
     expect(screen.getByText('Due date can’t be before the start date.')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /November 24th, 2026/ }))
-    expect(screen.queryByText("Due date can't be before the start date.")).not.toBeInTheDocument()
-    // Valid again: the banner previews these (unsaved) dates.
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'Dependency conflict with these dates“Submit draft” starts before this task finishes. It should start on or after Nov 25.',
+    // Saved at once, as a pair; the banner describes what is stored now.
+    await waitFor(() =>
+      expect(storeTask(review.id)).toMatchObject({
+        startDate: '2026-11-05',
+        dueDate: '2026-11-24',
+      }),
     )
-
-    await user.click(saveButton())
-    await expectClosed()
-    expect(storeTask(review.id)).toMatchObject({ startDate: '2026-11-20', dueDate: '2026-11-24' })
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Dependency conflict“Submit draft” starts before this task finishes. It should start on or after Nov 25.',
+    )
   })
 
-  it('clearing both dates is allowed (empty dates are saved as null)', async () => {
+  it('clearing both dates saves each pick (empty dates are stored as null)', async () => {
     const { project, tasks } = await seedWorkspace()
     const submit = tasks['Submit draft']
     const { user } = renderHosts(`/projects/${project.id}/list?task=${submit.id}`)
     await findModal('Submit draft')
 
-    for (const name of [/^Start date:/, /^Due date:/]) {
-      await user.click(screen.getByRole('button', { name }))
-      await user.click(await screen.findByRole('button', { name: 'Clear' }))
-    }
+    await user.click(screen.getByRole('button', { name: /^Start date:/ }))
+    await user.click(await screen.findByRole('button', { name: 'Clear' }))
+    await waitFor(() =>
+      expect(storeTask(submit.id)).toMatchObject({ startDate: null, dueDate: '2026-11-11' }),
+    )
+    await user.click(screen.getByRole('button', { name: /^Due date:/ }))
+    await user.click(await screen.findByRole('button', { name: 'Clear' }))
+    await waitFor(() => expect(storeTask(submit.id)).toMatchObject({ dueDate: null }))
     expect(screen.getByRole('button', { name: 'Start date: not set' })).toBeInTheDocument()
-    await user.click(saveButton())
-    await expectClosed()
-    expect(storeTask(submit.id)).toMatchObject({ startDate: null, dueDate: null })
   })
 
-  it('asks "Discard changes?" before closing with unsaved edits (Esc, X and Cancel)', async () => {
+  it.each([
+    ['Esc', async (user: UserEvent) => user.keyboard('{Escape}')],
+    [
+      'the X button',
+      async (user: UserEvent) => user.click(screen.getByRole('button', { name: 'Close' })),
+    ],
+    ['Done', async (user: UserEvent) => user.click(doneButton())],
+    ['⌘↵', async (user: UserEvent) => user.keyboard('{Control>}{Enter}{/Control}')],
+  ])('%s keeps what was typed and closes, without asking', async (_name, leave) => {
     const { project, tasks } = await seedWorkspace()
     const room = tasks['Book a room']
     const { user, router } = renderHosts(`/projects/${project.id}/list?task=${room.id}`)
-    const modal = await findModal('Book a room')
+    await findModal('Book a room')
 
     await user.type(titleBox(), ' for Friday')
-    await user.keyboard('{Escape}')
-    let confirmDialog = await screen.findByRole('alertdialog', { name: 'Discard changes?' })
-    await user.click(within(confirmDialog).getByRole('button', { name: 'Keep editing' }))
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
-    expect(titleBox()).toHaveValue('Book a room for Friday')
-
-    await user.click(within(modal).getByRole('button', { name: 'Close' }))
-    confirmDialog = await screen.findByRole('alertdialog', { name: 'Discard changes?' })
-    await user.click(within(confirmDialog).getByRole('button', { name: 'Keep editing' }))
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
-
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    confirmDialog = await screen.findByRole('alertdialog', { name: 'Discard changes?' })
-    await user.click(within(confirmDialog).getByRole('button', { name: 'Discard' }))
-    await expectClosed()
-    expect(router.state.location.search).toBe('')
-    expect(storeTask(room.id)?.title).toBe('Book a room')
-  })
-
-  it('typing and undoing an edit is not a change (closes without asking)', async () => {
-    const { project, tasks } = await seedWorkspace()
-    const { user } = renderHosts(`/projects/${project.id}/list?task=${tasks['Book a room'].id}`)
-    await findModal('Book a room')
-    await user.type(titleBox(), 'x')
-    expect(saveButton()).toBeEnabled()
-    await user.type(titleBox(), '{Backspace}')
-    expect(saveButton()).toBeDisabled()
-    await user.keyboard('{Escape}')
+    await leave(user)
     await expectClosed()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(router.state.location.search).toBe('')
+    await waitFor(() => expect(storeTask(room.id)?.title).toBe('Book a room for Friday'))
+  })
+
+  it('typing and undoing an edit writes nothing', async () => {
+    const { project, tasks } = await seedWorkspace()
+    const room = tasks['Book a room']
+    const update = vi.spyOn(useWorkspaceStore.getState().actions, 'updateTask')
+    const { user } = renderHosts(`/projects/${project.id}/list?task=${room.id}`)
+    await findModal('Book a room')
+    await user.type(titleBox(), 'x')
+    await user.type(titleBox(), '{Backspace}')
+    await user.keyboard('{Escape}')
+    await expectClosed()
+    expect(update).not.toHaveBeenCalled()
   })
 
   it('subtasks: rows open the subtask, status and "Add subtask" save immediately', async () => {
@@ -208,8 +201,6 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     )
     expect(add).toHaveValue('')
     expect(add).toHaveFocus()
-    // Nothing in the form changed: Save stays disabled, closing does not ask.
-    expect(saveButton()).toBeDisabled()
 
     await user.click(within(section).getByRole('button', { name: 'Draft related work' }))
     await waitFor(() => expect(router.state.location.search).toBe(`?task=${draft.id}`))
@@ -244,14 +235,13 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     expect(storeTasks().filter((task) => task.title === 'Check citations')).toHaveLength(1)
   })
 
-  it('⌘↵ in "Add subtask" adds the typed subtask; Save never drops an unsent line', async () => {
+  it('⌘↵ in "Add subtask" adds the typed subtask and stays', async () => {
     const { project, tasks } = await seedWorkspace()
     const review = tasks['Write literature review']
     const { user } = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
     await findModal('Write literature review')
     const add = screen.getByRole('textbox', { name: 'Add subtask' })
 
-    // With text, ⌘↵ / Ctrl+↵ adds the subtask (the modal stays open).
     await user.type(add, 'Check citations')
     await user.keyboard('{Control>}{Enter}{/Control}')
     await waitFor(() =>
@@ -261,29 +251,30 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     )
     expect(add).toHaveValue('')
     expect(screen.getByRole('dialog', { name: /Edit task/ })).toBeInTheDocument()
-
-    // Save with an unsent line: the form is saved, the modal stays and points at the line.
-    await user.type(titleBox(), '!')
-    await user.type(add, 'Not added yet')
-    await user.click(saveButton())
-    await waitFor(() => expect(storeTask(review.id)?.title).toBe('Write literature review!'))
-    await waitFor(() => expect(add).toHaveFocus())
-    expect(add).toHaveValue('Not added yet')
-    expect(screen.getByRole('dialog', { name: /Edit task/ })).toBeInTheDocument()
-    expect(saveButton()).toBeDisabled()
   })
 
-  it('an unsent "Add subtask" draft counts as unsaved when closing', async () => {
+  it('closing with text in "Add subtask" adds it, with an Undo', async () => {
     const { project, tasks } = await seedWorkspace()
     const review = tasks['Write literature review']
+    const success = vi.spyOn(notify, 'success')
     const { user } = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
     await findModal('Write literature review')
-    await user.type(screen.getByRole('textbox', { name: 'Add subtask' }), 'Not yet added')
-    await user.keyboard('{Escape}')
-    const confirmDialog = await screen.findByRole('alertdialog', { name: 'Discard changes?' })
-    await user.click(within(confirmDialog).getByRole('button', { name: 'Discard' }))
+    await user.type(screen.getByRole('textbox', { name: 'Add subtask' }), 'Not lost')
+    await user.click(doneButton())
     await expectClosed()
-    expect(storeTasks().some((task) => task.title === 'Not yet added')).toBe(false)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(storeTasks().find((task) => task.title === 'Not lost')?.parentTaskId).toBe(review.id),
+    )
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith(
+        'Subtask added',
+        expect.objectContaining({
+          description: 'Not lost',
+          action: expect.objectContaining({ label: 'Undo' }),
+        }),
+      ),
+    )
   })
 
   it('dependency picker: same-project tasks only, and an invalid link says why', async () => {
@@ -333,7 +324,6 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     await waitFor(() =>
       expect(dependencies().some((d) => d.predecessorId === tasks['Book a room'].id)).toBe(false),
     )
-    expect(saveButton()).toBeDisabled()
     expect(
       screen.getByRole('button', { name: 'Remove “Collect sources” from Blocked by' }),
     ).toHaveFocus()
@@ -416,11 +406,12 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
       `/projects/${project.id}/gantt?task=${submit.id}`,
     )
 
-    // The banner follows the dates in the form: starting on Nov 13 resolves it.
-    await user.click(screen.getByRole('button', { name: /^Start date:/ }))
-    await user.click(await screen.findByRole('button', { name: /November 13th, 2026/ }))
+    // The banner follows the saved dates: the due date first (the start can't pass it), then
+    // starting on Nov 13 resolves it.
     await user.click(screen.getByRole('button', { name: /^Due date:/ }))
     await user.click(await screen.findByRole('button', { name: /November 14th, 2026/ }))
+    await user.click(screen.getByRole('button', { name: /^Start date:/ }))
+    await user.click(await screen.findByRole('button', { name: /November 13th, 2026/ }))
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
   })
 
@@ -510,15 +501,14 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
 
     testHooks().setLatency(150)
     await user.type(titleBox(), ' for Friday')
-    await user.click(saveButton())
-    expect(saveButton()).toHaveAttribute('aria-busy', 'true')
-    // Closing while the write is in flight does not ask (nothing will be lost).
+    // Closing does not wait for the network.
     await user.keyboard('{Escape}')
     await expectClosed()
+    expect(storeTask(room.id)?.title).toBe('Book a room for Friday')
     await router.navigate('/overview')
 
-    await waitFor(() => expect(storeTask(room.id)?.title).toBe('Book a room for Friday'))
     await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(storeTask(room.id)?.title).toBe('Book a room for Friday')
     expect(router.state.location.pathname).toBe('/overview')
   })
 
@@ -531,14 +521,13 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
 
     testHooks().setLatency(150)
     await user.type(titleBox(), '!')
-    await user.click(saveButton())
     await user.keyboard('{Escape}')
     await expectClosed()
     await router.navigate(`/projects/${project.id}/list?task=${submit.id}`)
     await findModal('Submit draft')
 
-    await waitFor(() => expect(storeTask(room.id)?.title).toBe('Book a room!'))
     await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(storeTask(room.id)?.title).toBe('Book a room!')
     expect(router.state.location.search).toBe(`?task=${submit.id}`)
     expect(screen.getByRole('dialog', { name: 'Edit task: Submit draft' })).toBeInTheDocument()
   })

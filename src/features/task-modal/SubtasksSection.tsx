@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type Ref } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { Plus } from 'lucide-react'
 import { DueLabel } from '@/components/task/DueLabel'
 import { STATUS_LABELS } from '@/components/task/labels'
@@ -11,33 +11,34 @@ import { isRetryable } from '@/data/errors'
 import { useActions, useSubtasks } from '@/data/hooks'
 import { computeProgress } from '@/domain/progress'
 import type { Task } from '@/domain/types'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { FieldError, SectionHeading } from './fields'
 import { isComposing } from './keys'
 import { currentTasks, useRetryFulfilment } from './retryFulfilment'
 
+/** What the form does with a line typed into "Add subtask" and not added yet. */
+export interface SubtaskLineControls {
+  /** Leaving: the line becomes a subtask (with an Undo), so what was typed is not lost. */
+  commit: () => void
+  /** The parent is being deleted: the line goes with it. */
+  clear: () => void
+}
+
 export interface SubtasksSectionProps {
   parent: Task
-  /** Opens a subtask in the modal (goes through the unsaved-changes guard). */
+  /** Opens a subtask in the modal. */
   onOpenTask: (taskId: string) => void
-  /** Text typed into "Add subtask" but not added yet (counts as unsaved). Must be stable. */
-  onDraftChange: (hasDraft: boolean) => void
-  /** The "Add subtask" input (the modal focuses it when Save leaves an unsent line behind). */
-  inputRef?: Ref<HTMLInputElement>
+  controlsRef?: RefObject<SubtaskLineControls | null>
 }
 
 /**
- * Subtasks of a top-level task. Every action here saves immediately (it is not part of the
- * Save form): status changes, opening a subtask, and "Add subtask".
+ * Subtasks of a top-level task. Every action here saves immediately: status changes, opening a
+ * subtask, and "Add subtask".
  */
-export function SubtasksSection({
-  parent,
-  onOpenTask,
-  onDraftChange,
-  inputRef,
-}: SubtasksSectionProps) {
+export function SubtasksSection({ parent, onOpenTask, controlsRef }: SubtasksSectionProps) {
   const subtasks = useSubtasks(parent.id)
-  const { createTask, updateTask } = useActions()
+  const { createTask, updateTask, deleteTask } = useActions()
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(0)
@@ -46,9 +47,38 @@ export function SubtasksSection({
   const progress = computeProgress(subtasks)
 
   const hasDraft = draft.trim() !== ''
+  const composingRef = useRef(false)
+  const lineRef = useRef(draft)
+  useLayoutEffect(() => {
+    lineRef.current = draft
+  })
+  const parentId = parent.id
+  const projectId = parent.projectId
   useEffect(() => {
-    onDraftChange(hasDraft)
-  }, [hasDraft, onDraftChange])
+    if (!controlsRef) return
+    controlsRef.current = {
+      commit: () => {
+        const title = lineRef.current.trim()
+        // Unconfirmed IME text is not a title anyone chose.
+        if (!title || composingRef.current) return
+        lineRef.current = ''
+        void createTask({ projectId, parentTaskId: parentId, title }).then((result) => {
+          // A failure is reported by the store's toast, with Retry.
+          if (!result.ok) return
+          notify.success('Subtask added', {
+            description: title,
+            action: {
+              label: 'Undo',
+              onClick: () => void deleteTask(result.value.id, { keepSubtasks: false }),
+            },
+          })
+        })
+      },
+      clear: () => {
+        lineRef.current = ''
+      },
+    }
+  }, [controlsRef, createTask, deleteTask, parentId, projectId])
 
   // A failed add gives its text back (below) while the toast offers Retry: if that Retry stores
   // the subtask, the line is cleared instead of inviting a second, duplicate add.
@@ -92,8 +122,7 @@ export function SubtasksSection({
                 hoverFade,
               )}
             >
-              {/* Saves right away (not part of the Save form). The remote-failure toast and
-                  rollback come from the store. */}
+              {/* The remote-failure toast and rollback come from the store. */}
               <StatusMenu
                 value={subtask.status}
                 onChange={(status) => void updateTask(subtask.id, { status })}
@@ -132,7 +161,6 @@ export function SubtasksSection({
           )}
         </span>
         <input
-          ref={inputRef}
           type="text"
           aria-label="Add subtask"
           aria-describedby={error ? errorId : undefined}
@@ -144,12 +172,18 @@ export function SubtasksSection({
             retryFulfilment.disarm()
             if (error) setError(null)
           }}
+          onCompositionStart={() => {
+            composingRef.current = true
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false
+          }}
           onKeyDown={(event) => {
             if (event.key !== 'Enter' || event.shiftKey || event.altKey || isComposing(event)) {
               return
             }
-            // Nothing typed: ⌘↵ / Ctrl+↵ bubbles up and saves the modal. With a title, ↵ and
-            // ⌘↵ both add the subtask (the line is never lost to a save that closes the modal).
+            // Nothing typed: ⌘↵ / Ctrl+↵ bubbles up and closes the modal. With a title, ↵ and ⌘↵
+            // both add the subtask and stay.
             if (!hasDraft) return
             event.preventDefault()
             event.stopPropagation()

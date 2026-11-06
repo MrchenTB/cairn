@@ -38,7 +38,7 @@ export function ModalBody({ className, ...props }: ComponentProps<'div'>) {
   )
 }
 
-/** Footer: quiet meta line on the left, Cancel + primary action on the right. */
+/** Footer: quiet meta line on the left, the form's state and actions on the right. */
 export function ModalFooter({ meta, children }: { meta?: ReactNode; children: ReactNode }) {
   return (
     <footer className="flex min-h-[3.25rem] shrink-0 items-center gap-2 border-t border-subtle px-5 py-2.5">
