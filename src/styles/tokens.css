@@ -202,6 +202,8 @@
   --gantt-grid: rgba(36, 38, 49, 0.06);
   --gantt-grid-strong: rgba(36, 38, 49, 0.11);
   --gantt-weekend: rgba(36, 38, 49, 0.055); /* body band + Day header cell */
+  /* Day lines: fainter than the week hairline (--gantt-grid). */
+  --gantt-day-line: rgba(36, 38, 49, 0.035);
   --gantt-row-hover: rgba(36, 38, 49, 0.03);
   --gantt-row-selected: rgba(104, 106, 195, 0.08);
   /*
@@ -326,6 +328,7 @@
   --gantt-grid: rgba(255, 255, 255, 0.045);
   --gantt-grid-strong: rgba(255, 255, 255, 0.09);
   --gantt-weekend: rgba(0, 0, 0, 0.16); /* darker than the day, like light mode */
+  --gantt-day-line: rgba(255, 255, 255, 0.03);
   --gantt-row-hover: rgba(255, 255, 255, 0.03);
   --gantt-row-selected: rgba(144, 147, 232, 0.1);
   --gantt-pct-fill: 22%;

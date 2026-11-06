@@ -235,7 +235,12 @@ function LeftCell({
           ) : null}
           {canColor ? <span className="w-2 shrink-0" aria-hidden /> : null}
           <span className="truncate text-meta font-semibold text-fg-secondary">{label}</span>
-          <span className="text-meta text-fg-tertiary tabular-nums">{count}</span>
+          <span
+            className="text-meta text-fg-tertiary tabular-nums"
+            title={`${plural(count, 'task')} ${row.kind === 'group' ? 'with dates' : 'without dates'}, subtasks included`}
+          >
+            {count}
+          </span>
         </button>
         {canColor ? (
           <PhaseColorPopover
@@ -284,7 +289,7 @@ function LeftCell({
         <span
           className="flex shrink-0 justify-end text-meta whitespace-nowrap text-fg-tertiary tabular-nums"
           style={{ width: DUE_COLUMN_WIDTH }}
-          title={row.day !== null ? formatDate(milestone.date, 'medium') : undefined}
+          title={row.day !== null ? formatDate(milestone.date, 'long') : undefined}
         >
           {row.day !== null ? formatDateSmart(milestone.date, today) : '—'}
         </span>

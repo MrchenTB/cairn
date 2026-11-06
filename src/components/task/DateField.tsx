@@ -105,6 +105,8 @@ export function DateField({
           type="button"
           id={id}
           aria-label={`${label}: ${value ? formatDate(value, 'long') : 'not set'}`}
+          // The text is the short form ("Today", "Nov 13"): the title spells the whole date out.
+          title={value ? formatDate(value, 'long') : undefined}
           aria-invalid={ariaInvalid || undefined}
           // No stopPropagation here: Radix treats a click that never reaches the document as
           // "handled elsewhere", so another open popover (e.g. the neighbouring date chip's)

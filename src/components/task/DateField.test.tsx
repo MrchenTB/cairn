@@ -41,6 +41,15 @@ describe('DateField', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('spells the whole date out on hover, whatever the short text says', () => {
+    renderUI(<DateField label="Due date" value="2026-11-02" onChange={() => {}} />)
+    const trigger = screen.getByRole('button', { name: /^Due date:/ })
+    expect(trigger).toHaveTextContent('Today')
+    expect(trigger).toHaveAttribute('title', 'Monday, November 2, 2026')
+    renderUI(<DateField label="Start date" value={null} onChange={() => {}} />)
+    expect(screen.getByRole('button', { name: /^Start date:/ })).not.toHaveAttribute('title')
+  })
+
   it('shows the chosen date and an accessible full date', () => {
     renderUI(<DateField label="Due date" value="2026-11-10" onChange={() => {}} />)
     const trigger = screen.getByRole('button', { name: 'Due date: Tuesday, November 10, 2026' })

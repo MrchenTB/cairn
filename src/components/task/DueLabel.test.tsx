@@ -24,7 +24,15 @@ describe('DueLabel', () => {
     expect(label).toHaveTextContent('Oct 30')
     expect(screen.getByText('(overdue)')).toHaveClass('sr-only')
     expect(label.querySelector('svg')).not.toBeNull()
-    expect(label).toHaveAttribute('title', 'Overdue · Due Oct 30, 2026')
+    expect(label).toHaveAttribute('title', 'Overdue · Due Friday, October 30, 2026')
+  })
+
+  it('spells the whole date out in its hover title', () => {
+    const { container } = render(<DueLabel dueDate="2026-11-13" status="todo" />)
+    expect(container.querySelector('[data-bucket]')).toHaveAttribute(
+      'title',
+      'Due Friday, November 13, 2026',
+    )
   })
 
   it('shows "Today" in the warning tone for tasks due today', () => {

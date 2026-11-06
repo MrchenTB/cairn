@@ -37,8 +37,8 @@ const OUTSIDE_LABEL_MAX_WIDTH = 240
 /**
  * Opaque chip behind text that sits on the lane (outside a bar): the today line and dependency
  * lines pass behind it, never through the letters. Painted bottom-up: chart colour, the weekend
- * band (aligned to the grid through the `--wk-*` variables the chart body sets, `left` being the
- * chip's x on the lane), then the lane's own hover / selected tint — so on a weekend, in a hovered
+ * band, the grid lines (both aligned to the grid through the `--wk-*` variables the chart body
+ * sets, `left` being the chip's x on the lane), then the lane's own hover / selected tint — so on a weekend, in a hovered
  * or selected row, the chip is indistinguishable from the lane around it.
  */
 function labelChip(selected: boolean | undefined, left: number) {
@@ -50,10 +50,11 @@ function labelChip(selected: boolean | undefined, left: number) {
         : 'group-hover/row:[--lane-tint:var(--gantt-row-hover)]',
     ),
     style: {
-      backgroundImage: 'linear-gradient(var(--lane-tint), var(--lane-tint)), var(--wk-image, none)',
-      backgroundSize: '100% 100%, var(--wk-size, auto)',
-      backgroundPosition: `0 0, calc(var(--wk-x, 0px) - ${left}px) 0`,
-      backgroundRepeat: 'no-repeat, repeat-x',
+      backgroundImage:
+        'linear-gradient(var(--lane-tint), var(--lane-tint)), var(--wk-lines, none), var(--wk-image, none)',
+      backgroundSize: '100% 100%, var(--wk-size, auto), var(--wk-size, auto)',
+      backgroundPosition: `0 0, calc(var(--wk-lx, 0px) - ${left}px) 0, calc(var(--wk-x, 0px) - ${left}px) 0`,
+      backgroundRepeat: 'no-repeat, repeat-x, repeat-x',
     } satisfies CSSProperties,
   }
 }

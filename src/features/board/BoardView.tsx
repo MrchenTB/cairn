@@ -120,13 +120,13 @@ export function BoardView() {
         // Overlaid (not in flow) so the columns do not jump when a filter empties the board.
         <div className="pointer-events-none absolute inset-x-0 top-[40%] z-10 flex justify-center">
           <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-default bg-main px-3 py-1.5 text-ui text-fg-secondary">
-            <p role="status">
+            <p role="status" className="max-w-80 truncate">
               {filter === NO_PHASE
                 ? 'Every task in this project has a phase.'
-                : `No tasks in “${phase?.name ?? 'this phase'}” yet.`}
+                : `No tasks in ${phase?.name ?? 'this phase'}`}
             </p>
             <Button variant="link" size="xs" onClick={() => setFilter(ALL_PHASES)}>
-              Show all phases
+              Clear filter
             </Button>
           </div>
         </div>

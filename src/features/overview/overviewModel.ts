@@ -101,6 +101,74 @@ export function projectSpan(
   }
 }
 
+/** What a derived date comes from: tasks (also when milestones add to them), or milestones only. */
+export type DerivedFrom = 'tasks' | 'milestones'
+
+function derivedFrom(
+  tasks: readonly Pick<Task, 'startDate' | 'dueDate'>[],
+  milestones: readonly Pick<Milestone, 'date'>[],
+): DerivedFrom | null {
+  if (rollupRange(tasks)) return 'tasks'
+  return rollupRange([], milestones) ? 'milestones' : null
+}
+
+export type ProjectTiming =
+  /** The project has its own due date (and maybe a start). */
+  | { kind: 'due'; start: ISODate | null; due: ISODate }
+  /** No due date: the extent of the project's tasks and milestones, worked out by the app. */
+  | { kind: 'derived'; start: ISODate; end: ISODate; from: DerivedFrom }
+  /** Only an own start date is known. */
+  | { kind: 'starts'; start: ISODate }
+  | { kind: 'none' }
+
+/**
+ * Which date the Active projects row shows. A due date the user set always wins; without one the
+ * row may show the roll-up of the project's tasks and milestones, but labelled as derived — an
+ * unset deadline must never look like a chosen one.
+ */
+export function projectTiming(
+  project: Pick<Project, 'startDate' | 'dueDate'>,
+  tasks: readonly Pick<Task, 'startDate' | 'dueDate'>[],
+  milestones: readonly Pick<Milestone, 'date'>[],
+): ProjectTiming {
+  const start = validDate(project.startDate)
+  const due = validDate(project.dueDate)
+  if (due) return { kind: 'due', start, due }
+  const rollup = rollupRange(tasks, milestones)
+  const from = derivedFrom(tasks, milestones)
+  if (rollup && from) return { kind: 'derived', start: rollup.start, end: rollup.end, from }
+  if (start) return { kind: 'starts', start }
+  return { kind: 'none' }
+}
+
+/** `projectTiming` of every given project (one pass over the tasks and milestones). */
+export function projectTimings(
+  data: WorkspaceData,
+  projects: readonly Project[],
+): Record<string, ProjectTiming> {
+  const tasksOf = new Map<string, Task[]>()
+  for (const task of Object.values(data.tasks)) {
+    const list = tasksOf.get(task.projectId)
+    if (list) list.push(task)
+    else tasksOf.set(task.projectId, [task])
+  }
+  const milestonesOf = new Map<string, Milestone[]>()
+  for (const milestone of Object.values(data.milestones)) {
+    const list = milestonesOf.get(milestone.projectId)
+    if (list) list.push(milestone)
+    else milestonesOf.set(milestone.projectId, [milestone])
+  }
+  const result: Record<string, ProjectTiming> = {}
+  for (const project of projects) {
+    result[project.id] = projectTiming(
+      project,
+      tasksOf.get(project.id) ?? [],
+      milestonesOf.get(project.id) ?? [],
+    )
+  }
+  return result
+}
+
 export interface TimelineWindow {
   /** First day shown (start of the current week). */
   start: ISODate
@@ -171,6 +239,8 @@ export interface TimelineRow {
   project: Project
   span: DateSpan | null
   placed: PlacedSpan | null
+  /** Set when an end of `span` is worked out from tasks / milestones, not the project's own. */
+  derived: DerivedFrom | null
   /** The project's milestones inside the window, by date. */
   milestones: Milestone[]
 }
@@ -214,6 +284,10 @@ export function miniTimeline(
     const tasks = tasksByProject.get(project.id) ?? []
     let span = projectSpan(project, tasks, milestones)
     let placed = span ? placeSpan(span, window) : null
+    let derived: DerivedFrom | null =
+      validDate(project.startDate) && validDate(project.dueDate)
+        ? null
+        : derivedFrom(tasks, milestones)
     if (!placed) {
       // The project's own dates can end before its work does (a slipped deadline). Open work
       // still inside the window keeps the project on the chart, drawn where that work is.
@@ -222,13 +296,14 @@ export function miniTimeline(
       if (work && workPlaced) {
         span = work
         placed = workPlaced
+        derived = 'tasks'
       }
     }
     const inWindow = milestones
       .filter((m) => isISODate(m.date) && m.date >= window.start && m.date <= window.end)
       .sort(compareMilestones)
     if (placed || inWindow.length > 0) {
-      qualified.push({ project, span, placed, milestones: inWindow })
+      qualified.push({ project, span, placed, derived, milestones: inWindow })
     }
   }
   return {

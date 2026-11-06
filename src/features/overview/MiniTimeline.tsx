@@ -2,10 +2,12 @@
  * "Next 6 weeks": a tiny, read-only cross-project timeline (PRD: no editable Gantt on the
  * dashboard). One thin row per active project with something in the window — its span (own
  * dates or the roll-up of its tasks and milestones), milestone diamonds and the today line.
- * Each row links to the project's Gantt; "Open Timeline" leads to the full view.
+ * Each row links to the project's Gantt (the bar and the diamonds too, where hovering shows the
+ * project's dates / the milestone's name and date); "Open Timeline" leads to the full view.
  */
 import { Link } from 'react-router'
 import { ProjectDot } from '@/components/task/ProjectDot'
+import { Tooltip } from '@/components/ui/tooltip'
 import { formatDate, formatDateRange } from '@/domain/dates'
 import type { ISODate } from '@/domain/types'
 import { cn } from '@/lib/utils'
@@ -16,8 +18,8 @@ import {
 } from './overviewModel'
 import { OverviewSection, SectionEmpty, SectionLink } from './OverviewSection'
 
-const LABEL_COLUMN = 'w-44'
-const LABEL_OFFSET = 'left-44'
+const LABEL_COLUMN = 'w-48'
+const LABEL_OFFSET = 'left-48'
 
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
@@ -125,9 +127,12 @@ function TimelineRowItem({
   timeline: MiniTimelineModel
 }) {
   const { project, span, placed, milestones } = row
+  const ganttPath = `/projects/${project.id}/gantt`
   const descriptionId = `mini-timeline-${project.id}`
   const description = [
-    span ? formatDateRange(span.start, span.end, today) || null : 'No dates',
+    span
+      ? `${formatDateRange(span.start, span.end, today)}${row.derived ? ` (from ${row.derived})` : ''}`
+      : 'No dates',
     milestones.length > 0
       ? `${plural(milestones.length, 'milestone')}: ${milestones
           .map((m) => `${m.name} (${formatDate(m.date, 'short')})`)
@@ -145,7 +150,7 @@ function TimelineRowItem({
       )}
     >
       <Link
-        to={`/projects/${project.id}/gantt`}
+        to={ganttPath}
         aria-describedby={descriptionId}
         className={cn(
           'flex min-w-0 shrink-0 items-center gap-2 pr-3 pl-1 text-meta text-fg-secondary',
@@ -160,37 +165,73 @@ function TimelineRowItem({
       <span id={descriptionId} className="sr-only">
         {description}
       </span>
-      {/* Not interactive itself: clicks fall through to the row's stretched link. */}
+      {/*
+        Hover targets for the tooltips. The bar and the diamonds are links to the same Gantt as the
+        row (out of the tab order and the accessibility tree: the row link carries the text), so a
+        click anywhere on the row goes to the project.
+      */}
       <div aria-hidden className="pointer-events-none relative h-full min-w-0 flex-1">
-        {placed ? (
-          <span
-            data-span=""
-            // Fill + outline like a Gantt bar (the outline keeps a thin bar at 3:1 on the page);
-            // a bar that continues past the window has no outline and no rounding on that side.
-            className={cn(
-              'absolute top-1/2 h-2 -translate-y-1/2 border border-(--gantt-bar-border) bg-(--gantt-bar-fill-active)',
-              placed.clippedStart ? 'rounded-l-none border-l-0' : 'rounded-l-full',
-              placed.clippedEnd ? 'rounded-r-none border-r-0' : 'rounded-r-full',
-            )}
-            style={{ left: `${placed.left}%`, width: `max(${placed.width}%, 6px)` }}
-          />
+        {placed && span ? (
+          <Tooltip
+            passive
+            content={
+              <span className="flex flex-col">
+                <span>{project.name}</span>
+                <span className="font-normal">
+                  {formatDateRange(span.start, span.end, today)}
+                  {row.derived ? ` · from ${row.derived}` : ''}
+                </span>
+              </span>
+            }
+          >
+            <Link
+              to={ganttPath}
+              tabIndex={-1}
+              data-span=""
+              // Fill + outline like a Gantt bar (the outline keeps a thin bar at 3:1 on the page);
+              // a bar that continues past the window has no outline and no rounding on that side.
+              // The ::before widens the hover target beyond the 8px bar.
+              className={cn(
+                'pointer-events-auto absolute top-1/2 h-2 -translate-y-1/2 border border-(--gantt-bar-border) bg-(--gantt-bar-fill-active)',
+                'before:absolute before:inset-x-0 before:-inset-y-2.5 before:content-[""]',
+                placed.clippedStart ? 'rounded-l-none border-l-0' : 'rounded-l-full',
+                placed.clippedEnd ? 'rounded-r-none border-r-0' : 'rounded-r-full',
+              )}
+              style={{ left: `${placed.left}%`, width: `max(${placed.width}%, 6px)` }}
+            />
+          </Tooltip>
         ) : null}
         {milestones.map((milestone) => {
           const x = dayCenter(milestone.date, timeline.window)
           if (x === null) return null
           const past = milestone.date < today
+          // Diamonds on one day overlap: whichever is on top names them all.
+          const names = milestones.filter((m) => m.date === milestone.date).map((m) => m.name)
           return (
-            <span
+            <Tooltip
               key={milestone.id}
-              data-milestone=""
-              className={cn(
-                'absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1.5px]',
-                past
-                  ? 'border-[1.5px] border-(--gantt-milestone-past) bg-(--gantt-bg)'
-                  : 'bg-(--gantt-milestone)',
-              )}
-              style={{ left: `${x}%` }}
-            />
+              passive
+              content={
+                <span className="flex flex-col">
+                  <span>{names.join(', ')}</span>
+                  <span className="font-normal">{formatDate(milestone.date, 'medium')}</span>
+                </span>
+              }
+            >
+              <Link
+                to={ganttPath}
+                tabIndex={-1}
+                data-milestone=""
+                className={cn(
+                  'pointer-events-auto absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1.5px]',
+                  'before:absolute before:-inset-2 before:content-[""]',
+                  past
+                    ? 'border-[1.5px] border-(--gantt-milestone-past) bg-(--gantt-bg)'
+                    : 'bg-(--gantt-milestone)',
+                )}
+                style={{ left: `${x}%` }}
+              />
+            </Tooltip>
           )
         })}
       </div>

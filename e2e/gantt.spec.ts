@@ -392,21 +392,21 @@ test.describe('gantt (local mode)', () => {
     const { ids } = seed
     await openGantt(page, seed, 'week')
 
-    // Outline order: No phase → Design (tasks, subtasks, milestones) → Unscheduled.
+    // Outline order: Design (tasks, subtasks, milestones) → No phase → Unscheduled.
     const keys = await page
       .locator('[data-row-key]')
       .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-row-key')))
     expect(keys).toEqual([
-      'group:none',
-      `task:${ids.alpha}`,
-      `task:${ids.bravo}`,
-      `task:${ids.charlie}`,
       `group:${seed.phaseId}`,
       `task:${ids.delta}`,
       `task:${ids.echo}`,
       `task:${ids.parent}`,
       `task:${ids.sub}`,
       `milestone:${ids.launch}`,
+      'group:none',
+      `task:${ids.alpha}`,
+      `task:${ids.bravo}`,
+      `task:${ids.charlie}`,
       'unscheduled',
       `task:${ids.undated1}`,
       `task:${ids.undated2}`,

@@ -93,7 +93,7 @@ function MilestoneRow({
       </Link>
       <span id={detailsId} className="flex shrink-0 items-center gap-3">
         {project ? (
-          <span className="flex w-36 min-w-0 items-center gap-2 text-meta text-fg-secondary">
+          <span className="flex w-48 min-w-0 items-center @[58rem]:w-36 gap-2 text-meta text-fg-secondary">
             <ProjectDot color={project.color} />
             <span className="min-w-0 truncate">{project.name}</span>
           </span>

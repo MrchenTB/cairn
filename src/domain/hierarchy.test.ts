@@ -125,7 +125,7 @@ describe('buildProjectOutline', () => {
     expect(outline.groups[0].tasks[1].subtasks).toEqual([])
   })
 
-  it('with phases: null group first (even when empty), then phases in order, empty ones included', () => {
+  it('with phases: phases in order (empty ones included), then the null group last (even when empty)', () => {
     const design = makePhase({ projectId: 'p1', id: 'design', name: 'Design', sortOrder: 'a1' })
     const build = makePhase({ projectId: 'p1', id: 'build', name: 'Build', sortOrder: 'a2' })
     const ship = makePhase({ projectId: 'p1', id: 'ship', name: 'Ship', sortOrder: 'a3' })
@@ -141,14 +141,14 @@ describe('buildProjectOutline', () => {
     )
     expect(outline.hasPhases).toBe(true)
     expect(outline.groups.map((g) => g.phase?.name ?? null)).toEqual([
-      null,
       'Design',
       'Build',
       'Ship',
+      null,
     ])
-    expect(titles(outline.groups[0])).toEqual([])
-    expect(titles(outline.groups[1])).toEqual(['Design 1'])
-    expect(titles(outline.groups[2])).toEqual(['Build 1', 'Build 2'])
+    expect(titles(outline.groups[0])).toEqual(['Design 1'])
+    expect(titles(outline.groups[1])).toEqual(['Build 1', 'Build 2'])
+    expect(titles(outline.groups[2])).toEqual([])
     expect(titles(outline.groups[3])).toEqual([])
   })
 
@@ -164,8 +164,8 @@ describe('buildProjectOutline', () => {
       ],
       [],
     )
-    expect(titles(outline.groups[0])).toEqual(['Loose', 'Lost'])
-    expect(titles(outline.groups[1])).toEqual(['Known'])
+    expect(titles(outline.groups[1])).toEqual(['Loose', 'Lost'])
+    expect(titles(outline.groups[0])).toEqual(['Known'])
   })
 
   it('keeps subtasks under their parent and never loses orphans', () => {
@@ -194,9 +194,9 @@ describe('buildProjectOutline', () => {
       ],
       [],
     )
-    expect(titles(outline.groups[1])).toEqual(['Parent'])
-    expect(outline.groups[1].tasks[0].subtasks.map((t) => t.title)).toEqual(['Child', 'Mid'])
-    expect(titles(outline.groups[0])).toEqual(['Orphan', 'Too deep'])
+    expect(titles(outline.groups[0])).toEqual(['Parent'])
+    expect(outline.groups[0].tasks[0].subtasks.map((t) => t.title)).toEqual(['Child', 'Mid'])
+    expect(titles(outline.groups[1])).toEqual(['Orphan', 'Too deep'])
   })
 
   it('lists milestones in their group by date, then name', () => {
@@ -214,13 +214,26 @@ describe('buildProjectOutline', () => {
         makeMilestone({ projectId: 'p2', name: 'Foreign', date: '2026-11-01' }),
       ],
     )
-    expect(outline.groups[0].milestones.map((m) => m.name)).toEqual([
+    expect(outline.groups[1].milestones.map((m) => m.name)).toEqual([
       'Gone phase',
       'Alpha',
       'Beta',
       'Launch',
     ])
-    expect(outline.groups[1].milestones.map((m) => m.name)).toEqual(['Review'])
+    expect(outline.groups[0].milestones.map((m) => m.name)).toEqual(['Review'])
+  })
+
+  it('keeps a "No phase" group that only holds milestones, last', () => {
+    const outline = buildProjectOutline(
+      project,
+      [makePhase({ projectId: 'p1', id: 'ph', name: 'Plan' })],
+      [makeTask({ projectId: 'p1', title: 'Draft', phaseId: 'ph' })],
+      [makeMilestone({ projectId: 'p1', name: 'Kickoff', date: '2026-11-09' })],
+    )
+    expect(outline.groups.map((g) => g.phase?.name ?? null)).toEqual(['Plan', null])
+    const last = outline.groups.at(-1)
+    expect(last?.tasks).toEqual([])
+    expect(last?.milestones.map((m) => m.name)).toEqual(['Kickoff'])
   })
 
   it('handles a project with nothing in it', () => {

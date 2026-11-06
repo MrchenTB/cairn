@@ -344,16 +344,53 @@ describe('BoardView', () => {
     expect(cardTitles(column(/^To Do/))).toEqual(['Interview users', 'Draft survey', 'Plan retro'])
   })
 
-  it('explains an empty filtered board and offers to show all phases', async () => {
+  it('explains an empty filtered board and offers to clear the filter', async () => {
     const { projectId } = await seed()
     const build = Object.values(useWorkspaceStore.getState().data.phases).find(
       (p) => p.name === 'Build',
     )
     const { user, router } = renderBoard(`/projects/${projectId}/board?phase=${build?.id}`)
 
-    expect(screen.getByText('No tasks in “Build” yet.')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Show all phases' }))
+    expect(screen.getByText('No tasks in Build')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear filter' }))
     expect(router.state.location.search).toBe('')
+  })
+
+  it('shows the whole due date on hover, and a click on it still opens the task', async () => {
+    const { projectId, tasks } = await seed()
+    must(
+      await getWorkspaceActions().updateTask(tasks['Draft survey'].id, { dueDate: '2026-11-13' }),
+    )
+    const { user, router } = renderBoard(`/projects/${projectId}/board`)
+
+    const card = screen.getByRole('button', { name: 'Draft survey' }).closest('li') as HTMLElement
+    const due = card.querySelector('[data-bucket]') as HTMLElement
+    expect(due).toHaveAttribute(
+      'title',
+      expect.stringMatching(/^(Overdue · )?Due Friday, November 13, 2026$/),
+    )
+    await user.click(due)
+    expect(router.state.location.search).toContain(`task=${tasks['Draft survey'].id}`)
+  })
+
+  it('explains the count of a column: top-level tasks, subtasks stay on their parent', async () => {
+    const { projectId } = await seed()
+    renderBoard(`/projects/${projectId}/board`)
+    expect(column(/^To Do/).querySelector('h2 [title]')).toHaveAttribute(
+      'title',
+      'Top-level tasks; subtasks show on their parent’s card',
+    )
+  })
+
+  it('says so when the "No phase" filter matches nothing', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const build = must(await a.createPhase({ projectId: project.id, name: 'Build' }))
+    must(await a.createTask({ projectId: project.id, title: 'Ship it', phaseId: build.id }))
+    must(await a.load())
+    renderBoard(`/projects/${project.id}/board?phase=none`)
+    expect(screen.getByText('Every task in this project has a phase.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Clear filter' })).toBeInTheDocument()
   })
 
   it('shows skeletons while loading and an error with Retry when loading failed', async () => {

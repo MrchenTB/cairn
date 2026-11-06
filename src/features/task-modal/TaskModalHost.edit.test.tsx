@@ -307,7 +307,8 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
       .getAllByRole('option')
       .map((option) => option.querySelector('span span')?.textContent)
     // Not itself, not its own subtasks, not an existing blocker, not another project's task.
-    expect(names).toEqual(['Book a room', 'Submit draft'])
+    // (phases in order, then the tasks without a phase — the List's order)
+    expect(names).toEqual(['Submit draft', 'Book a room'])
 
     // "Submit draft" is blocked BY this task: linking it the other way would be a cycle.
     const cycle = within(listbox).getByRole('option', { name: /Submit draft/ })

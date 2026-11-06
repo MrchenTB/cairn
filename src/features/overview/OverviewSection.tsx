@@ -58,7 +58,10 @@ export function SectionLink({ to, children }: { to: string; children: ReactNode 
   )
 }
 
-/** Compact empty note inside a section (the page-level EmptyState is too large here). */
+/**
+ * Compact empty note inside a section (the page-level EmptyState is too large here): the message
+ * on the left, its one action on the same line when there is room.
+ */
 export function SectionEmpty({
   title,
   description,
@@ -69,10 +72,12 @@ export function SectionEmpty({
   action?: ReactNode
 }) {
   return (
-    <div className="flex flex-col items-start gap-1 rounded-lg bg-muted px-4 py-3.5">
-      <p className="text-ui font-medium text-fg-secondary">{title}</p>
-      {description ? <p className="text-meta text-fg-tertiary">{description}</p> : null}
-      {action ? <div className="mt-1.5">{action}</div> : null}
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 rounded-lg bg-muted px-4 py-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <p className="text-ui font-medium text-fg-secondary">{title}</p>
+        {description ? <p className="text-meta text-fg-tertiary">{description}</p> : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   )
 }

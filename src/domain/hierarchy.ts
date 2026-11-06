@@ -86,8 +86,8 @@ export interface ProjectOutline {
   /** true when the project has at least one phase */
   hasPhases: boolean
   /**
-   * groups[0] is ALWAYS the null-phase group (possibly empty), followed by one group per phase
-   * in phase sortOrder (empty phases included).
+   * One group per phase in phase sortOrder (empty phases included), then the null-phase group
+   * ("No phase", possibly empty) — ALWAYS last. A project without phases has just that group.
    */
   groups: OutlineGroup[]
 }
@@ -101,7 +101,7 @@ export function compareMilestones(a: Milestone, b: Milestone): number {
 }
 
 /**
- * Builds the List/Gantt outline. Inputs may contain other projects' rows; they are filtered out.
+ * Builds the List/Gantt outline (phases in order, then "No phase"). Inputs may contain other projects' rows; they are filtered out.
  * Tasks or milestones whose phase is not among `phases` go to the null-phase group. A subtask
  * whose parent is missing (or is itself a subtask) is shown as a top-level task, so corrupt
  * data never makes a task disappear.
@@ -114,7 +114,7 @@ export function buildProjectOutline(
 ): ProjectOutline {
   const projectPhases = phases.filter((phase) => phase.projectId === project.id).sort(bySortOrder)
   const noPhase: OutlineGroup = { phase: null, tasks: [], milestones: [] }
-  const groups: OutlineGroup[] = [noPhase]
+  const groups: OutlineGroup[] = []
   const groupByPhaseId = new Map<string, OutlineGroup>()
   for (const phase of projectPhases) {
     const group: OutlineGroup = { phase, tasks: [], milestones: [] }
@@ -146,6 +146,8 @@ export function buildProjectOutline(
   for (const milestone of milestones) {
     if (milestone.projectId === project.id) groupOf(milestone.phaseId).milestones.push(milestone)
   }
+  // "No phase" comes after the real phases: with phases, the plan leads and the leftovers follow.
+  groups.push(noPhase)
   for (const group of groups) group.milestones.sort(compareMilestones)
 
   return { project, hasPhases: projectPhases.length > 0, groups }

@@ -273,10 +273,10 @@ describe('expansion', () => {
     const model = build(seed(), { expanded: ['p'] })
     expect(outline(model)).toEqual([
       'v Launch',
+      '  In phase',
       '  No phase',
       '  Parent',
       '  Parent with dates',
-      '  In phase',
       '  ◆First',
       '  ◆Second',
     ])

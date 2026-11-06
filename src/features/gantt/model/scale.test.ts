@@ -226,7 +226,7 @@ describe('gridLines', () => {
 })
 
 describe('gridBackgroundStyle', () => {
-  it('draws a week hairline and a Saturday + Sunday band, both aligned to the origin weekday', () => {
+  it('draws the week/day line tile and a Saturday + Sunday band, both aligned to the origin weekday', () => {
     const origin = d('2026-10-26') // Monday
     const monday = gridBackgroundStyle('day', origin, 36, 1)
     expect(monday?.backgroundImage.split('linear-gradient')).toHaveLength(3) // 2 layers
@@ -248,25 +248,46 @@ describe('gridBackgroundStyle', () => {
     expect(mon?.backgroundPosition.split(', ')[0]).not.toBe(sun?.backgroundPosition.split(', ')[0])
   })
 
-  it('Day and Week use the same hairline colour; there is no per-day line', () => {
+  it('Day and Week draw the week hairline plus six fainter day lines in one tile', () => {
     const origin = d('2026-10-26')
     for (const [scale, width] of [
       ['day', 36],
       ['week', 16],
     ] as const) {
       const image = gridBackgroundStyle(scale, origin, width, 1)?.backgroundImage ?? ''
-      expect(image).toContain('var(--gantt-grid) 0 1px')
+      expect(image).toContain('var(--gantt-grid) 0 1px') // week start, same colour on both
       expect(image).not.toContain('grid-strong')
+      // six day lines, each 1px wide at its own day boundary inside the week
+      for (let day = 1; day < 7; day++) {
+        expect(image).toContain(`${day * width}px ${day * width + 1}px`)
+      }
+      expect(image.match(/--gantt-day-line/g)).toHaveLength(6)
+      // still one tile per week for the lines and one for the band (no extra layers)
+      expect(image.split('linear-gradient')).toHaveLength(3)
     }
   })
 
-  it('exposes the band as CSS variables for chips; none on Month', () => {
+  it('Week day lines are fainter than Day day lines', () => {
     const origin = d('2026-10-26')
-    expect(weekendBandVars('day', origin, 36)).toEqual({
+    expect(gridBackgroundStyle('day', origin, 36, 1)?.backgroundImage).not.toContain('color-mix')
+    expect(gridBackgroundStyle('week', origin, 16, 1)?.backgroundImage).toContain(
+      'color-mix(in srgb, var(--gantt-day-line) 75%, transparent)',
+    )
+  })
+
+  it('exposes the band and the lines as CSS variables for chips; none on Month', () => {
+    const origin = d('2026-10-26') // Monday
+    expect(weekendBandVars('day', origin, 36, 1)).toEqual({
       '--wk-image': expect.stringContaining('--gantt-weekend'),
       '--wk-size': `${7 * 36}px 100%`,
       '--wk-x': `${5 * 36}px`,
+      '--wk-lines': expect.stringContaining('--gantt-day-line'),
+      '--wk-lx': '0px',
     })
+    // the line tile follows the week start (Sunday: 6 days after a Monday origin), the band does not
+    const sunday = weekendBandVars('week', origin, 16, 0)
+    expect(sunday['--wk-lx']).toBe(`${6 * 16}px`)
+    expect(sunday['--wk-x']).toBe(`${5 * 16}px`)
     expect(weekendBandVars('month', origin, 5)).toEqual({})
   })
 

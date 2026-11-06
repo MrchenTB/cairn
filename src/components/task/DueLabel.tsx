@@ -16,7 +16,8 @@ export interface DueLabelProps {
 
 /**
  * Due date in the shared bucket language: overdue = danger tone + icon + "Overdue" for AT,
- * today = warning tone ("Today"), otherwise tertiary. Done tasks are always neutral.
+ * today = warning tone ("Today"), otherwise tertiary. Done tasks are always neutral. The text is
+ * the short form; the hover title always spells the whole date out ("Friday, November 13, 2026").
  */
 export function DueLabel({ dueDate, status, empty = null, className }: DueLabelProps) {
   const today = useToday()
@@ -27,7 +28,7 @@ export function DueLabel({ dueDate, status, empty = null, className }: DueLabelP
   return (
     <span
       data-bucket={bucket}
-      title={`${overdue ? 'Overdue · ' : ''}Due ${formatDate(dueDate, 'medium')}`}
+      title={`${overdue ? 'Overdue · ' : ''}Due ${formatDate(dueDate, 'long')}`}
       className={cn(
         'inline-flex items-center gap-1 text-meta whitespace-nowrap tabular-nums',
         overdue ? 'text-danger' : bucket === 'today' ? 'text-warning' : 'text-fg-tertiary',

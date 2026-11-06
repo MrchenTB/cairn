@@ -181,8 +181,8 @@ export function TimelineChart({
     [scale, rangeStart, rangeEnd, win, dayWidth],
   )
   const bandVars = useMemo(
-    () => weekendBandVars(scale, rangeStart, dayWidth) as CSSProperties,
-    [scale, rangeStart, dayWidth],
+    () => weekendBandVars(scale, rangeStart, dayWidth, weekStartsOn) as CSSProperties,
+    [scale, rangeStart, dayWidth, weekStartsOn],
   )
   const gridStyle = useMemo(
     () => gridBackgroundStyle(scale, rangeStart, dayWidth, weekStartsOn),

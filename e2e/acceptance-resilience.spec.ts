@@ -2603,9 +2603,9 @@ test.describe('AC-15: phases, milestones, dependencies and subtasks', () => {
     await phaseMenu('Discovery', 'Move phase down')
     failure = toast(page, "Couldn't move phase")
     await expectFailedHonestly(page, failure, before)
-    expect(await groupOrder()).toEqual(['No phase', 'Discovery', 'Built', 'Fresh phase'])
+    expect(await groupOrder()).toEqual(['Discovery', 'Built', 'Fresh phase', 'No phase'])
     await retryButton(failure).click()
-    await expect.poll(groupOrder).toEqual(['No phase', 'Built', 'Discovery', 'Fresh phase'])
+    await expect.poll(groupOrder).toEqual(['Built', 'Discovery', 'Fresh phase', 'No phase'])
     expect(await phaseNames()).toEqual(['Built', 'Discovery', 'Fresh phase'])
     await expectRecovered(page, failure)
 

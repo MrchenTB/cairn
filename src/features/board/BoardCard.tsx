@@ -1,4 +1,12 @@
-import { memo, useId, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  memo,
+  useId,
+  useMemo,
+  useRef,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
@@ -71,6 +79,12 @@ interface CardContentProps {
   actions?: ReactNode
   /** Keeps the layout but hides the content (the drag placeholder). */
   hidden?: boolean
+  /**
+   * Pointer routing of the due date: the card's content lets pointer events through to the
+   * activator below, so a hover title needs its own hit area — which then passes a press on to
+   * the drag and a click on to "open" itself. Omitted in the overlay.
+   */
+  dueHandlers?: { onPointerDown: (event: PointerEvent<HTMLElement>) => void; onClick: () => void }
 }
 
 /**
@@ -88,6 +102,7 @@ function CardContent({
   status,
   actions,
   hidden = false,
+  dueHandlers,
 }: CardContentProps) {
   const chip = showPhase ? phase : null
   const project = useProject(task.projectId)
@@ -112,7 +127,16 @@ function CardContent({
           {task.priority !== 'none' ? (
             <PriorityIcon priority={task.priority} size={14} decorative />
           ) : null}
-          <DueLabel dueDate={task.dueDate} status={task.status} />
+          {task.dueDate ? (
+            // Hover: the whole date ("Friday, November 13, 2026"); the text is "Nov 13".
+            <span
+              className={cn(dueHandlers && 'pointer-events-auto')}
+              onPointerDown={dueHandlers?.onPointerDown}
+              onClick={dueHandlers?.onClick}
+            >
+              <DueLabel dueDate={task.dueDate} status={task.status} />
+            </span>
+          ) : null}
           {subtasksTotal > 0 ? (
             <span className="inline-flex items-center gap-1 tabular-nums">
               <ListTree className="size-3.5 shrink-0" strokeWidth={1.5} />
@@ -259,6 +283,7 @@ interface SortableCardBodyProps {
   onStatusChange: (taskId: string, status: TaskStatus) => void
   onPriorityChange: (taskId: string, priority: TaskPriority) => void
   onStep: (taskId: string, step: ColumnStep) => void
+  dueHandlers: CardContentProps['dueHandlers']
 }
 
 /**
@@ -279,6 +304,7 @@ const SortableCardBody = memo(function SortableCardBody({
   onStatusChange,
   onPriorityChange,
   onStep,
+  dueHandlers,
 }: SortableCardBodyProps) {
   return (
     <CardContent
@@ -288,6 +314,7 @@ const SortableCardBody = memo(function SortableCardBody({
       subtasksTotal={subtasksTotal}
       showPhase={showPhase}
       hidden={hidden}
+      dueHandlers={dueHandlers}
       status={
         <StatusMenu value={task.status} onChange={(status) => onStatusChange(task.id, status)} />
       }
@@ -307,7 +334,10 @@ const SortableCardBody = memo(function SortableCardBody({
   )
 })
 
-export interface SortableBoardCardProps extends Omit<SortableCardBodyProps, 'hidden'> {
+export interface SortableBoardCardProps extends Omit<
+  SortableCardBodyProps,
+  'hidden' | 'dueHandlers'
+> {
   today: ISODate
   onNavigate: (taskId: string, direction: BoardDirection) => void
 }
@@ -350,6 +380,13 @@ export const SortableBoardCard = memo(function SortableBoardCard({
     transition: SORTABLE_TRANSITION,
   })
   const descriptionId = useId()
+  const dueHandlers = useMemo(
+    () => ({
+      onPointerDown: (event: PointerEvent<HTMLElement>) => listeners?.onPointerDown?.(event),
+      onClick: () => onOpen(task.id),
+    }),
+    [listeners, onOpen, task.id],
+  )
   const description = useMemo(
     () =>
       describeCard({ task, phase, subtasks: { done: subtasksDone, total: subtasksTotal } }, today, {
@@ -422,6 +459,7 @@ export const SortableBoardCard = memo(function SortableBoardCard({
         onStatusChange={onStatusChange}
         onPriorityChange={onPriorityChange}
         onStep={onStep}
+        dueHandlers={dueHandlers}
       />
       {/* Hidden but referenced: read as the card's description, not again as loose text. */}
       {description ? (

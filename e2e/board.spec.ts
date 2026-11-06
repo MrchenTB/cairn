@@ -1212,10 +1212,10 @@ test.describe('board cards, Task Modal and phase filter (local mode)', () => {
 
     await page.getByRole('combobox', { name: /^Phase filter/ }).click()
     await page.getByRole('option', { name: 'Discovery' }).click()
-    await expect(page.getByText('No tasks in “Discovery” yet.')).toBeVisible()
+    await expect(page.getByText('No tasks in Discovery')).toBeVisible()
     await expect(column(page, 'To Do')).toHaveAccessibleName('To Do 0 tasks')
 
-    await page.getByRole('button', { name: 'Show all phases' }).click()
+    await page.getByRole('button', { name: 'Clear filter' }).click()
     await expect(card(page, 'Only one')).toBeVisible()
   })
 

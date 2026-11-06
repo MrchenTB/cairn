@@ -237,6 +237,51 @@ describe('MyTasksPage', () => {
     expect(screen.queryByText('Archived task')).not.toBeInTheDocument()
   })
 
+  it('narrows All to Today + Upcoming with ?due=soon (the Overview’s Due soon)', async () => {
+    await seedStandard()
+    const { user } = renderMyTasks('/my-tasks/all?due=soon')
+    const region = screen.getByRole('region', { name: 'Tasks due soon' })
+    const headings = within(region).getAllByRole('heading', { level: 2 })
+    expect(headings.map((heading) => heading.textContent)).toEqual([
+      'Today2, 2 tasks',
+      'Upcoming1, 1 task',
+    ])
+    // Today 2 + Upcoming 1 = the Overview's number; overdue, later and undated tasks are out.
+    expect(region.querySelectorAll('[data-task-row]')).toHaveLength(3)
+    expect(screen.queryByText('Confirm venue')).not.toBeInTheDocument()
+    expect(screen.queryByText('Write report')).not.toBeInTheDocument()
+    // The filter says what it keeps and has a way out; the completed switch has nothing to do.
+    const bar = document.querySelector('[data-slot="due-soon-filter"]') as HTMLElement
+    expect(bar).toHaveTextContent('Due soon · 3 tasks')
+    expect(screen.queryByRole('switch', { name: /Show completed/ })).not.toBeInTheDocument()
+    await user.click(within(bar).getByRole('link', { name: 'Clear filter' }))
+    expect(location()).toBe('/my-tasks/all')
+    expect(screen.getByRole('region', { name: 'All tasks' })).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="due-soon-filter"]')).toBeNull()
+  })
+
+  it('ignores ?due=soon off the All tab and unknown values', async () => {
+    await seedStandard()
+    renderMyTasks('/my-tasks/overdue?due=soon')
+    expect(document.querySelector('[data-slot="due-soon-filter"]')).toBeNull()
+    expect(rowNames(screen.getByRole('list', { name: 'Overdue tasks' }))).toEqual(['Confirm venue'])
+  })
+
+  it('says so when nothing is due soon, and leads back to all open tasks', async () => {
+    await seedWorkspace({
+      projects: [research],
+      tasks: [makeTask({ projectId: research.id, title: 'Far away', dueDate: testToday(30) })],
+    })
+    renderMyTasks('/my-tasks/all?due=soon')
+    expect(
+      screen.getByRole('heading', { name: 'Nothing due in the next 7 days' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'View all 1 open task' })).toHaveAttribute(
+      'href',
+      '/my-tasks/all',
+    )
+  })
+
   it('has an empty state for every tab', async () => {
     await seedWorkspace({
       projects: [research],

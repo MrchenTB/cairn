@@ -339,12 +339,33 @@ const WEEKEND_GRADIENT = (dayWidth: number) =>
   `linear-gradient(90deg, var(--gantt-weekend) 0 ${2 * dayWidth}px, transparent ${2 * dayWidth}px)`
 
 /**
+ * Line layer: one tile per week holding every 1px line of it — the week-start hairline
+ * (`--gantt-grid`) and the six day lines inside the week (`--gantt-day-line`, fainter; fainter
+ * still on Week, where a day is only 16px wide). One gradient, not one per kind, so a line
+ * never composites with another one and the week hairline keeps its own strength.
+ */
+const LINES_GRADIENT = (scale: GanttScale, dayWidth: number) => {
+  const dayLine =
+    scale === 'day'
+      ? 'var(--gantt-day-line)'
+      : 'color-mix(in srgb, var(--gantt-day-line) 75%, transparent)'
+  const stops = ['var(--gantt-grid) 0 1px', `transparent 1px ${dayWidth}px`]
+  for (let day = 1; day < 7; day++) {
+    const x = day * dayWidth
+    stops.push(`${dayLine} ${x}px ${x + 1}px`)
+    stops.push(day < 6 ? `transparent ${x + 1}px ${x + dayWidth}px` : `transparent ${x + 1}px`)
+  }
+  return `linear-gradient(90deg, ${stops.join(', ')})`
+}
+
+/**
  * Regular grid painted with CSS gradients — no per-day DOM nodes. Two tiles per week, aligned by
- * a background-position offset to the origin's weekday: a hairline at the week start (the same on
- * Day and Week) and the Saturday + Sunday band. The band is one continuous column through every
- * row — it only reads as a calendar, not a checkerboard, because the phase header lanes paint
- * nothing over it and there is no per-day line. Weekend dates are also tinted in the Day header
- * cells (TimeHeader). Month = none (month lines are `gridLines`).
+ * a background-position offset to the origin's weekday: the line tile (a week-start hairline plus
+ * faint day lines on Day and Week) and the Saturday + Sunday band, lines on top. The band is one
+ * continuous column through every row and the day lines are far fainter than the week hairline,
+ * so it still reads as a calendar, not a checkerboard — the phase header lanes paint nothing
+ * over either. Weekend dates are also tinted in the Day header cells (TimeHeader). Month = none
+ * (month lines are `gridLines`).
  */
 export function gridBackgroundStyle(
   scale: GanttScale,
@@ -356,25 +377,24 @@ export function gridBackgroundStyle(
   const originWeekday = dayOfWeek(fromEpochDay(originDay)) // 0 = Sunday
   const week = 7 * dayWidth
   return {
-    backgroundImage: [
-      'linear-gradient(90deg, var(--gantt-grid) 0 1px, transparent 1px)',
-      WEEKEND_GRADIENT(dayWidth),
-    ].join(', '),
+    backgroundImage: [LINES_GRADIENT(scale, dayWidth), WEEKEND_GRADIENT(dayWidth)].join(', '),
     backgroundSize: `${week}px 100%, ${week}px 100%`,
     backgroundPosition: `${mod(weekStartsOn - originWeekday, 7) * dayWidth}px 0, ${mod(6 - originWeekday, 7) * dayWidth}px 0`,
   }
 }
 
 /**
- * The weekend band as CSS custom properties (`--wk-image`, `--wk-size`, `--wk-x`), set once on the
- * chart body. Text chips that sit on the lane (outside bar labels) paint the same band under
- * themselves, aligned to the grid, so an opaque chip never shows as a lighter patch on a weekend.
- * Empty on Month (no band).
+ * The grid layers as CSS custom properties, set once on the chart body: the weekend band
+ * (`--wk-image`, `--wk-size`, `--wk-x`) and the line tile (`--wk-lines`, `--wk-lx`, same size).
+ * Text chips that sit on the lane (outside bar labels) paint both under themselves, aligned to the
+ * grid, so an opaque chip never shows as a lighter patch on a weekend or a gap in the lines.
+ * Empty on Month (no band, no day lines).
  */
 export function weekendBandVars(
   scale: GanttScale,
   originDay: number,
   dayWidth: number,
+  weekStartsOn: 0 | 1 = 1,
 ): Record<string, string> {
   if (!SCALES[scale].dayGrid) return {}
   const originWeekday = dayOfWeek(fromEpochDay(originDay))
@@ -382,6 +402,8 @@ export function weekendBandVars(
     '--wk-image': WEEKEND_GRADIENT(dayWidth),
     '--wk-size': `${7 * dayWidth}px 100%`,
     '--wk-x': `${mod(6 - originWeekday, 7) * dayWidth}px`,
+    '--wk-lines': LINES_GRADIENT(scale, dayWidth),
+    '--wk-lx': `${mod(weekStartsOn - originWeekday, 7) * dayWidth}px`,
   }
 }
 

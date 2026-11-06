@@ -6,6 +6,8 @@ import {
   miniTimeline,
   placeSpan,
   projectSpan,
+  projectTiming,
+  projectTimings,
   timelineWindow,
   upcomingMilestones,
   upcomingTasks,
@@ -259,5 +261,99 @@ describe('miniTimeline', () => {
     expect(result.rows.map((row) => row.project.id)).toEqual(['a', 'b'])
     expect(result.more).toBe(1)
     expect(result.idle).toBe(0)
+  })
+})
+
+describe('projectTiming', () => {
+  const noProjectDates = { startDate: null, dueDate: null }
+
+  it('prefers the due date the user set, with its start when there is one', () => {
+    const tasks = [{ startDate: '2026-11-01', dueDate: '2026-11-05' }]
+    expect(projectTiming({ startDate: '2026-10-01', dueDate: '2026-12-01' }, tasks, [])).toEqual({
+      kind: 'due',
+      start: '2026-10-01',
+      due: '2026-12-01',
+    })
+    expect(projectTiming({ startDate: null, dueDate: '2026-12-01' }, tasks, [])).toEqual({
+      kind: 'due',
+      start: null,
+      due: '2026-12-01',
+    })
+  })
+
+  it('marks the extent of tasks and milestones as derived when no due date is set', () => {
+    const tasks = [
+      { startDate: '2026-11-04', dueDate: '2026-11-09' },
+      { startDate: null, dueDate: '2026-11-20' },
+    ]
+    expect(projectTiming(noProjectDates, tasks, [{ date: '2026-11-02' }])).toEqual({
+      kind: 'derived',
+      start: '2026-11-02',
+      end: '2026-11-20',
+      from: 'tasks',
+    })
+    // Only milestones are dated: say so instead of claiming tasks.
+    expect(projectTiming(noProjectDates, [], [{ date: '2026-11-02' }])).toEqual({
+      kind: 'derived',
+      start: '2026-11-02',
+      end: '2026-11-02',
+      from: 'milestones',
+    })
+    // An own start alone does not hide the tasks' extent.
+    expect(projectTiming({ startDate: '2026-10-01', dueDate: null }, tasks, [])).toMatchObject({
+      kind: 'derived',
+    })
+  })
+
+  it('falls back to an own start, then to nothing', () => {
+    expect(projectTiming({ startDate: '2026-10-01', dueDate: null }, [], [])).toEqual({
+      kind: 'starts',
+      start: '2026-10-01',
+    })
+    expect(projectTiming(noProjectDates, [{ startDate: null, dueDate: null }], [])).toEqual({
+      kind: 'none',
+    })
+    // A corrupt own date is ignored, never shown.
+    expect(projectTiming({ startDate: null, dueDate: 'soon' }, [], [])).toEqual({ kind: 'none' })
+  })
+
+  it('projectTimings groups tasks and milestones per project', () => {
+    const a = makeProject({ id: 'a' })
+    const b = makeProject({ id: 'b', dueDate: '2026-12-01', sortOrder: 'a1' })
+    const data = makeWorkspace({
+      projects: [a, b],
+      tasks: [
+        makeTask({ projectId: 'a', startDate: '2026-11-03', dueDate: '2026-11-05' }),
+        makeTask({ projectId: 'b', dueDate: '2026-11-30' }),
+      ],
+      milestones: [makeMilestone({ projectId: 'a', date: '2026-11-10' })],
+    })
+    expect(projectTimings(data, [a, b])).toEqual({
+      a: { kind: 'derived', start: '2026-11-03', end: '2026-11-10', from: 'tasks' },
+      b: { kind: 'due', start: null, due: '2026-12-01' },
+    })
+  })
+})
+
+describe('miniTimeline derived spans', () => {
+  const window = timelineWindow(TODAY, 1)
+
+  it('flags a bar whose ends come from tasks, not from the project', () => {
+    const own = makeProject({
+      id: 'own',
+      startDate: '2026-11-02',
+      dueDate: '2026-11-20',
+      sortOrder: 'a0',
+    })
+    const rolled = makeProject({ id: 'rolled', dueDate: '2026-11-20', sortOrder: 'a1' })
+    const data = makeWorkspace({
+      projects: [own, rolled],
+      tasks: [makeTask({ projectId: 'rolled', startDate: '2026-11-04', dueDate: '2026-11-08' })],
+    })
+    const { rows } = miniTimeline(data, [own, rolled], window)
+    expect(rows.map((row) => [row.project.id, row.derived])).toEqual([
+      ['own', null],
+      ['rolled', 'tasks'],
+    ])
   })
 })

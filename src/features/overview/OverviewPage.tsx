@@ -26,10 +26,17 @@ import {
 import { bucketPopulation, myTasks, overviewMetrics } from '@/domain/buckets'
 import { formatDate } from '@/domain/dates'
 import { progressByProject } from '@/domain/progress'
+import { taskCountsByProject } from '@/features/projects/projectStats'
 import { ActiveProjects } from './ActiveProjects'
 import { MetricStrip } from './MetricStrip'
 import { MiniTimeline } from './MiniTimeline'
-import { miniTimeline, timelineWindow, upcomingMilestones, upcomingTasks } from './overviewModel'
+import {
+  miniTimeline,
+  projectTimings,
+  timelineWindow,
+  upcomingMilestones,
+  upcomingTasks,
+} from './overviewModel'
 import { UpcomingMilestones } from './UpcomingMilestones'
 import { UpcomingTasks } from './UpcomingTasks'
 
@@ -75,6 +82,8 @@ function Overview() {
     () => miniTimeline(data, active, timelineWindow(today, weekStartsOn)),
     [data, active, today, weekStartsOn],
   )
+  const counts = useMemo(() => taskCountsByProject(data), [data])
+  const timings = useMemo(() => projectTimings(data, active), [data, active])
   const hasTasks = useMemo(() => bucketPopulation(data).length > 0, [data])
   const hasAnyProject = Object.keys(data.projects).length > 0
 
@@ -114,12 +123,14 @@ function Overview() {
         <ActiveProjects
           projects={active}
           progress={progress}
+          counts={counts}
+          timings={timings}
           today={today}
           hasOtherProjects={Object.keys(data.projects).length > active.length}
         />
         {/* Two columns only when each has room for a subtask title next to project and date. */}
         <div className="grid gap-8 @[58rem]:grid-cols-2">
-          <UpcomingTasks upcoming={upcoming} hasTasks={hasTasks} />
+          <UpcomingTasks upcoming={upcoming} hasTasks={hasTasks} openCount={metrics.openTasks} />
           <UpcomingMilestones milestones={milestones} projects={data.projects} today={today} />
         </div>
         {active.length > 0 ? <MiniTimeline timeline={timeline} today={today} /> : null}

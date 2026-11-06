@@ -122,8 +122,6 @@ describe('GanttView', () => {
       row.getAttribute('data-row-key'),
     )
     expect(rows).toEqual([
-      'group:none',
-      `task:${s.brief.id}`,
       `group:${s.design.id}`,
       `task:${s.wire.id}`,
       `task:${s.visual.id}`,
@@ -132,6 +130,8 @@ describe('GanttView', () => {
       `task:${s.parent.id}`,
       `task:${s.child.id}`,
       `milestone:${s.milestone.id}`,
+      'group:none', // "No phase" comes after the phases
+      `task:${s.brief.id}`,
       'unscheduled',
       `task:${s.idea.id}`,
     ])
@@ -139,6 +139,16 @@ describe('GanttView', () => {
       'aria-expanded',
       'true',
     )
+    // Group counts say what they count: tasks with dates (subtasks included) — not the List's number.
+    const designCount = within(
+      screen.getByRole('button', { name: new RegExp(`^${s.design.name}, \\d+ tasks?$`) }),
+    ).getByTitle(/with dates, subtasks included$/)
+    expect(designCount).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('button', { name: 'Unscheduled, 1 task' })).getByTitle(
+        '1 task without dates, subtasks included',
+      ),
+    ).toBeInTheDocument()
     // Each outline row: status glyph, title (opens the modal), due text.
     const wireRow = chart().querySelector(`[data-row-key="task:${s.wire.id}"]`) as HTMLElement
     expect(within(wireRow).getByRole('img', { name: 'Status: To Do' })).toBeInTheDocument()

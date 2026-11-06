@@ -78,20 +78,21 @@ describe('buildGanttRows', () => {
         makeMilestone({ projectId: 'p', phaseId: p1.id, name: 'Review', date: '2026-11-09' }),
       ],
     })
+    // Phases first, in their order; "No phase" comes last (iteration 3).
     expect(model.rows.map(describeRow)).toEqual([
-      'group:No phase',
-      'Loose',
       'group:Design',
       'Wireframes',
       '◆Review',
       'group:Build',
+      'group:No phase',
+      'Loose',
     ])
-    const design = model.rows[2]
+    const design = model.rows[0]
     expect(design.kind === 'group' && design.rollup).toEqual({
       start: d('2026-11-02'),
       end: d('2026-11-09'),
     })
-    const build = model.rows[5]
+    const build = model.rows[3]
     expect(build.kind === 'group' && build.rollup).toBeNull()
 
     const withoutLoose = rowsOf({ phases: [p1], tasks: [] })

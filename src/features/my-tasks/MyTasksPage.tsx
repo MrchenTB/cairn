@@ -6,7 +6,7 @@
  */
 import { useMemo, type ComponentType, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
-import { CalendarCheck, CalendarRange, CircleCheck, Info, ListTodo, Plus } from 'lucide-react'
+import { CalendarCheck, CalendarRange, CircleCheck, Info, ListTodo, Plus, X } from 'lucide-react'
 import { useViewShortcut } from '@/app/shortcuts'
 import { useUIStore } from '@/app/uiStore'
 import { ErrorState } from '@/components/layout/ErrorState'
@@ -31,12 +31,15 @@ import { myTasks } from '@/domain/buckets'
 import { formatDate } from '@/domain/dates'
 import { cn } from '@/lib/utils'
 import {
+  DUE_FILTER_PARAM,
   GROUP_LABELS,
   MY_TASKS_TABS,
   SHOW_COMPLETED_PARAM,
   TAB_DEFINITIONS,
   TAB_LABELS,
+  dueSoonGroups,
   groupAllTasks,
+  isDueSoonFilter,
   myTasksCounts,
   parseMyTasksTab,
   type MyTasksCounts,
@@ -69,7 +72,10 @@ function MyTasks() {
   const params = useParams()
   const tab = parseMyTasksTab(params.tab)
   const [searchParams, setSearchParams] = useSearchParams()
-  const showCompleted = tab === 'all' && searchParams.get(SHOW_COMPLETED_PARAM) === '1'
+  // `?due=soon` (the Overview's Due soon card): the All tab narrowed to Today + Upcoming. Done
+  // tasks are never in those sections, so the "Show completed" switch has nothing to do there.
+  const dueSoon = tab === 'all' && isDueSoonFilter(searchParams.get(DUE_FILTER_PARAM))
+  const showCompleted = tab === 'all' && !dueSoon && searchParams.get(SHOW_COMPLETED_PARAM) === '1'
   const data = useWorkspaceData()
   const today = useToday()
   const buckets = useMemo(() => myTasks(data, today), [data, today])
@@ -93,12 +99,13 @@ function MyTasks() {
 
   const sections = useMemo<TaskRowSection[]>(() => {
     if (tab !== 'all') return [{ key: tab, tasks: buckets[tab] }]
-    return groupAllTasks(buckets.all, today, showCompleted).map((group) => ({
+    const groups = groupAllTasks(buckets.all, today, showCompleted)
+    return (dueSoon ? dueSoonGroups(groups) : groups).map((group) => ({
       key: group.bucket,
       title: GROUP_LABELS[group.bucket],
       tasks: group.tasks,
     }))
-  }, [tab, buckets, today, showCompleted])
+  }, [tab, buckets, today, showCompleted, dueSoon])
   const empty = sections.every((section) => section.tasks.length === 0)
 
   return (
@@ -128,7 +135,7 @@ function MyTasks() {
         tabs={<MyTasksTabs counts={counts} />}
         viewActions={
           <>
-            {tab === 'all' ? (
+            {tab === 'all' && !dueSoon ? (
               <div className="flex items-center gap-2 pr-1">
                 {/* The name is fixed (the visible text shortens in a narrow view bar). */}
                 <Switch
@@ -150,17 +157,33 @@ function MyTasks() {
           </>
         }
       />
+      {dueSoon ? <DueSoonFilterBar count={counts.today + counts.upcoming} /> : null}
       {empty ? (
-        <MyTasksEmpty
-          tab={tab}
-          counts={counts}
-          onNewTask={newTask}
-          onShowCompleted={() => setShowCompleted(true)}
-        />
+        dueSoon ? (
+          <EmptyState
+            icon={CalendarRange}
+            title="Nothing due in the next 7 days"
+            description="Tasks due today or within a week show up here."
+            secondaryAction={
+              <Button variant="link" size="sm" asChild>
+                <Link to="/my-tasks/all">View all {taskCount(counts.all, 'open task')}</Link>
+              </Button>
+            }
+          />
+        ) : (
+          <MyTasksEmpty
+            tab={tab}
+            counts={counts}
+            onNewTask={newTask}
+            onShowCompleted={() => setShowCompleted(true)}
+          />
+        )
       ) : (
         <TaskRowList
           sections={sections}
-          label={tab === 'all' ? 'All tasks' : `${TAB_LABELS[tab]} tasks`}
+          label={
+            dueSoon ? 'Tasks due soon' : tab === 'all' ? 'All tasks' : `${TAB_LABELS[tab]} tasks`
+          }
           showsDone={showCompleted}
           rowClassName="pr-6 pl-5"
           headingClassName="sticky top-(--viewbar-height) z-(--z-sticky) px-6"
@@ -168,6 +191,28 @@ function MyTasks() {
         />
       )}
     </PageContainer>
+  )
+}
+
+/** The active "Due soon" filter: what it keeps, how many tasks, and one click back to All. */
+function DueSoonFilterBar({ count }: { count: number }) {
+  return (
+    <div
+      data-slot="due-soon-filter"
+      className="flex min-h-8 items-center justify-between gap-3 px-6 pt-1 text-meta text-fg-secondary"
+    >
+      <p>
+        <span className="font-medium text-fg">Due soon</span>
+        <span className="text-fg-tertiary tabular-nums"> · {taskCount(count)}</span>
+        <span className="text-fg-tertiary"> due today or in the next 7 days</span>
+      </p>
+      <Button variant="ghost" size="xs" asChild className="-mr-2 shrink-0">
+        <Link to="/my-tasks/all" replace>
+          <X aria-hidden strokeWidth={1.75} />
+          Clear filter
+        </Link>
+      </Button>
+    </div>
   )
 }
 

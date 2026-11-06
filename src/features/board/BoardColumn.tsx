@@ -95,7 +95,11 @@ export const BoardColumn = memo(function BoardColumn({
         >
           {/* Explicit spaces: the heading names the region "To Do 3 tasks". */}
           <span className="truncate">{label}</span>{' '}
-          <span className="text-meta font-normal text-fg-tertiary tabular-nums">
+          {/* The count is top-level tasks (of the active phase filter); subtasks sit on their parent. */}
+          <span
+            title="Top-level tasks; subtasks show on their parent’s card"
+            className="text-meta font-normal text-fg-tertiary tabular-nums"
+          >
             {cards.length} <span className="sr-only">{cards.length === 1 ? 'task' : 'tasks'}</span>
           </span>
         </h2>

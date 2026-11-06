@@ -35,6 +35,20 @@ export const TAB_DEFINITIONS: Record<MyTasksTab, string> = {
 /** Query param of the All tab's "Show completed" switch (`?completed=1`; default off). */
 export const SHOW_COMPLETED_PARAM = 'completed'
 
+/**
+ * Query param of the All tab's "Due soon" filter (`?due=soon`): only the Today and Upcoming
+ * sections, i.e. the tasks the Overview's "Due soon" number counts (today … today + 7 days).
+ */
+export const DUE_FILTER_PARAM = 'due'
+export const DUE_SOON = 'soon'
+/** The All tab filtered to "Due soon" — where the Overview's Due soon card leads. */
+export const DUE_SOON_HREF = `/my-tasks/all?${DUE_FILTER_PARAM}=${DUE_SOON}`
+
+/** Whether a `?due=` value asks for the Due soon filter (anything else is ignored). */
+export function isDueSoonFilter(value: string | null | undefined): boolean {
+  return value === DUE_SOON
+}
+
 export interface MyTasksCounts {
   today: number
   upcoming: number
@@ -87,6 +101,11 @@ export function groupAllTasks(
   return ALL_TAB_GROUPS.filter((bucket) => showCompleted || bucket !== 'done')
     .map((bucket) => ({ bucket, tasks: groups.get(bucket) ?? [] }))
     .filter((group) => group.tasks.length > 0)
+}
+
+/** The Due soon filter: keeps the Today and Upcoming sections of the All tab's groups. */
+export function dueSoonGroups(groups: readonly TaskGroup[]): TaskGroup[] {
+  return groups.filter((group) => group.bucket === 'today' || group.bucket === 'upcoming')
 }
 
 /**

@@ -123,11 +123,12 @@ describe('buildTasksCsv', () => {
       'Project,Phase,Parent task,Title,Status,Priority,Start,Due,Completed at,Description',
     )
     expect(lines.slice(1, -1)).toEqual([
-      '"First, Inc.",,,Loose,To Do,None,,,,',
       // the description's line break stays inside the quoted field
       '"First, Inc.",Plan,,Design,Done,None,2026-11-02,2026-11-04,2026-11-04T10:00:00.000Z,"Line 1\nLine ""2"""',
       '"First, Inc.",Plan,Design,Sketch,In Progress,None,,,,',
       '"First, Inc.",Build,,Ship,To Do,Urgent,,,,',
+      // tasks without a phase come after the phases, as in the List
+      '"First, Inc.",,,Loose,To Do,None,,,,',
       'Second,,,Old,To Do,Low,,,,',
     ])
     expect(lines.at(-1)).toBe('')

@@ -1,5 +1,4 @@
 import { useMemo } from 'react'
-import { Link } from 'react-router'
 import { Plus } from 'lucide-react'
 import { useUIStore } from '@/app/uiStore'
 import { Button } from '@/components/ui/button'
@@ -12,6 +11,8 @@ export interface UpcomingTasksProps {
   upcoming: UpcomingTasksModel
   /** Tasks in the bucket population at all (any status). */
   hasTasks: boolean
+  /** Open tasks in the bucket population (= My Tasks › All). */
+  openCount: number
 }
 
 /**
@@ -19,7 +20,7 @@ export interface UpcomingTasksProps {
  * and rules as My Tasks, at most UPCOMING_TASKS_LIMIT. Status changes in place; a row opens the
  * Task Modal.
  */
-export function UpcomingTasks({ upcoming, hasTasks }: UpcomingTasksProps) {
+export function UpcomingTasks({ upcoming, hasTasks, openCount }: UpcomingTasksProps) {
   const openNewTask = useUIStore((s) => s.openNewTask)
   const sections = useMemo(() => [{ key: 'upcoming', tasks: upcoming.tasks }], [upcoming.tasks])
   return (
@@ -32,11 +33,17 @@ export function UpcomingTasks({ upcoming, hasTasks }: UpcomingTasksProps) {
         hasTasks ? (
           <SectionEmpty
             title="Nothing due in the next 7 days"
-            description="Tasks due within a week — and anything overdue — show up here."
+            description={
+              openCount > 0
+                ? 'Anything overdue, due today or within a week shows up here.'
+                : 'Every task is done.'
+            }
             action={
-              <Button variant="link" size="sm" asChild>
-                <Link to="/my-tasks/all">View all tasks</Link>
-              </Button>
+              <SectionLink to={openCount > 0 ? '/my-tasks/all' : '/my-tasks/all?completed=1'}>
+                {openCount > 0
+                  ? `View all ${openCount.toLocaleString('en-US')} open ${openCount === 1 ? 'task' : 'tasks'}`
+                  : 'View completed tasks'}
+              </SectionLink>
             }
           />
         ) : (
@@ -58,7 +65,7 @@ export function UpcomingTasks({ upcoming, hasTasks }: UpcomingTasksProps) {
             label="Upcoming tasks"
             showsDone={false}
             showPriority={false}
-            projectClassName="w-32"
+            projectClassName="w-48 @[58rem]:w-36"
             rowClassName="-mx-3 rounded-md pr-1.5 pl-1"
           />
           <div

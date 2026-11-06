@@ -273,6 +273,44 @@ describe('OverviewPage metrics', () => {
   })
 })
 
+describe('OverviewPage metric cards', () => {
+  it('link to the list each number counts', async () => {
+    await seedStandard()
+    renderOverview()
+    const hrefOf = (key: string) =>
+      document.querySelector(`[data-metric="${key}"] a`)?.getAttribute('href')
+    expect(hrefOf('active')).toBe('/projects?status=active')
+    expect(hrefOf('open')).toBe('/my-tasks/all')
+    expect(hrefOf('soon')).toBe('/my-tasks/all?due=soon')
+    expect(hrefOf('overdue')).toBe('/my-tasks/overdue')
+    // The number is read with the link.
+    expect(screen.getByRole('link', { name: 'Overdue' })).toHaveAccessibleDescription('2')
+  })
+
+  it('opens the destination with Enter on the focused card', async () => {
+    await seedStandard()
+    const { user } = renderOverview()
+    const card = screen.getByRole('link', { name: /Due soon/ })
+    card.focus()
+    expect(card).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(location()).toBe('/my-tasks/all?due=soon')
+  })
+
+  it('shows a zero quietly: tertiary, never the danger or a result colour', async () => {
+    await seedWorkspace({
+      projects: [research],
+      tasks: [makeTask({ projectId: research.id, dueDate: testToday(20) })],
+    })
+    renderOverview()
+    expect(metrics()).toEqual({ active: '1', open: '1', soon: '0', overdue: '0' })
+    expect(metric('soon')).toHaveClass('text-fg-tertiary')
+    expect(metric('overdue')).toHaveClass('text-fg-tertiary')
+    expect(metric('overdue')).not.toHaveClass('text-danger')
+    expect(metric('open')).toHaveClass('text-fg')
+  })
+})
+
 describe('OverviewPage active projects', () => {
   it('lists active projects with leaf-task progress, and "No tasks" instead of a fake 100%', async () => {
     await seedStandard()
@@ -308,6 +346,52 @@ describe('OverviewPage active projects', () => {
       'href',
       '/projects',
     )
+  })
+
+  it('shows each project’s open tasks and a date that is never passed off as a due date', async () => {
+    const dated = makeProject({
+      id: 'p-dated',
+      name: 'Dated',
+      sortOrder: 'b0',
+      startDate: testToday(-5),
+      dueDate: testToday(30),
+    })
+    const derived = makeProject({ id: 'p-derived', name: 'Derived', sortOrder: 'b1' })
+    const bare = makeProject({ id: 'p-bare', name: 'Bare', sortOrder: 'b2' })
+    await seedWorkspace({
+      projects: [dated, derived, bare],
+      tasks: [
+        makeTask({ projectId: dated.id, title: 'A' }),
+        makeTask({ projectId: dated.id, title: 'B', status: 'done' }),
+        makeTask({
+          projectId: derived.id,
+          title: 'C',
+          startDate: testToday(2),
+          dueDate: testToday(9),
+        }),
+        makeTask({ projectId: derived.id, title: 'D', dueDate: testToday(12) }),
+        makeTask({ projectId: bare.id, title: 'E' }),
+      ],
+    })
+    renderOverview()
+    const items = within(
+      within(section('Active projects')).getByRole('list', { name: 'Active projects' }),
+    ).getAllByRole('listitem')
+    // Open = tasks that are not done (any level), the same count the Projects page shows.
+    expect(items[0]).toHaveTextContent('1 open')
+    expect(items[1]).toHaveTextContent('2 open')
+    expect(items[2]).toHaveTextContent('1 open')
+    // Own due date: plain "Due …".
+    expect(items[0]).toHaveTextContent(`Due ${formatDateSmart(testToday(30), testToday())}`)
+    expect(items[0]).not.toHaveTextContent('from tasks')
+    // No due date but dated tasks: the span of the tasks, marked as derived, with its source.
+    expect(items[1]).toHaveTextContent('from tasks')
+    expect(items[1]).not.toHaveTextContent(/\bDue\b/)
+    expect(items[1].querySelector('[title*="No due date is set"]')).not.toBeNull()
+    // Nothing dated: no placeholder dash, only an assistive note.
+    expect(items[2]).not.toHaveTextContent('—')
+    expect(items[2]).toHaveTextContent('No dates')
+    expect(items[2].querySelector('.sr-only')).not.toBeNull()
   })
 
   it('says so when no project is active', async () => {
@@ -443,7 +527,8 @@ describe('OverviewPage upcoming tasks', () => {
     renderOverview()
     const upcoming = section('Upcoming tasks')
     expect(within(upcoming).getByText('Nothing due in the next 7 days')).toBeInTheDocument()
-    expect(within(upcoming).getByRole('link', { name: 'View all tasks' })).toHaveAttribute(
+    // The way out names what is behind it: the open tasks (the done one is not counted).
+    expect(within(upcoming).getByRole('link', { name: 'View all 1 open task' })).toHaveAttribute(
       'href',
       '/my-tasks/all',
     )
@@ -507,6 +592,31 @@ describe('OverviewPage mini timeline', () => {
     )
     // Read-only: no editing controls, only links.
     expect(within(timeline).queryAllByRole('button')).toHaveLength(0)
+  })
+
+  it('names a bar’s dates and a diamond’s name and date on hover; both lead to the Gantt', async () => {
+    await seedStandard()
+    const { user } = renderOverview()
+    const timeline = section('Next 6 weeks')
+    const [bar] = Array.from(timeline.querySelectorAll<HTMLElement>('[data-span]'))
+    expect(bar).toHaveAttribute('href', '/projects/p-research/gantt')
+    await user.hover(bar)
+    const tip = await screen.findByRole('tooltip')
+    expect(tip).toHaveTextContent('Research Project')
+    // Research has its own due date but no own start: that end of the bar comes from its tasks.
+    expect(tip).toHaveTextContent('from tasks')
+    await user.unhover(bar)
+
+    const [diamond] = Array.from(timeline.querySelectorAll<HTMLElement>('[data-milestone]'))
+    expect(diamond).toHaveAttribute('href', '/projects/p-research/gantt')
+    await user.hover(diamond)
+    const milestoneTip = await screen.findByRole('tooltip')
+    expect(milestoneTip).toHaveTextContent('Submission deadline')
+    expect(milestoneTip).toHaveTextContent(/\d{4}/)
+    await user.unhover(diamond)
+
+    await user.click(bar)
+    expect(location()).toBe('/projects/p-research/gantt')
   })
 
   it('says so when nothing is scheduled', async () => {

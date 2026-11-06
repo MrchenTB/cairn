@@ -638,6 +638,48 @@ test.describe('overview', () => {
     ])
   })
 
+  test('each number card leads to a page that lists exactly what the number counts', async ({
+    page,
+  }) => {
+    await openApp(page, '/overview')
+    const count = async (name: 'active' | 'open' | 'soon' | 'overdue') =>
+      Number(await metric(page, name).textContent())
+
+    // Open tasks → My Tasks › All (open tasks only).
+    const open = await count('open')
+    await page.locator('[data-metric="open"] a').click()
+    await expect(page).toHaveURL(/\/my-tasks\/all$/)
+    await expect(page.locator('[data-task-row]')).toHaveCount(open)
+
+    // Overdue → the Overdue tab.
+    await page.goto('/overview')
+    const overdue = await count('overdue')
+    await page.locator('[data-metric="overdue"] a').click()
+    await expect(page).toHaveURL(/\/my-tasks\/overdue$/)
+    await expect(page.locator('[data-task-row]')).toHaveCount(overdue)
+
+    // Due soon (today + next 7 days) has no tab of its own: a filter on All, reachable by keyboard.
+    await page.goto('/overview')
+    const soon = await count('soon')
+    await page.locator('[data-metric="soon"] a').focus()
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(/\/my-tasks\/all\?due=soon$/)
+    await expect(page.locator('[data-task-row]')).toHaveCount(soon)
+    await expect(page.locator('[data-slot="due-soon-filter"]')).toContainText(`${soon} task`)
+    await page.getByRole('link', { name: 'Clear filter' }).click()
+    await expect(page).toHaveURL(/\/my-tasks\/all$/)
+    await expect(page.locator('[data-task-row]')).toHaveCount(open)
+
+    // Active projects → the Projects page's Active filter.
+    await page.goto('/overview')
+    const active = await count('active')
+    await page.locator('[data-metric="active"] a').click()
+    await expect(page).toHaveURL(/\/projects\?status=active$/)
+    await expect(page.getByRole('table', { name: 'Projects' }).getByRole('row')).toHaveCount(
+      active + 1,
+    )
+  })
+
   test('links lead where they say; a row opens the Task Modal', async ({ page }) => {
     await openApp(page, '/overview')
     const projects = section(page, 'Active projects')

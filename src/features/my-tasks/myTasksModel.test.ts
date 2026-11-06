@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { myTasks } from '@/domain/buckets'
 import { makeProject, makeTask, makeWorkspace } from '@/domain/testFactories'
-import { groupAllTasks, myTasksCounts, parseMyTasksTab, staysInList } from './myTasksModel'
+import {
+  DUE_SOON_HREF,
+  dueSoonGroups,
+  groupAllTasks,
+  isDueSoonFilter,
+  myTasksCounts,
+  parseMyTasksTab,
+  staysInList,
+} from './myTasksModel'
 
 const TODAY = '2026-11-03'
 
@@ -69,5 +77,28 @@ describe('staysInList', () => {
     expect(staysInList('done', false)).toBe(false)
     expect(staysInList('done', true)).toBe(true)
     expect(staysInList('in_progress', false)).toBe(true)
+  })
+})
+
+describe('Due soon filter', () => {
+  it("keeps exactly the Today and Upcoming groups — the Overview's Due soon population", () => {
+    const buckets = myTasks(workspace(), TODAY)
+    const groups = groupAllTasks(buckets.all, TODAY, true)
+    const soon = dueSoonGroups(groups)
+    expect(soon.map((group) => group.bucket)).toEqual(['today', 'upcoming'])
+    expect(soon.flatMap((group) => group.tasks.map((task) => task.id))).toEqual([
+      'today',
+      'upcoming',
+    ])
+    expect(soon.flatMap((group) => group.tasks)).toHaveLength(
+      buckets.today.length + buckets.upcoming.length,
+    )
+  })
+
+  it('is only switched on by ?due=soon', () => {
+    expect(isDueSoonFilter('soon')).toBe(true)
+    expect(isDueSoonFilter('later')).toBe(false)
+    expect(isDueSoonFilter(null)).toBe(false)
+    expect(DUE_SOON_HREF).toBe('/my-tasks/all?due=soon')
   })
 })
