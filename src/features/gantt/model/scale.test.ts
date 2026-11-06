@@ -225,15 +225,23 @@ describe('gridLines', () => {
 })
 
 describe('gridBackgroundStyle', () => {
-  it('aligns week lines and weekend shading to the origin weekday', () => {
+  it('draws one week line per week, aligned to the origin weekday, with no weekend shading', () => {
     const origin = d('2026-10-26') // Monday
     const monday = gridBackgroundStyle('day', origin, 36, 1)
-    expect(monday?.backgroundImage.split('linear-gradient')).toHaveLength(4) // 3 layers
-    // day lines, week lines at Monday (offset 0), weekends from Saturday (offset 5 days)
-    expect(monday?.backgroundPosition).toBe(`0 0, 0px 0, ${5 * 36}px 0`)
-    expect(monday?.backgroundSize).toBe(`36px 100%, ${7 * 36}px 100%, ${7 * 36}px 100%`)
+    expect(monday?.backgroundImage.split('linear-gradient')).toHaveLength(2) // a single layer
+    expect(monday?.backgroundImage).not.toContain('--gantt-weekend')
+    expect(monday?.backgroundPosition).toBe('0px 0')
+    expect(monday?.backgroundSize).toBe(`${7 * 36}px 100%`)
     const sunday = gridBackgroundStyle('week', origin, 16, 0)
-    expect(sunday?.backgroundPosition).toBe(`${6 * 16}px 0, ${5 * 16}px 0`)
+    expect(sunday?.backgroundPosition).toBe(`${6 * 16}px 0`)
+    expect(sunday?.backgroundSize).toBe(`${7 * 16}px 100%`)
+  })
+
+  it('Day and Week use the same week line colour', () => {
+    const origin = d('2026-10-26')
+    expect(gridBackgroundStyle('day', origin, 36, 1)?.backgroundImage).toContain('--gantt-grid)')
+    expect(gridBackgroundStyle('week', origin, 16, 1)?.backgroundImage).toContain('--gantt-grid)')
+    expect(gridBackgroundStyle('day', origin, 36, 1)?.backgroundImage).not.toContain('grid-strong')
   })
 
   it('Month draws no regular grid', () => {

@@ -625,16 +625,24 @@ export function GanttChart({
   })
   useViewShortcut('t', scrollToToday, { description: 'Scroll to today' })
 
-  /** Row key to bring into view once it exists (after expanding its group / parent). */
+  /**
+   * Row key to bring into view once it exists (after expanding its group / parent). `align`
+   * 'start' puts the row right under the time header (the Unscheduled jump: the group header
+   * and its tasks, not a header stranded at the bottom edge); 'auto' scrolls only as needed.
+   */
+  const [revealNonce, setRevealNonce] = useState(0)
   const revealKey = useRef<string | null>(null)
-  const revealRow = useEvent((key: string) => {
+  const revealAlign = useRef<'auto' | 'start'>('auto')
+  const revealRow = useEvent((key: string, align: 'auto' | 'start' = 'auto') => {
     const index = latest.current.model.rowIndexByKey.get(key) ?? -1
     if (index < 0) {
       revealKey.current = key
+      revealAlign.current = align
       return
     }
     revealKey.current = null
-    virtualizer.scrollToIndex(index, { align: 'auto' })
+    revealAlign.current = 'auto'
+    virtualizer.scrollToIndex(index, { align })
     const row = latest.current.rows[index]
     const day =
       row?.kind === 'task'
@@ -645,8 +653,8 @@ export function GanttChart({
     if (day !== null) scrollDayIntoView(day, true)
   })
   useEffect(() => {
-    if (revealKey.current) revealRow(revealKey.current)
-  }, [model, revealRow])
+    if (revealKey.current) revealRow(revealKey.current, revealAlign.current)
+  }, [model, revealNonce, revealRow])
 
   const revealTask = useEvent((taskId: string) => {
     const task = Object.hasOwn(data.tasks, taskId) ? data.tasks[taskId] : undefined
@@ -661,9 +669,18 @@ export function GanttChart({
     revealRow(taskRowKey(taskId))
   })
 
+  /**
+   * Unscheduled button: expand the group and scroll its header to the top of the chart. The
+   * rows below it then fill the view (the browser clamps the scroll at the bottom, so a short
+   * group still shows in full). Scrolling to the header *before* it expands, or just "into
+   * view", left only the header visible at the bottom edge with its tasks below the fold.
+   * The expanded rows only exist after the next render, hence the pending key + nonce.
+   */
   const showUnscheduled = useEvent(() => {
     onToggleRow(UNSCHEDULED_KEY, false)
-    revealRow(UNSCHEDULED_KEY)
+    revealKey.current = UNSCHEDULED_KEY
+    revealAlign.current = 'start'
+    setRevealNonce((n) => n + 1)
   })
 
   /**

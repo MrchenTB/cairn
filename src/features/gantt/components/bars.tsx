@@ -7,6 +7,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { StatusIcon } from '@/components/task/StatusIcon'
+import { Tooltip } from '@/components/ui/tooltip'
 import type { Task } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { BAR_HEIGHT, BAR_TOP, ROW_HEIGHT } from '../model/constants'
@@ -30,6 +31,23 @@ function linkRing(state: LinkTargetState): string | false {
   return false
 }
 
+/** Widest an outside-the-bar label grows; longer names are cut with an ellipsis. */
+const OUTSIDE_LABEL_MAX_WIDTH = 240
+
+/**
+ * Opaque chip behind text that sits on the lane (outside a bar): the today line and dependency
+ * lines pass behind it, never through the letters. It repeats the lane's own hover / selected
+ * tint on top of the chart colour, so it never shows as a patch.
+ */
+function labelSurface(selected: boolean | undefined) {
+  return cn(
+    'rounded-sm bg-(--gantt-bg)',
+    selected
+      ? 'bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))]'
+      : 'group-hover/row:bg-[linear-gradient(var(--gantt-row-hover),var(--gantt-row-hover))]',
+  )
+}
+
 interface InteractiveProps {
   rowIndex: number
   ariaLabel: string
@@ -38,6 +56,8 @@ interface InteractiveProps {
   conflict: string | null
   linkState: LinkTargetState
   dragging: boolean
+  /** This task's row is the one open in the modal (tints the chip behind outside labels). */
+  selected?: boolean
   /** Only opens on click / Enter: no drag cursor, resize grips or dependency dots (Timeline). */
   readOnly?: boolean
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void
@@ -85,6 +105,8 @@ export interface TaskBarProps extends InteractiveProps {
   overdue: boolean
   /** This bar is the source of a dependency being drawn (keep its dots visible). */
   linkSource: boolean
+  /** Hover text: "Nov 7 – Nov 8 · 2 days". */
+  dateSummary: string
   /**
    * Width of the sticky outline the timeline scrolls under. A label inside the bar sticks just
    * right of it while the bar's start is scrolled out of sight, so it stays readable.
@@ -104,6 +126,8 @@ export function TaskBar({
   dragging,
   overdue,
   linkSource,
+  dateSummary,
+  selected,
   paneWidth = 0,
   readOnly = false,
   onKeyDown,
@@ -114,115 +138,131 @@ export function TaskBar({
   const iconInside = !labelInside && rect.width >= 22
   return (
     <>
-      <div
-        role="button"
-        tabIndex={0}
-        data-handle="move"
-        data-task-id={task.id}
-        data-row-index={rowIndex}
-        data-link-target=""
-        aria-label={ariaLabel}
-        aria-describedby={describedBy}
-        aria-keyshortcuts={
-          readOnly
-            ? 'Enter'
-            : 'Enter Alt+ArrowLeft Alt+ArrowRight Alt+Shift+ArrowLeft Alt+Shift+ArrowRight'
+      <Tooltip
+        passive
+        // Never while this bar is being dragged, resized or used as a dependency end.
+        disabled={dragging || linkSource || linkState !== null}
+        content={
+          <span className="flex flex-col gap-0.5 break-words">
+            <span className="font-semibold">{task.title}</span>
+            <span className="font-normal tabular-nums opacity-80">{dateSummary}</span>
+            {conflict ? <span className="font-normal">{conflict}</span> : null}
+          </span>
         }
-        title={conflict ?? undefined}
-        onKeyDown={onKeyDown}
-        className={cn(
-          'group/bar absolute z-[2] flex items-center rounded-sm border text-meta font-medium select-none',
-          !readOnly && 'touch-none',
-          dragging ? 'cursor-grabbing shadow-drag' : readOnly ? 'cursor-pointer' : 'cursor-grab',
-          done
-            ? 'border-(--gantt-bar-border-done) bg-(--gantt-bar-fill-done) text-(--gantt-bar-text-done)'
-            : 'border-(--gantt-bar-border) text-(--gantt-bar-text)',
-          task.status === 'todo' && 'bg-(--gantt-bar-fill)',
-          task.status === 'in_progress' && 'bg-(--gantt-bar-fill-active)',
-          conflict && 'border-(--gantt-conflict)',
-          focusRing,
-          linkRing(linkState),
-        )}
-        style={{ left: rect.left, width: rect.width, top: BAR_TOP, height: BAR_HEIGHT }}
       >
-        {task.status === 'in_progress' || conflict ? (
-          <span
-            aria-hidden
-            className={cn(
-              'pointer-events-none absolute inset-y-0 left-0 w-0.5 rounded-l-[3px]',
-              conflict ? 'bg-(--gantt-conflict)' : 'bg-accent',
-            )}
-          />
-        ) : null}
-        {overdue ? (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 right-0 w-0.5 rounded-r-[3px] bg-danger"
-          />
-        ) : null}
-        {handle > 0 ? (
-          <>
+        <div
+          role="button"
+          tabIndex={0}
+          data-handle="move"
+          data-task-id={task.id}
+          data-row-index={rowIndex}
+          data-link-target=""
+          aria-label={ariaLabel}
+          aria-describedby={describedBy}
+          aria-keyshortcuts={
+            readOnly
+              ? 'Enter'
+              : 'Enter Alt+ArrowLeft Alt+ArrowRight Alt+Shift+ArrowLeft Alt+Shift+ArrowRight'
+          }
+          onKeyDown={onKeyDown}
+          className={cn(
+            'group/bar absolute z-[2] flex items-center rounded-sm border text-meta font-medium select-none',
+            !readOnly && 'touch-none',
+            dragging ? 'cursor-grabbing shadow-drag' : readOnly ? 'cursor-pointer' : 'cursor-grab',
+            done
+              ? 'border-(--gantt-bar-border-done) bg-(--gantt-bar-fill-done) text-(--gantt-bar-text-done)'
+              : 'border-(--gantt-bar-border) text-(--gantt-bar-text)',
+            task.status === 'todo' && 'bg-(--gantt-bar-fill)',
+            task.status === 'in_progress' && 'bg-(--gantt-bar-fill-active)',
+            conflict && 'border-(--gantt-conflict)',
+            focusRing,
+            linkRing(linkState),
+          )}
+          style={{ left: rect.left, width: rect.width, top: BAR_TOP, height: BAR_HEIGHT }}
+        >
+          {task.status === 'in_progress' || conflict ? (
             <span
-              data-handle="resize-start"
               aria-hidden
-              className="absolute inset-y-0 left-0 z-[1] cursor-ew-resize"
-              style={{ width: handle }}
-            >
-              <span className="absolute top-1/2 left-[2px] h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-(--gantt-bar-border) opacity-0 group-hover/bar:opacity-80" />
-            </span>
+              className={cn(
+                'pointer-events-none absolute inset-y-0 left-0 w-0.5 rounded-l-[3px]',
+                conflict ? 'bg-(--gantt-conflict)' : 'bg-accent',
+              )}
+            />
+          ) : null}
+          {overdue ? (
             <span
-              data-handle="resize-end"
               aria-hidden
-              className="absolute inset-y-0 right-0 z-[1] cursor-ew-resize"
-              style={{ width: handle }}
-            >
-              <span className="absolute top-1/2 right-[2px] h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-(--gantt-bar-border) opacity-0 group-hover/bar:opacity-80" />
+              className="pointer-events-none absolute inset-y-0 right-0 w-0.5 rounded-r-[3px] bg-danger"
+            />
+          ) : null}
+          {handle > 0 ? (
+            <>
+              <span
+                data-handle="resize-start"
+                aria-hidden
+                className="absolute inset-y-0 left-0 z-[1] cursor-ew-resize"
+                style={{ width: handle }}
+              >
+                <span className="absolute top-1/2 left-[2px] h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-(--gantt-bar-border) opacity-0 group-hover/bar:opacity-80" />
+              </span>
+              <span
+                data-handle="resize-end"
+                aria-hidden
+                className="absolute inset-y-0 right-0 z-[1] cursor-ew-resize"
+                style={{ width: handle }}
+              >
+                <span className="absolute top-1/2 right-[2px] h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-(--gantt-bar-border) opacity-0 group-hover/bar:opacity-80" />
+              </span>
+            </>
+          ) : null}
+          {labelInside ? (
+            // No overflow clipping here: that would make this span the sticky container (the label
+            // fits the bar anyway, labelInside checks). The inner group sticks to the outline's edge.
+            <span className="pointer-events-none flex min-w-0 flex-1 items-center px-1.5 whitespace-nowrap">
+              <span
+                className="sticky flex max-w-full min-w-0 items-center gap-1"
+                style={{ left: paneWidth + 6 }}
+              >
+                {conflict ? (
+                  <TriangleAlert className="size-3 shrink-0 text-(--gantt-conflict)" aria-hidden />
+                ) : null}
+                <StatusIcon status={task.status} size={12} decorative />
+                <span className="truncate">{task.title}</span>
+              </span>
             </span>
-          </>
-        ) : null}
-        {labelInside ? (
-          // No overflow clipping here: that would make this span the sticky container (the label
-          // fits the bar anyway, labelInside checks). The inner group sticks to the outline's edge.
-          <span className="pointer-events-none flex min-w-0 flex-1 items-center px-1.5 whitespace-nowrap">
-            <span
-              className="sticky flex max-w-full min-w-0 items-center gap-1"
-              style={{ left: paneWidth + 6 }}
-            >
-              {conflict ? (
-                <TriangleAlert className="size-3 shrink-0 text-(--gantt-conflict)" aria-hidden />
-              ) : null}
+          ) : iconInside ? (
+            <span className="pointer-events-none flex items-center px-1">
               <StatusIcon status={task.status} size={12} decorative />
-              <span className="truncate">{task.title}</span>
             </span>
-          </span>
-        ) : iconInside ? (
-          <span className="pointer-events-none flex items-center px-1">
-            <StatusIcon status={task.status} size={12} decorative />
-          </span>
-        ) : null}
-        {readOnly ? null : (
-          <>
-            <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
-            <Connector side="out" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
-          </>
-        )}
-      </div>
+          ) : null}
+          {readOnly ? null : (
+            <>
+              <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+              <Connector side="out" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+            </>
+          )}
+        </div>
+      </Tooltip>
       {labelInside ? null : (
         <span
           aria-hidden
-          className="pointer-events-none absolute z-[2] flex items-center gap-1 text-meta whitespace-nowrap text-fg-secondary"
+          className={cn(
+            'pointer-events-none absolute z-[2] flex items-center gap-1 px-1 text-meta whitespace-nowrap text-fg-secondary',
+            labelSurface(selected),
+          )}
           style={{
-            // Clear of the dependency dot, when there is one.
-            left: rect.left + rect.width + (readOnly ? 6 : 18),
+            // Clear of the dependency dot, when there is one (the chip's 4px padding included).
+            left: rect.left + rect.width + (readOnly ? 2 : 14),
             top: BAR_TOP,
             height: BAR_HEIGHT,
+            maxWidth: OUTSIDE_LABEL_MAX_WIDTH,
           }}
         >
           {conflict ? (
             <TriangleAlert className="size-3 shrink-0 text-(--gantt-conflict)" aria-hidden />
           ) : null}
           {iconInside ? null : <StatusIcon status={task.status} size={12} decorative />}
-          <span>{task.title}</span>
+          <span className="min-w-0 truncate">{task.title}</span>
         </span>
       )}
     </>
@@ -255,6 +295,7 @@ export function DueMarker({
   dragging,
   overdue,
   linkSource,
+  selected,
   readOnly = false,
   onKeyDown,
 }: DueMarkerProps) {
@@ -306,8 +347,16 @@ export function DueMarker({
       </div>
       <span
         aria-hidden
-        className="pointer-events-none absolute z-[2] flex items-center gap-1.5 text-meta whitespace-nowrap"
-        style={{ left: centerX + 20, top: BAR_TOP, height: BAR_HEIGHT }}
+        className={cn(
+          'pointer-events-none absolute z-[2] flex items-center gap-1.5 px-1 text-meta whitespace-nowrap',
+          labelSurface(selected),
+        )}
+        style={{
+          left: centerX + 16,
+          top: BAR_TOP,
+          height: BAR_HEIGHT,
+          maxWidth: OUTSIDE_LABEL_MAX_WIDTH,
+        }}
       >
         {conflict ? (
           <TriangleAlert className="size-3 shrink-0 text-(--gantt-conflict)" aria-hidden />
@@ -317,7 +366,7 @@ export function DueMarker({
         >
           {dateLabel}
         </span>
-        <span className="text-fg-tertiary">{task.title}</span>
+        <span className="min-w-0 truncate text-fg-tertiary">{task.title}</span>
       </span>
     </>
   )
@@ -411,6 +460,8 @@ export interface MilestoneDiamondProps {
   /** The next milestone to come (accent ring). */
   upcoming: boolean
   dragging: boolean
+  /** Open in the modal (tints the chip behind the name). */
+  selected?: boolean
   /** Only opens on click / Enter: no drag cursor (Timeline). */
   readOnly?: boolean
   /**
@@ -432,6 +483,7 @@ export function MilestoneDiamond({
   past,
   upcoming,
   dragging,
+  selected,
   readOnly = false,
   nameOnHover = false,
   onKeyDown,
@@ -474,11 +526,16 @@ export function MilestoneDiamond({
           'pointer-events-none absolute flex items-center text-meta whitespace-nowrap',
           nameOnHover
             ? 'z-[5] rounded-sm border border-default bg-elevated px-1.5 text-fg opacity-0 shadow-popover peer-hover:opacity-100 peer-focus-visible:opacity-100'
-            : 'z-[2] text-fg-secondary',
+            : cn('z-[2] px-1 text-fg-secondary', labelSurface(selected)),
         )}
-        style={{ left: centerX + 12, top: BAR_TOP, height: BAR_HEIGHT }}
+        style={{
+          left: nameOnHover ? centerX + 12 : centerX + 8,
+          top: BAR_TOP,
+          height: BAR_HEIGHT,
+          maxWidth: nameOnHover ? undefined : OUTSIDE_LABEL_MAX_WIDTH,
+        }}
       >
-        {name}
+        {nameOnHover ? name : <span className="min-w-0 truncate">{name}</span>}
       </span>
     </>
   )

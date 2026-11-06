@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
 import { DUE_COLUMN_WIDTH, ROW_HEIGHT, SUBTASK_INDENT } from '../model/constants'
 import type { DragDates, DragMode } from '../model/dragReducer'
 import { dayCenterX, daySpanOf, dayToX, rangeRect, type TimelineGeometry } from '../model/geometry'
-import { barAriaLabel } from '../model/labels'
+import { barAriaLabel, datesLabel } from '../model/labels'
 import type { GanttRow, TaskRow } from '../model/rows'
 import type { DayRange } from '../model/scale'
 import {
@@ -151,8 +151,10 @@ function GanttRowViewImpl(props: GanttRowViewProps) {
         data-row-index={index}
         className={cn(
           'relative flex h-full shrink-0 items-center',
+          // Phase / Unscheduled header lanes are transparent: only the outline cell carries the
+          // header tint, so the time grid runs unbroken through the whole chart.
           header
-            ? 'bg-muted'
+            ? null
             : selected
               ? 'bg-(--gantt-row-selected)'
               : 'group-hover/row:bg-(--gantt-row-hover)',
@@ -287,9 +289,9 @@ function Lane(props: GanttRowViewProps) {
   }
   if (row.kind === 'unscheduled') {
     return (
-      // Above the today line (z-[1]) on the header's own background, so the line never cuts it.
+      // Above the today line (z-[1]) on an opaque chart-coloured chip, so the line never cuts it.
       <span
-        className="pointer-events-none sticky z-[2] rounded-sm bg-muted px-1 text-meta whitespace-nowrap text-fg-tertiary"
+        className="pointer-events-none sticky z-[2] rounded-sm bg-(--gantt-bg) px-1 text-meta whitespace-nowrap text-fg-tertiary"
         style={{ left: paneWidth + 8 }}
       >
         {row.collapsed
@@ -319,6 +321,7 @@ function Lane(props: GanttRowViewProps) {
           past={day < props.todayDay}
           upcoming={props.upcomingMilestone}
           dragging={props.override?.mode != null}
+          selected={props.selected}
           readOnly={props.readOnly}
           onKeyDown={(event) => props.onBarKeyDown(event, row)}
         />
@@ -359,6 +362,7 @@ function TaskLane(props: GanttRowViewProps & { row: TaskRow }) {
     linkState: props.linkState,
     dragging,
     linkSource: props.linkSource,
+    selected: props.selected,
     readOnly: props.readOnly,
     onKeyDown,
   }
@@ -381,6 +385,7 @@ function TaskLane(props: GanttRowViewProps & { row: TaskRow }) {
         task={task}
         rect={rangeRect(span.start, span.end, geometry)}
         overdue={overdue}
+        dateSummary={datesLabel({ start: span.start, end: span.end }, today)}
         paneWidth={paneWidth}
       />
     )

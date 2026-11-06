@@ -176,11 +176,26 @@ describe('GanttView', () => {
     expect(visual.getAttribute('aria-label')).toContain(
       'dependency conflict: Should start after “Wireframes” ends',
     )
-    expect(visual).toHaveAttribute('title', expect.stringContaining('Should start after'))
+    // The explanation is also in the hover tooltip (not a native title, which would double it).
+    expect(visual).not.toHaveAttribute('title')
+    await userEvent.setup().hover(visual)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Should start after “Wireframes”')
     expect(barOf(s.wire.id).getAttribute('aria-label')).not.toContain('conflict')
     const viewBar = screen.getByTestId('view-bar')
     expect(within(viewBar).getByRole('button', { name: '1 conflict' })).toBeInTheDocument()
     expect(chart().querySelectorAll('[data-conflict="true"]')).toHaveLength(1)
+  })
+
+  it('hovering a bar shows its name, dates and length in a tooltip', async () => {
+    const s = await seed()
+    renderGantt(s.project.id)
+    const user = userEvent.setup()
+    await user.hover(barOf(s.wire.id))
+    const tip = await screen.findByRole('tooltip')
+    expect(tip).toHaveTextContent('Wireframes')
+    expect(tip).toHaveTextContent(/ – .+ · 4 days/)
+    await user.unhover(barOf(s.wire.id))
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
   })
 
   it('keyboard: Alt+→ moves a bar one day, Alt+Shift+← shortens it, Enter opens the task', async () => {

@@ -176,8 +176,8 @@ export function TodayLine({ x, height }: { x: number; height: number }) {
     <span
       aria-hidden
       data-testid="gantt-today-line"
-      className="pointer-events-none absolute top-0 z-[1] w-[1.5px] bg-(--gantt-today)"
-      style={{ left: x - 0.75, height }}
+      className="pointer-events-none absolute top-0 z-[1] w-px bg-(--gantt-today) opacity-55"
+      style={{ left: x - 0.5, height }}
     />
   )
 }

@@ -81,6 +81,12 @@ export interface TooltipProps {
   delayDuration?: number
   /** Render the trigger without a tooltip. */
   disabled?: boolean
+  /**
+   * For triggers that sit in a dense, interactive surface (Gantt bars): the bubble never takes
+   * the pointer. It closes as soon as the pointer leaves the trigger and does not intercept
+   * clicks on whatever lies under it.
+   */
+  passive?: boolean
   /** A single focusable element (Button, link…). */
   children: ReactElement
 }
@@ -99,6 +105,7 @@ export function Tooltip({
   align = 'center',
   delayDuration,
   disabled,
+  passive = false,
   children,
 }: TooltipProps) {
   const [open, setOpen] = useState(false)
@@ -117,6 +124,7 @@ export function Tooltip({
       open={!inactive && open}
       onOpenChange={onOpenChange}
       delayDuration={delayDuration}
+      disableHoverableContent={passive}
     >
       <TooltipPrimitive.Trigger
         asChild
@@ -131,7 +139,11 @@ export function Tooltip({
         <TooltipTriggerSlot>{children}</TooltipTriggerSlot>
       </TooltipPrimitive.Trigger>
       {inactive ? null : (
-        <TooltipContent side={side} align={align}>
+        <TooltipContent
+          side={side}
+          align={align}
+          className={passive ? 'pointer-events-none' : undefined}
+        >
           <span className="flex items-center gap-2">
             {content}
             {shortcut ? <Shortcut keys={shortcut} variant="inverse" /> : null}

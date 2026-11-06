@@ -204,9 +204,17 @@
   --gantt-weekend: rgba(36, 38, 49, 0.032);
   --gantt-row-hover: rgba(36, 38, 49, 0.03);
   --gantt-row-selected: rgba(104, 106, 195, 0.08);
-  --gantt-bar-fill: rgba(104, 106, 195, 0.14);
-  --gantt-bar-fill-active: rgba(104, 106, 195, 0.24);
-  --gantt-bar-fill-done: rgba(36, 38, 49, 0.06);
+  /*
+   * Bar fills are OPAQUE tints (hue mixed into the chart background), never rgba: a translucent
+   * bar lets the today line and dependency lines show through its label. Same look as the old
+   * alpha values over --gantt-bg. `--gantt-bar-hue` is the one place a per-row (phase) colour
+   * can later override.
+   */
+  --gantt-bar-hue: #686ac3;
+  --gantt-bar-ink: #242631;
+  --gantt-bar-fill: color-mix(in srgb, var(--gantt-bar-hue) 14%, var(--gantt-bg));
+  --gantt-bar-fill-active: color-mix(in srgb, var(--gantt-bar-hue) 24%, var(--gantt-bg));
+  --gantt-bar-fill-done: color-mix(in srgb, var(--gantt-bar-ink) 6%, var(--gantt-bg));
   --gantt-bar-border: rgba(104, 106, 195, 0.8);
   --gantt-bar-border-done: #868793;
   --gantt-bar-text: #242631;
@@ -314,9 +322,11 @@
   --gantt-weekend: rgba(255, 255, 255, 0.022);
   --gantt-row-hover: rgba(255, 255, 255, 0.03);
   --gantt-row-selected: rgba(144, 147, 232, 0.1);
-  --gantt-bar-fill: rgba(144, 147, 232, 0.22);
-  --gantt-bar-fill-active: rgba(144, 147, 232, 0.34);
-  --gantt-bar-fill-done: rgba(255, 255, 255, 0.07);
+  --gantt-bar-hue: #9093e8;
+  --gantt-bar-ink: #ffffff;
+  --gantt-bar-fill: color-mix(in srgb, var(--gantt-bar-hue) 22%, var(--gantt-bg));
+  --gantt-bar-fill-active: color-mix(in srgb, var(--gantt-bar-hue) 34%, var(--gantt-bg));
+  --gantt-bar-fill-done: color-mix(in srgb, var(--gantt-bar-ink) 7%, var(--gantt-bg));
   --gantt-bar-border: rgba(144, 147, 232, 0.7);
   --gantt-bar-border-done: #6e6f7a;
   --gantt-bar-text: #e8e9f1;

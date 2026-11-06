@@ -310,7 +310,9 @@ describe('TimelinePage rows', () => {
     const { user } = renderTimeline()
     await user.click(screen.getByRole('button', { name: /^Expand Launch/ }))
     const bar = chart().querySelector(`[data-task-id="${s.brief.id}"]`) as HTMLElement
-    expect(bar).toHaveAttribute('title', expect.stringContaining('Should start after “Review”'))
+    expect(bar).not.toHaveAttribute('title')
+    await user.hover(bar)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Should start after “Review”')
   })
 
   it('reflects store changes without a reload', async () => {

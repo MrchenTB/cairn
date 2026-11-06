@@ -32,8 +32,8 @@ export interface ScaleSpec {
   paddingDays: number
   /** Days added when the user scrolls (or drags) close to either end. */
   extendDays: number
-  /** Weekend shading and day/week grid lines (Day and Week only). */
-  shadeWeekends: boolean
+  /** Week lines in the chart body (Day and Week only; Month has just month lines). */
+  weekLines: boolean
 }
 
 /*
@@ -51,7 +51,7 @@ export const SCALES: Record<GanttScale, ScaleSpec> = {
     dayWidth: 36,
     paddingDays: 14,
     extendDays: 42,
-    shadeWeekends: true,
+    weekLines: true,
   },
   week: {
     id: 'week',
@@ -59,7 +59,7 @@ export const SCALES: Record<GanttScale, ScaleSpec> = {
     dayWidth: 16,
     paddingDays: 42,
     extendDays: 126,
-    shadeWeekends: true,
+    weekLines: true,
   },
   month: {
     id: 'month',
@@ -67,7 +67,7 @@ export const SCALES: Record<GanttScale, ScaleSpec> = {
     dayWidth: 5,
     paddingDays: 92,
     extendDays: 366,
-    shadeWeekends: false,
+    weekLines: false,
   },
 }
 
@@ -335,9 +335,11 @@ export interface GridBackgroundStyle {
 }
 
 /**
- * Regular grid painted with CSS gradients — no per-day DOM nodes. Each layer is one tile per
- * period (day or week) so a background-position offset aligns it to the origin's weekday:
- * Day = day lines + week lines (strong) + weekends; Week = week lines + weekends; Month = none.
+ * Regular grid painted with CSS gradients — no per-day DOM nodes. One hairline per week (aligned
+ * by a background-position offset to the origin's weekday), the same on Day and Week. There is
+ * deliberately no weekend shading and no per-day line in the body: both stack with the phase
+ * rows into a checkerboard that out-shouts the tasks. Weekends stay visible in the Day header
+ * cells (TimeHeader). Month = none (month lines are `gridLines`).
  */
 export function gridBackgroundStyle(
   scale: GanttScale,
@@ -345,28 +347,12 @@ export function gridBackgroundStyle(
   dayWidth: number,
   weekStartsOn: 0 | 1,
 ): GridBackgroundStyle | null {
-  if (!SCALES[scale].shadeWeekends) return null
+  if (!SCALES[scale].weekLines) return null
   const originWeekday = dayOfWeek(fromEpochDay(originDay)) // 0 = Sunday
-  const week = 7 * dayWidth
-  const line = (token: string) => `linear-gradient(90deg, var(${token}) 0 1px, transparent 1px)`
-  const layers: Array<{ image: string; size: string; position: string }> = []
-  if (scale === 'day') {
-    layers.push({ image: line('--gantt-grid'), size: `${dayWidth}px 100%`, position: '0 0' })
-  }
-  layers.push({
-    image: line(scale === 'day' ? '--gantt-grid-strong' : '--gantt-grid'),
-    size: `${week}px 100%`,
-    position: `${mod(weekStartsOn - originWeekday, 7) * dayWidth}px 0`,
-  })
-  layers.push({
-    image: `linear-gradient(90deg, var(--gantt-weekend) 0 ${2 * dayWidth}px, transparent ${2 * dayWidth}px)`,
-    size: `${week}px 100%`,
-    position: `${mod(6 - originWeekday, 7) * dayWidth}px 0`,
-  })
   return {
-    backgroundImage: layers.map((layer) => layer.image).join(', '),
-    backgroundSize: layers.map((layer) => layer.size).join(', '),
-    backgroundPosition: layers.map((layer) => layer.position).join(', '),
+    backgroundImage: 'linear-gradient(90deg, var(--gantt-grid) 0 1px, transparent 1px)',
+    backgroundSize: `${7 * dayWidth}px 100%`,
+    backgroundPosition: `${mod(weekStartsOn - originWeekday, 7) * dayWidth}px 0`,
   }
 }
 
