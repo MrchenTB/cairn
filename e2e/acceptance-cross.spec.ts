@@ -776,7 +776,7 @@ test.describe('AC-11: My Tasks', () => {
     await taskRow(page, 't-admin').locator('[data-row-open]').click()
     const modal = page.getByRole('dialog', { name: 'Edit task: Ongoing admin' })
     await pickDate(page, modal, 'Due date', TODAY)
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toBeHidden()
     await expectTabCounts(page, [3, 6, 2, 14])
     await expectBadge(page, 5, 2)
@@ -790,7 +790,7 @@ test.describe('AC-11: My Tasks', () => {
     await openTab(page, 'All')
     await taskRow(page, 't-admin').locator('[data-row-open]').click()
     await pickDate(page, modal, 'Due date', day(-1))
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toBeHidden()
     await expectTabCounts(page, [2, 6, 3, 14])
 
@@ -1281,7 +1281,7 @@ test.describe('AC-12: cross-project Timeline', () => {
     await expect(modal).toBeVisible()
     // Due day +6 becomes +30: Roadmap's bar (no dates of its own) must now end on day +30.
     await pickDate(page, modal, 'Due date', day(30))
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toBeHidden()
 
     await goVia(page, 'Timeline')
@@ -1436,8 +1436,9 @@ test.describe('AC-11 / AC-12: one source of truth across pages', () => {
     const edit = page.getByRole('dialog', { name: 'Edit task: Zebra crossing 斑馬線 audit' })
     await expect(edit).toBeVisible()
     await edit.getByRole('textbox', { name: 'Task title' }).fill('Pelican crossing 行人穿越道')
-    await edit.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(edit).toBeHidden()
+    await edit.getByRole('button', { name: 'Done', exact: true }).click()
+    // The dialog's name follows the stored title, so look for any edit dialog.
+    await expect(page.getByRole('dialog', { name: /^Edit task:/ })).toBeHidden()
     dialog = await openSearchWithShortcut(page)
     await search(dialog, 'zebra')
     await expect(dialog.getByRole('listbox').getByText('No results for "zebra"')).toBeVisible()
@@ -1782,12 +1783,14 @@ test.describe('§4.2 / §4.3 / §4.8 / §4.10: the pages, part by part', () => {
     expect(box.x).toBeGreaterThan(100)
     expect(viewport.width - (box.x + box.width)).toBeGreaterThan(100)
 
-    // Edit name and priority: Save.
+    // Edit name and priority: the priority is saved when picked, the name when the modal closes (Done).
     await modal.getByRole('textbox', { name: 'Task title' }).fill('Finalize the research report')
     await modal.getByRole('button', { name: /^Priority:/ }).click()
     await page.getByRole('menuitemradio', { name: 'Urgent' }).click()
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(modal).toBeHidden()
+    // The title is stored when the field loses focus, and the dialog's name follows it.
+    const open = page.getByRole('dialog', { name: /^Edit task:/ })
+    await open.getByRole('button', { name: 'Done', exact: true }).click()
+    await expect(open).toBeHidden()
 
     // The other views follow without a reload: My Tasks, Overview, the project's List, Board and
     // Gantt, the Timeline and the search.

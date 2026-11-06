@@ -566,7 +566,9 @@ test.describe('AC-3: tasks', () => {
     // Everything else is optional and can be added later, in the Task Modal.
     await row.getByRole('button', { name: 'Collect interviews', exact: true }).click()
     const edit = page.getByRole('dialog', { name: 'Edit task: Collect interviews' })
-    await expect(edit.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
+    // Auto-save: nothing to press Save on; Done is the only way to say "finished".
+    await expect(edit.getByRole('button', { name: 'Done', exact: true })).toBeVisible()
+    await expect(edit.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0)
     await edit
       .getByRole('textbox', { name: 'Description' })
       .fill('Five participants.\nRecord each.')
@@ -578,7 +580,7 @@ test.describe('AC-3: tasks', () => {
     const due = await isoDay(page, 3)
     await pickDate(page, edit, 'Start date', start)
     await pickDate(page, edit, 'Due date', due)
-    await edit.getByRole('button', { name: 'Save', exact: true }).click()
+    await edit.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(edit).toBeHidden()
 
     await expect

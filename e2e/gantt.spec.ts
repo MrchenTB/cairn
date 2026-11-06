@@ -1128,7 +1128,7 @@ test.describe('gantt (local mode)', () => {
     const modal = page.getByRole('dialog')
     await expect(modal).toBeVisible()
     await expect(modal).toContainText('Dependency conflict')
-    await modal.getByRole('button', { name: 'Cancel' }).click()
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toHaveCount(0)
 
     // Click the line, then the × button (no keyboard).

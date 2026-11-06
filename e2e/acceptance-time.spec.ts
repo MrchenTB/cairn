@@ -131,9 +131,10 @@ for (const zone of ZONES) {
       await page.locator(`[data-task-row="${seed.ids.a}"]`).getByText('Alpha').click()
       const modal = page.getByRole('dialog', { name: 'Edit task: Alpha' })
       await expect(modal).toBeVisible()
+      // The range only widens, so each pick is valid on its own (and saved on its own).
       await pickDate(page, modal, 'Start date', '2026-11-01')
       await pickDate(page, modal, 'Due date', '2027-01-01')
-      await modal.getByRole('button', { name: 'Save', exact: true }).click()
+      await modal.getByRole('button', { name: 'Done', exact: true }).click()
       await expect(modal).toBeHidden()
       await expect
         .poll(() => stored(page, seed.ids.a))

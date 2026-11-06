@@ -1108,7 +1108,7 @@ test.describe('board cards, Task Modal and phase filter (local mode)', () => {
     await expect(page.getByRole('dialog')).toBeVisible()
   })
 
-  test('a status saved in the Task Modal moves the card, and focus returns to it', async ({
+  test('a status picked in the Task Modal moves the card, and focus returns to it after Done', async ({
     page,
   }) => {
     const seed = standardSeed()
@@ -1119,7 +1119,7 @@ test.describe('board cards, Task Modal and phase filter (local mode)', () => {
     const dialog = page.getByRole('dialog')
     await dialog.getByRole('button', { name: 'Status: To Do' }).click()
     await page.getByRole('menuitemradio', { name: 'Done' }).click()
-    await dialog.getByRole('button', { name: 'Save' }).click()
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(dialog).toBeHidden()
 
     await expect.poll(() => titlesIn(column(page, 'Done'))).toEqual(['Draft survey'])
@@ -1133,7 +1133,7 @@ test.describe('board cards, Task Modal and phase filter (local mode)', () => {
     await page.getByRole('menuitem', { name: 'Open task' }).click()
     await dialog.getByRole('button', { name: 'Status: To Do' }).click()
     await page.getByRole('menuitemradio', { name: 'In Progress' }).click()
-    await dialog.getByRole('button', { name: 'Save' }).click()
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(dialog).toBeHidden()
     await expect
       .poll(() => titlesIn(column(page, 'In Progress')))

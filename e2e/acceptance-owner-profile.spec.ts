@@ -101,7 +101,7 @@ async function editTask(
   await taskRow(page, title).getByRole('button', { name: title, exact: true }).first().click()
   const dialog = page.getByRole('dialog', { name: `Edit task: ${title}` })
   await change(dialog)
-  await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(dialog).toBeHidden()
 }
 

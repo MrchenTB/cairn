@@ -370,7 +370,7 @@ test('expanding is remembered for the session; bars open the Task Modal; edits r
 
   // An edit in the modal reaches the chart through the store.
   await dialog.getByPlaceholder('Task name').fill('Interview ten users')
-  await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click() // saves the title and closes
   await expect(dialog).toBeHidden()
   await expect(page).toHaveURL(/\/timeline$/)
   await expect(taskBar).toContainText('Interview ten users')
@@ -385,7 +385,7 @@ test('expanding is remembered for the session; bars open the Task Modal; edits r
   await expect(page.getByRole('button', { name: /^Expand Research/ })).toBeVisible()
 })
 
-test('a failed save from the Timeline rolls back with a Retry; Retry stores it and the bar follows', async ({
+test('a failed title save from the Task Modal on the Timeline rolls back with a Retry; Retry stores it and the bar follows', async ({
   page,
 }) => {
   const seed = seedWorkspace()
@@ -400,10 +400,11 @@ test('a failed save from the Timeline rolls back with a Retry; Retry stores it a
   await expect(dialog).toBeVisible()
   await dialog.getByPlaceholder('Task name').fill('Interview ten users')
   await failNextWrites(page, 1)
-  await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+  await dialog.getByPlaceholder('Task name').press('Enter')
 
-  // Never reported as saved: the chart keeps the stored title, the failure offers Retry.
-  const failure = toastWith(page, /Couldn.t update task/)
+  // Never reported as saved: the chart keeps the stored title, the failure names the task and the
+  // field and offers Retry.
+  const failure = toastWith(page, /Couldn.t save the title of “Interview users”/)
   await expect(failure).toBeVisible()
   await expect(failure.getByRole('button', { name: 'Retry' })).toBeVisible()
   await expect(taskBar).toContainText('Interview users')
@@ -413,8 +414,9 @@ test('a failed save from the Timeline rolls back with a Retry; Retry stores it a
   await failure.getByRole('button', { name: 'Retry' }).click()
   await expect(taskBar).toContainText('Interview ten users')
   await expect(failure).toHaveCount(0)
-  // Nothing is left to save, so Esc closes without asking.
-  await expect(dialog.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
+  // Nothing is left to retry, so Esc closes without asking.
+  await expect(dialog).not.toContainText('Your text is kept here.')
+  await expect(dialog.locator('[data-save-state]')).not.toContainText('Couldn’t save')
   await dialog.getByPlaceholder('Task name').focus()
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
@@ -553,6 +555,8 @@ test('keyboard: Enter or Space on a bar opens its task, Esc returns to it, Back 
   // A deep link keeps the Timeline underneath.
   await page.goto(`/timeline?task=${ids['Interview users']}`)
   await expect(dialog).toBeVisible()
+  // The form focuses its title once mounted; an Esc before that can beat the dialog's key handler.
+  await expect(dialog.getByRole('textbox', { name: 'Task title' })).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(chart(page)).toBeVisible()

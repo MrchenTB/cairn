@@ -110,7 +110,7 @@ test('the task keeps the information: "Completed out of order", with no conflict
   await expect(note).toContainText('before “Alpha” finished')
   await expect(note).toContainText('never rescheduled automatically')
   await expect(modal).not.toContainText('Dependency conflict')
-  await modal.getByRole('button', { name: 'Cancel' }).click()
+  await modal.getByRole('button', { name: 'Done', exact: true }).click()
   // The predecessor's modal mentions it too, from the other side.
   await bar(page, s.ids.a).click()
   await expect(page.getByRole('dialog').getByRole('note')).toContainText(

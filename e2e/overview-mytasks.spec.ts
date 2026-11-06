@@ -1156,7 +1156,10 @@ test.describe('my tasks', () => {
     await expect(modal).toBeVisible()
     await modal.getByRole('button', { name: /^Status:/ }).click()
     await page.getByRole('menuitemradio', { name: 'Done' }).click()
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
+    // Saved the moment it is picked: the list behind the modal already follows.
+    await expect(taskRow(page, 't-personas')).toHaveCount(0)
+    await expect(modal).toBeVisible()
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toBeHidden()
     await expect(taskRow(page, 't-personas')).toHaveCount(0)
     await expectTabCounts(page, [2, 6, 3, 14])

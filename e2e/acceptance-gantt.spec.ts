@@ -624,7 +624,7 @@ test.describe('AC-8: dependency conflicts', () => {
     await expect(toast(page, '1 dependency conflict')).toBeVisible()
     expect(await stored(page, ids.bravo)).toEqual({ start: '2026-11-10', due: '2026-11-12' })
 
-    await modal.getByRole('button', { name: 'Cancel' }).click() // nothing unsaved: closes
+    await modal.getByRole('button', { name: 'Done', exact: true }).click() // nothing left to save: closes
     await expect(modal).toHaveCount(0)
     await expect(page.locator('path[data-dep-id]')).toHaveCount(1)
     await expect(page.locator('g[data-conflict] path[data-dep-id]')).toHaveCount(1)
@@ -1349,7 +1349,7 @@ test.describe('AC-9: cycles and date rules', () => {
     expect(await stored(page, ids.alpha)).toEqual({ start: '2026-11-07', due: '2026-11-07' })
   })
 
-  test('AC-9: in the Task Modal a due date before the start is explained and cannot be saved', async ({
+  test('AC-9: in the Task Modal the date calendars disable a due date before the start and a start after the due date, so nothing invalid is stored', async ({
     page,
   }) => {
     const seed = seedWorkspace({ tasks: AB_TASKS })
@@ -1365,19 +1365,20 @@ test.describe('AC-9: cycles and date rules', () => {
     await modal.getByRole('button', { name: /^Due date:/ }).click()
     const duePicker = page.getByRole('dialog', { name: 'Due date', exact: true })
     await expect(duePicker.getByRole('button', { name: /^Today Nov/ })).toBeDisabled()
+    await expect(duePicker.getByText('Due date can’t be before the start date.')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(duePicker).toHaveCount(0)
 
-    // The Start calendar can: a start after the due date is explained and blocks Save.
+    // The Start calendar cannot offer a day after the due date either (Alpha is due Nov 7).
     await modal.getByRole('button', { name: /^Start date:/ }).click()
-    await page
-      .getByRole('dialog', { name: 'Start date', exact: true })
-      .getByRole('button', { name: /^Next week/ })
-      .click()
-    await expect(
-      modal.getByRole('alert').filter({ hasText: "Due date can't be before the start date." }),
-    ).toBeVisible()
-    await expect(modal.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
+    const startPicker = page.getByRole('dialog', { name: 'Start date', exact: true })
+    await expect(startPicker.getByRole('button', { name: /^Next week/ })).toBeDisabled()
+    await expect(startPicker.getByRole('button', { name: /November 9th, 2026/ })).toBeDisabled()
+    await expect(startPicker.getByText('The start can’t be after the due date.')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(startPicker).toHaveCount(0)
+    // No inline error, nothing to block: the stored dates were never touched.
+    await expect(modal.getByRole('alert')).toHaveCount(0)
     expect(await stored(page, ids.alpha)).toEqual({ start: '2026-11-05', due: '2026-11-07' })
   })
 
@@ -1595,7 +1596,7 @@ test.describe('§4.7: Gantt page requirements', () => {
     const modal = modalOf(page, 'Early')
     await pickModalDate(page, modal, 'Due date', '2026-11-27')
     await pickModalDate(page, modal, 'Start date', '2026-11-25')
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toHaveCount(0)
     await expect
       .poll(() => stored(page, ids.early))

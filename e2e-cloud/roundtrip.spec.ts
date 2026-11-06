@@ -209,7 +209,7 @@ test.describe('create and edit (AC-2, AC-3, AC-4)', () => {
       )
       .toEqual([{ from: 'Alpha', to: 'Gamma', type: 'FS' }])
 
-    // Every field of a task, saved together; a deep link keeps the modal across a reload.
+    // Every field of a task, saved as it is left; a deep link keeps the modal across a reload.
     await page.reload()
     await expect(
       editModal(page, 'Alpha')
@@ -219,8 +219,8 @@ test.describe('create and edit (AC-2, AC-3, AC-4)', () => {
     const open = page.getByRole('dialog')
     await open.getByRole('textbox', { name: 'Task title' }).fill('Alpha 2')
     await open.getByRole('textbox', { name: /Description/ }).fill('Details with "quotes" and 中文')
-    await open.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(open).toBeHidden() // Save closes the modal
+    await open.getByRole('button', { name: 'Done', exact: true }).click()
+    await expect(open).toBeHidden() // Done closes the modal; the text was handed over on the way
     await expect
       .poll(() =>
         sim.sql(
@@ -342,7 +342,7 @@ test.describe('edits and order', () => {
       .click()
     await modal.getByRole('button', { name: /^Priority:/ }).click()
     await page.getByRole('menuitemradio', { name: /Urgent/ }).click()
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect
       .poll(() =>
         sim.sql(
@@ -351,7 +351,7 @@ test.describe('edits and order', () => {
         ),
       )
       .toEqual([{ start_date: '2026-11-20', due_date: '2026-11-25', priority: 'urgent' }])
-    await expect(modal).toBeHidden() // Save closes the modal
+    await expect(modal).toBeHidden() // Done closes the modal
     await page.goto(`/projects/${projectId}/list?task=${ids.a}`)
     const reopened = editModal(page, 'Alpha')
     await expect(reopened.getByRole('button', { name: 'Priority: Urgent' })).toBeVisible()

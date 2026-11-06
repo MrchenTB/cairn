@@ -36,7 +36,7 @@ const seed = seedWorkspace({
   milestones: [{ key: 'm', name: 'Launch day', date: '2026-11-12' }],
 })
 
-async function boot(page: Page, route: string): Promise<void> {
+async function boot(page: Page, route: string, db: unknown = seed.db): Promise<void> {
   await page.clock.setFixedTime(NOW)
   await page.addInitScript(
     ({ key, db }) => {
@@ -48,7 +48,7 @@ async function boot(page: Page, route: string): Promise<void> {
         // an opaque / error document has no storage: nothing to seed there
       }
     },
-    { key: LOCAL_WORKSPACE_KEY, db: seed.db },
+    { key: LOCAL_WORKSPACE_KEY, db },
   )
   await page.goto(route)
 }
@@ -76,7 +76,9 @@ test.describe('history around the Task Modal', () => {
     await expect(page).toHaveURL(new RegExp(`/projects/${seed.projectId}/list$`))
   })
 
-  test('a task opened from inside another task still closes in one step', async ({ page }) => {
+  test('a subtask opened from its parent returns to the parent on close, and a second close leaves', async ({
+    page,
+  }) => {
     await boot(page, `/projects/${seed.projectId}/list`)
     await page.getByText('Alpha task', { exact: true }).first().click()
     const modal = page.getByRole('dialog')
@@ -85,8 +87,45 @@ test.describe('history around the Task Modal', () => {
     await expect(page).toHaveURL(new RegExp(`task=${seed.ids.c}`))
     await expect(modal.getByRole('textbox', { name: 'Title' })).toHaveValue('Gamma sub')
     await page.keyboard.press('Escape')
+    await expect(page).toHaveURL(new RegExp(`task=${seed.ids.a}`))
+    await expect(modal.getByRole('textbox', { name: 'Title' })).toHaveValue('Alpha task')
+    await page.keyboard.press('Escape')
     await expect(modal).toBeHidden()
     expect(here(page)).toBe(`/projects/${seed.projectId}/list`)
+  })
+
+  test('a subtask opened directly (a deep link) just closes', async ({ page }) => {
+    await boot(page, `/projects/${seed.projectId}/list?task=${seed.ids.c}`)
+    const modal = page.getByRole('dialog')
+    await expect(modal.getByRole('textbox', { name: 'Title' })).toHaveValue('Gamma sub')
+    await page.keyboard.press('Escape')
+    await expect(modal).toBeHidden()
+    expect(here(page)).toBe(`/projects/${seed.projectId}/list`)
+  })
+
+  test('a task opened from inside another task (a dependency chip) still closes in one step', async ({
+    page,
+  }) => {
+    const linked = seedWorkspace({
+      tasks: [
+        { key: 'a', title: 'Alpha task', start: '2026-11-02', due: '2026-11-06' },
+        { key: 'b', title: 'Beta task', start: '2026-11-07', due: '2026-11-10' },
+      ],
+      deps: [['a', 'b']],
+    })
+    await boot(page, `/projects/${linked.projectId}/list`, linked.db)
+    await page.getByText('Alpha task', { exact: true }).first().click()
+    const modal = page.getByRole('dialog')
+    await expect(modal).toBeVisible()
+    await modal
+      .getByRole('list', { name: 'Blocking' })
+      .getByRole('button', { name: 'Beta task', exact: true })
+      .click()
+    await expect(page).toHaveURL(new RegExp(`task=${linked.ids.b}`))
+    await expect(modal.getByRole('textbox', { name: 'Title' })).toHaveValue('Beta task')
+    await page.keyboard.press('Escape')
+    await expect(modal).toBeHidden()
+    expect(here(page)).toBe(`/projects/${linked.projectId}/list`)
   })
 
   test('a deep link to a task closes in place and Back leaves the app page properly', async ({

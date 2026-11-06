@@ -312,7 +312,10 @@ const editModal = (page: Page, title: string) =>
   page.getByRole('dialog', { name: `Edit task: ${title}` })
 const newTaskModal = (page: Page) => page.getByRole('dialog', { name: 'New task', exact: true })
 const titleBox = (modal: Locator) => modal.getByRole('textbox', { name: 'Task title' })
-const saveButton = (modal: Locator) => modal.getByRole('button', { name: 'Save', exact: true })
+/** The edit form whatever its title is now (the dialog's name follows the stored title live). */
+const anyEditModal = (page: Page) => page.getByRole('dialog', { name: /^Edit task:/ })
+const doneButton = (modal: Locator) => modal.getByRole('button', { name: 'Done', exact: true })
+const footerState = (modal: Locator) => modal.locator('[data-save-state]')
 const discardAlert = (page: Page) => page.getByRole('alertdialog', { name: 'Discard changes?' })
 const toastWith = (page: Page, text: string | RegExp) =>
   page.locator('[data-sonner-toast]').filter({ hasText: text })
@@ -517,40 +520,51 @@ test.describe('task modal · create', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('task modal · edit', () => {
-  test('Save stays disabled until something changes; ⌘/Ctrl+Enter saves and closes', async ({
+  test('the form has Done and a save state, no Save or Cancel; ⌘/Ctrl+Enter keeps the typed title and closes', async ({
     page,
   }) => {
     await openApp(page, `/projects/${ID.research}/list?task=${ID.plain}`)
     const modal = editModal(page, 'Plain task')
     await expect(titleBox(modal)).toBeFocused()
-    await expect(saveButton(modal)).toBeDisabled()
+    await expect(doneButton(modal)).toBeVisible()
+    await expect(footerState(modal)).toBeAttached() // empty until something was saved
+    await expect(modal.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0)
+    await expect(modal.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
 
     await titleBox(modal).press('End')
     await page.keyboard.type(' (reviewed)')
-    await expect(saveButton(modal)).toBeEnabled()
     await page.keyboard.press('ControlOrMeta+Enter')
 
-    await expect(modal).toBeHidden()
+    await expect(anyEditModal(page)).toBeHidden()
     await expect(page).not.toHaveURL(/task=/)
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
     await expect
       .poll(async () => (await storedTask(page, ID.plain))?.title)
       .toBe('Plain task (reviewed)')
   })
 
-  test('status, priority, phase and dates save together and survive a reload', async ({ page }) => {
+  test('status, priority, phase and dates are saved as they are picked and survive a reload', async ({
+    page,
+  }) => {
     await openApp(page, `/projects/${ID.research}/list?task=${ID.solo}`)
     const modal = editModal(page, 'Solo task')
     await modal.getByRole('button', { name: /^Status:/ }).click()
     await page.getByRole('menuitemradio', { name: /In Progress/ }).click()
+    // Saved the moment it is picked: the modal is still open.
+    await expect.poll(async () => (await storedTask(page, ID.solo))?.status).toBe('in_progress')
+    await expect(modal).toBeVisible()
     await modal.getByRole('button', { name: /^Priority:/ }).click()
     await page.getByRole('menuitemradio', { name: /Urgent/ }).click()
+    await expect.poll(async () => (await storedTask(page, ID.solo))?.priority).toBe('urgent')
     await modal.getByRole('button', { name: /^Phase:/ }).click()
     await page.getByRole('menuitemradio', { name: 'Discovery' }).click()
+    await expect.poll(async () => (await storedTask(page, ID.solo))?.phaseId).toBe(ID.discovery)
     await pickDate(page, modal, 'Start date', isoDay(3))
     await pickDate(page, modal, 'Due date', isoDay(4))
+    await expect.poll(async () => (await storedTask(page, ID.solo))?.dueDate).toBe(isoDay(4))
     await modal.getByRole('textbox', { name: 'Description' }).fill('  \n') // whitespace only: nothing to store
-    await saveButton(modal).click()
-    await expect(modal).toBeHidden()
+    await doneButton(modal).click()
+    await expect(anyEditModal(page)).toBeHidden()
 
     await page.reload()
     await expect
@@ -565,7 +579,7 @@ test.describe('task modal · edit', () => {
       })
   })
 
-  test('a due date before the start is explained inline and blocks Save; one date picker at a time', async ({
+  test('the date pickers disable a start after the due date (and the reverse) with a hint; one date picker at a time', async ({
     page,
   }) => {
     await openApp(page, `/projects/${ID.research}/list?task=${ID.survey}`)
@@ -584,23 +598,43 @@ test.describe('task modal · edit', () => {
     await expect(duePicker).toBeHidden()
     await expect(modal).toBeVisible()
 
-    // Start after due: explained, and nothing can be saved.
-    await pickDate(page, modal, 'Start date', isoDay(12))
-    await expect(
-      modal.getByRole('alert').filter({ hasText: /before the start date/ }),
-    ).toBeVisible()
-    await expect(saveButton(modal)).toBeDisabled()
-    await page.keyboard.press('ControlOrMeta+Enter')
-    await expect(modal).toBeVisible()
-    expect((await storedTask(page, ID.survey))?.startDate).toBe(isoDay(6))
-
-    // Moving the due date past the new start fixes it.
-    await pickDate(page, modal, 'Due date', isoDay(14))
+    // The start is +6 and the due +9: the due picker disables the days before the start, the start
+    // picker the days after the due date, each with a hint; there is no inline error to produce.
+    const dayButton = async (picker: Locator, date: string) => {
+      const day = picker.getByRole('button', { name: dayPattern(date) })
+      for (let step = 0; step < 4 && (await day.count()) === 0; step++) {
+        await picker.getByRole('button', { name: 'Go to the Next Month' }).click()
+      }
+      return day
+    }
+    await modal.getByRole('button', { name: /^Due date:/ }).click()
+    await expect(duePicker.getByText('Due date can’t be before the start date.')).toBeVisible()
+    await expect(await dayButton(duePicker, isoDay(6))).toBeEnabled()
+    await expect(await dayButton(duePicker, isoDay(5))).toBeDisabled()
+    await page.keyboard.press('Escape')
+    await expect(duePicker).toBeHidden()
+    await modal.getByRole('button', { name: /^Start date:/ }).click()
+    await expect(startPicker.getByText('The start can’t be after the due date.')).toBeVisible()
+    await expect(await dayButton(startPicker, isoDay(9))).toBeEnabled()
+    await expect(await dayButton(startPicker, isoDay(10))).toBeDisabled()
+    await page.keyboard.press('Escape')
+    await expect(startPicker).toBeHidden()
     await expect(modal.getByRole('alert')).toHaveCount(0)
-    await expect(saveButton(modal)).toBeEnabled()
+    expect(await storedTask(page, ID.survey)).toMatchObject({
+      startDate: isoDay(6),
+      dueDate: isoDay(9),
+    })
+
+    // Moving both later: the due date first, then the start. Each pick is saved on its own.
+    await pickDate(page, modal, 'Due date', isoDay(14))
+    await expect.poll(async () => (await storedTask(page, ID.survey))?.dueDate).toBe(isoDay(14))
+    await pickDate(page, modal, 'Start date', isoDay(12))
+    await expect.poll(async () => (await storedTask(page, ID.survey))?.startDate).toBe(isoDay(12))
+    await expect(modal.getByRole('alert')).toHaveCount(0)
+    await expect(modal).toBeVisible()
   })
 
-  test('unsaved changes: every way out asks first; Keep editing returns focus; Discard saves nothing', async ({
+  test('every way out keeps the edit and closes without asking; focus returns to the row', async ({
     page,
   }) => {
     await openApp(page, `/projects/${ID.research}/list`)
@@ -609,6 +643,50 @@ test.describe('task modal · edit', () => {
     const modal = editModal(page, 'Plain task')
     await expect(titleBox(modal)).toBeFocused()
     await page.keyboard.type('!')
+
+    // Esc: kept, closed, no question, and focus is back on the row that opened it.
+    await page.keyboard.press('Escape')
+    await expect(anyEditModal(page)).toBeHidden()
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    await expect.poll(async () => (await storedTask(page, ID.plain))?.title).toBe('Plain task!')
+    await expect(page.getByRole('button', { name: 'Plain task!', exact: true })).toBeFocused()
+
+    // The X button.
+    await page.getByRole('button', { name: 'Plain task!', exact: true }).click()
+    await expect(titleBox(anyEditModal(page))).toBeFocused()
+    await page.keyboard.type('?')
+    await anyEditModal(page).getByRole('button', { name: 'Close' }).click()
+    await expect(anyEditModal(page)).toBeHidden()
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    await expect.poll(async () => (await storedTask(page, ID.plain))?.title).toBe('Plain task!?')
+
+    // A click on the overlay.
+    await page.getByRole('button', { name: 'Plain task!?', exact: true }).click()
+    await expect(titleBox(anyEditModal(page))).toBeFocused()
+    await page.keyboard.type('.')
+    const box = await anyEditModal(page).boundingBox()
+    if (!box) throw new Error('the modal is not visible')
+    await page.mouse.click(box.x + box.width + 80, box.y + 120)
+    await expect(anyEditModal(page)).toBeHidden()
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    await expect.poll(async () => (await storedTask(page, ID.plain))?.title).toBe('Plain task!?.')
+
+    // A clean form closes straight away too.
+    await page.getByRole('button', { name: 'Plain task!?.', exact: true }).click()
+    await expect(anyEditModal(page)).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(anyEditModal(page)).toBeHidden()
+  })
+
+  test('the create form still asks "Discard changes?" first, and the question sits above the form', async ({
+    page,
+  }) => {
+    await openApp(page, `/projects/${ID.research}/list`)
+    await expect(page.getByRole('button', { name: 'Plain task', exact: true })).toBeVisible()
+    await page.keyboard.press('c')
+    const modal = newTaskModal(page)
+    await expect(titleBox(modal)).toBeFocused()
+    await page.keyboard.type('Half written')
 
     // Esc, a click on the overlay, the X button: each asks, and "Keep editing" keeps everything.
     await page.keyboard.press('Escape')
@@ -629,7 +707,7 @@ test.describe('task modal · edit', () => {
     await discardAlert(page).getByRole('button', { name: 'Keep editing' }).click()
     await expect(discardAlert(page)).toBeHidden()
     await expect(titleBox(modal)).toBeFocused()
-    await expect(titleBox(modal)).toHaveValue('Plain task!')
+    await expect(titleBox(modal)).toHaveValue('Half written')
 
     const box = await modal.boundingBox()
     if (!box) throw new Error('the modal is not visible')
@@ -642,69 +720,58 @@ test.describe('task modal · edit', () => {
     await discardAlert(page).getByRole('button', { name: 'Keep editing' }).click()
     await expect(modal).toBeVisible()
 
-    // Cancel → Discard: closed, nothing saved, focus is back on the row that opened it.
+    // Cancel → Discard: closed and nothing created.
     await modal.getByRole('button', { name: 'Cancel' }).click()
     await discardAlert(page).getByRole('button', { name: 'Discard' }).click()
     await expect(modal).toBeHidden()
-    await expect(opener).toBeFocused()
-    expect((await storedTask(page, ID.plain))?.title).toBe('Plain task')
-
-    // A clean form closes straight away.
-    await opener.click()
-    await expect(modal).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(modal).toBeHidden()
-    await expect(discardAlert(page)).toHaveCount(0)
+    expect(await tasksTitled(page, 'Half written')).toHaveLength(0)
   })
 
-  test('⌘K → New task never replaces a form with unsaved work without asking', async ({ page }) => {
-    await openApp(page, `/projects/${ID.research}/list?task=${ID.plain}`)
-    const modal = editModal(page, 'Plain task')
-    await titleBox(modal).press('End')
-    await page.keyboard.type(' (unsaved)')
-    await modal.getByRole('textbox', { name: 'Add subtask' }).fill('Not added yet')
-
-    await openSearch(page)
-    await page.getByRole('option', { name: /^New task/ }).click()
-    await expect(discardAlert(page)).toBeVisible()
-    await expect(newTaskModal(page)).toHaveCount(0)
-    await discardAlert(page).getByRole('button', { name: 'Keep editing' }).click()
-    await expect(titleBox(modal)).toBeFocused()
-    await expect(titleBox(modal)).toHaveValue('Plain task (unsaved)')
-    await expect(modal.getByRole('textbox', { name: 'Add subtask' })).toHaveValue('Not added yet')
-
-    // Discard: the Create form takes over.
-    await openSearch(page)
-    await page.getByRole('option', { name: /^New task/ }).click()
-    await discardAlert(page).getByRole('button', { name: 'Discard' }).click()
-    await expect(newTaskModal(page)).toBeVisible()
-    expect((await storedTask(page, ID.plain))?.title).toBe('Plain task')
-  })
-
-  test('a failed Save rolls back and keeps the edit; the toast Retry stores it', async ({
+  test('⌘K → New task keeps what an edit form had typed, with no prompt, and opens Create', async ({
     page,
   }) => {
     await openApp(page, `/projects/${ID.research}/list?task=${ID.plain}`)
     const modal = editModal(page, 'Plain task')
+    await titleBox(modal).press('End')
+    await page.keyboard.type(' (typed)')
+    await modal.getByRole('textbox', { name: 'Add subtask' }).fill('Not added yet')
+
+    await openSearch(page)
+    await page.getByRole('option', { name: /^New task/ }).click()
+    await expect(newTaskModal(page)).toBeVisible()
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    await expect
+      .poll(async () => (await storedTask(page, ID.plain))?.title)
+      .toBe('Plain task (typed)')
+  })
+
+  test('a failed title write rolls back, keeps the text with a message naming the task; Retry stores it', async ({
+    page,
+  }) => {
+    await openApp(page, `/projects/${ID.research}/list?task=${ID.plain}`)
+    const modal = anyEditModal(page) // its name follows the stored title
     await titleBox(modal).fill('Plain task, edited')
     await failNextWrites(page)
-    await saveButton(modal).click()
+    await titleBox(modal).press('Enter')
 
-    const failure = toastWith(page, /Couldn.t update task/)
+    const failure = toastWith(page, /Couldn.t save the title of “Plain task”/)
     await expect(failure).toBeVisible()
     await expect(failure.getByRole('button', { name: 'Retry' })).toBeVisible()
+    await expect(failure.getByRole('button', { name: 'Open' })).toBeVisible()
     expect((await storedTask(page, ID.plain))?.title).toBe('Plain task')
     await expect(toastWith(page, 'Task created')).toHaveCount(0)
     await expect(modal).toBeVisible()
     await expect(titleBox(modal)).toHaveValue('Plain task, edited')
-    await expect(saveButton(modal)).toBeEnabled()
+    await expect(modal).toContainText('Your text is kept here.')
+    await expect(footerState(modal)).toContainText('Couldn’t save title')
 
     await failure.getByRole('button', { name: 'Retry' }).click()
     await expect
       .poll(async () => (await storedTask(page, ID.plain))?.title)
       .toBe('Plain task, edited')
-    // The form now matches the stored task: nothing left to save.
-    await expect(saveButton(modal)).toBeDisabled()
+    // Nothing left to retry.
+    await expect(modal).not.toContainText('Your text is kept here.')
+    await expect(footerState(modal)).not.toContainText('Couldn’t save')
   })
 
   test('deep links keep the modal across a reload; an unknown task reports "Task not found"', async ({
@@ -770,8 +837,9 @@ test.describe('task modal · subtasks', () => {
       parentTaskId: ID.review,
       phaseId: ID.writing,
     })
-    // Subtask edits are immediate, not part of the form: nothing to save.
-    await expect(saveButton(modal)).toBeDisabled()
+    // Subtask edits are immediate, not part of the form: nothing is left waiting to be saved.
+    await expect(footerState(modal)).not.toHaveAttribute('data-save-state', 'pending')
+    await expect(footerState(modal)).not.toHaveAttribute('data-save-state', 'failed')
 
     await subtasks.getByRole('button', { name: 'Status of “Draft related work”: To Do' }).click()
     await page.getByRole('menuitemradio', { name: /Done/ }).click()
@@ -857,7 +925,7 @@ test.describe('task modal · dependencies', () => {
       .toBe(false)
   })
 
-  test('Manual mode: dates that break a dependency show the conflict live and only warn on Save', async ({
+  test('Manual mode: dates that break a dependency show the conflict live in the modal, saved at once, no toast', async ({
     page,
   }) => {
     await openApp(page, `/projects/${ID.research}/list?task=${ID.review}`)
@@ -867,54 +935,56 @@ test.describe('task modal · dependencies', () => {
 
     // The survey starts on day +6: finishing this task on day +8 breaks the link.
     await pickDate(page, modal, 'Due date', isoDay(8))
-    await expect(banner).toContainText('Dependency conflict with these dates')
+    await expect.poll(async () => (await storedTask(page, ID.review))?.dueDate).toBe(isoDay(8))
+    await expect(banner).toContainText('Dependency conflict')
+    await expect(banner).not.toContainText('with these dates') // it is stored now
     await expect(banner).toContainText('Design survey')
     await expect(banner.getByRole('link', { name: 'Open Gantt' })).toHaveAttribute(
       'href',
       `/projects/${ID.research}/gantt?task=${ID.review}`,
     )
-
-    await saveButton(modal).click()
-    await expect(modal).toBeHidden()
-    await expect(toastWith(page, '1 dependency conflict')).toBeVisible()
-    await expect.poll(async () => (await storedTask(page, ID.review))?.dueDate).toBe(isoDay(8))
+    // The modal's banner is the warning: no separate conflict toast, only the date Undo.
+    await expect(toastWith(page, /^Updated/)).toBeVisible()
+    await expect(toastWith(page, '1 dependency conflict')).toHaveCount(0)
+    await expect(modal).toBeVisible()
     // Manual: the successor is never moved.
     expect((await storedTask(page, ID.survey))?.startDate).toBe(isoDay(6))
+
+    await doneButton(modal).click()
+    await expect(anyEditModal(page)).toBeHidden()
+    await expect(toastWith(page, '1 dependency conflict')).toHaveCount(0)
   })
 
-  test('Auto mode: a date change previews the dependents; Cancel saves nothing, Apply writes it all', async ({
+  test('Auto mode: a date change previews the dependents right away; Cancel leaves the dates, Apply writes it all', async ({
     page,
   }) => {
     await openApp(page, `/projects/${ID.launch}/list?task=${ID.announce}`)
     const modal = editModal(page, 'Draft announcement')
-    await titleBox(modal).fill('Draft announcement v2')
     await pickDate(page, modal, 'Due date', isoDay(6)) // Review with legal starts on day +3
-    await saveButton(modal).click()
 
     const preview = page.getByRole('dialog', { name: 'Move dependent tasks?' })
     await expect(preview).toBeVisible()
     await preview.getByRole('button', { name: 'Cancel' }).click()
     await expect(preview).toBeHidden()
-    // Cancelled: the modal stays with its edits, and not even the title was saved.
+    // Cancelled: the modal stays open and the stored dates are untouched.
     await expect(modal).toBeVisible()
-    await expect(titleBox(modal)).toHaveValue('Draft announcement v2')
-    await expect(saveButton(modal)).toBeEnabled()
+    await expect(modal).toContainText('Dates not changed.')
     expect(await storedTask(page, ID.announce)).toMatchObject({
       title: 'Draft announcement',
       dueDate: isoDay(2),
     })
+    expect((await storedTask(page, ID.legal))?.startDate).toBe(isoDay(3))
 
-    await saveButton(modal).click()
+    await pickDate(page, modal, 'Due date', isoDay(6))
     await expect(preview).toBeVisible()
     await preview.getByRole('button', { name: /^Apply/ }).click()
-    await expect(modal).toBeHidden()
-    await expect
-      .poll(async () => (await storedTask(page, ID.announce))?.title)
-      .toBe('Draft announcement v2')
+    await expect(preview).toBeHidden()
+    await expect(anyEditModal(page)).toBeVisible()
+    await expect.poll(async () => (await storedTask(page, ID.announce))?.dueDate).toBe(isoDay(6))
     const db = await readDb(page)
-    expect(db.tasks[ID.announce].dueDate).toBe(isoDay(6))
     expect(db.tasks[ID.legal].startDate! > isoDay(6)).toBe(true)
     expect(db.tasks[ID.publish].startDate! > db.tasks[ID.legal].dueDate!).toBe(true)
+    await expect(anyEditModal(page)).not.toContainText('Dates not changed.')
   })
 
   test('Auto mode: linking a task that already breaks the schedule previews the shift', async ({

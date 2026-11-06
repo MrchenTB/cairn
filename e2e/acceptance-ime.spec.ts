@@ -466,10 +466,12 @@ test.describe('Task Modal', () => {
     await expect(dialog).toBeVisible()
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
     await expect(title).toHaveValue('專案')
-    // A real Enter in an edit-mode title only blocks the line break; nothing is saved by it.
+    // Nothing was stored while the input method owned the Enters and the Esc.
+    expect(await snapshot(page)).toBe(before)
+    // A real Enter in an edit-mode title saves it (and still adds no line break).
     await page.keyboard.press('Enter')
     await expect(title).toHaveValue('專案')
-    expect(await snapshot(page)).toBe(before)
+    await expect.poll(async () => (await stored(page)).tasks['t-0'].title).toBe('專案')
 
     // Subtask line: IME Enter does not add; the next Enter adds one subtask with the exact text.
     const subtask = dialog.getByRole('textbox', { name: 'Add subtask' })
@@ -490,10 +492,10 @@ test.describe('Task Modal', () => {
     await page.keyboard.press('Enter')
     await expect.poll(() => subtaskTitles(page)).toEqual(['台北', '馬'])
 
-    // Save: ⌘/Ctrl+Enter, the title is exactly what was committed.
+    // Close: ⌘/Ctrl+Enter keeps everything; the title is exactly what was committed.
     await page.keyboard.press('ControlOrMeta+Enter')
     await expect(dialog).toBeHidden()
-    expect((await stored(page)).tasks['t-0'].title).toBe('專案')
+    await expect.poll(async () => (await stored(page)).tasks['t-0'].title).toBe('專案')
   })
 })
 

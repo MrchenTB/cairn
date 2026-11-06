@@ -467,7 +467,7 @@ test.describe('auth requests that hang', () => {
 })
 
 test.describe('a session that ends while work is open', () => {
-  test('unsaved edits in the task modal, signed out in another tab: the sign-in page, no prompt left over', async ({
+  test('unsaved text in the task modal, signed out in another tab: the sign-in page, no prompt left over; the same account gets the text back to decide on', async ({
     context,
     page,
   }) => {
@@ -491,11 +491,18 @@ test.describe('a session that ends while work is open', () => {
       { title: 'Alpha' },
     ])
 
-    // Back in, the stored title is shown; the discarded edit is not pretended to be saved.
+    // Back in as the same account, the text that never reached the server is offered back (it was
+    // kept for this account), but it is not pretended to be saved and nothing is written for it.
     await submitSignIn(page, email)
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/list`))
     // The task link opens its modal again, which hides the sidebar from the accessibility tree.
     const again = page.getByRole('dialog', { name: 'Edit task: Alpha' })
+    await expect(again.getByRole('textbox', { name: 'Task title' })).toHaveValue('Alpha, not saved')
+    await expect(again).toContainText('Recovered text that wasn’t saved.')
+    expect(await sim.sql('select title from public.tasks where id = $1', [ids.a])).toEqual([
+      { title: 'Alpha' },
+    ])
+    await again.getByRole('button', { name: 'Discard: title' }).click()
     await expect(again.getByRole('textbox', { name: 'Task title' })).toHaveValue('Alpha')
   })
 
@@ -708,7 +715,8 @@ test.describe('a stale device', () => {
       'Renamed elsewhere',
     )
     await expect(modal.getByRole('textbox', { name: /Description/ })).toHaveValue('Written here')
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
+    // Done hands over the description that was still waiting; the title is not sent again.
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toBeHidden()
     await expect
       .poll(() =>

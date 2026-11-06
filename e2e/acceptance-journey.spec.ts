@@ -578,8 +578,9 @@ async function setStatus(page: Page, modal: Locator, label: string) {
   await page.getByRole('menuitemradio', { name: new RegExp(label) }).click()
 }
 
+/** Finish editing: the changes were saved as they were made, Done only closes the modal. */
 async function save(page: Page, modal: Locator) {
-  await modal.getByRole('button', { name: 'Save', exact: true }).click()
+  await modal.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(page.locator('[role="dialog"]')).toHaveCount(0)
 }
 
@@ -930,10 +931,12 @@ test.describe('journey: a thesis student over several weeks', () => {
     await checkAll(page, d(11), 'D12 Auto mode on')
     modal = await openTask(page, THESIS, '取得 IRB 核可')
     await pickDate(page, modal, 'Due date', addDays((await readDb(page)).tasks[irb].dueDate!, 4))
-    await modal.getByRole('button', { name: 'Save', exact: true }).click()
+    // Auto mode: the preview appears right after the pick, no Save in between.
     const preview = page.getByRole('dialog', { name: 'Move dependent tasks?' })
     await expect(preview).toBeVisible()
     await preview.getByRole('button', { name: /^Apply/ }).click()
+    await expect(preview).toBeHidden()
+    await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(page.locator('[role="dialog"]')).toHaveCount(0)
     {
       const db = await readDb(page)

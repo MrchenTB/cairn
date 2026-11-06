@@ -621,7 +621,8 @@ const editModal = (page: Page, title: string) =>
   page.getByRole('dialog', { name: `Edit task: ${title}` })
 const newTaskModal = (page: Page) => page.getByRole('dialog', { name: 'New task', exact: true })
 const titleBox = (modal: Locator) => modal.getByRole('textbox', { name: 'Task title' })
-const saveButton = (modal: Locator) => modal.getByRole('button', { name: 'Save', exact: true })
+/** The edit form whatever its title is now (the dialog's name follows the stored title live). */
+const anyEditModal = (page: Page) => page.getByRole('dialog', { name: /^Edit task:/ })
 const discardAlert = (page: Page) => page.getByRole('alertdialog', { name: 'Discard changes?' })
 
 /** The modifier the app's keyboard engine treats as `mod` (⌘ on Apple platforms, else Ctrl). */
@@ -708,7 +709,7 @@ test.describe('AC-15: failed writes roll back, say so, and Retry works exactly o
     await expect(syncIndicator(page)).toHaveAttribute('data-sync', 'local')
   })
 
-  test('AC-15: update — a status in the List and a title saved from the Task Modal', async ({
+  test('AC-15: update — a status in the List and a title auto-saved from the Task Modal', async ({
     page,
   }) => {
     await openApp(page, `/projects/${ID.flat}/list`)
@@ -735,11 +736,13 @@ test.describe('AC-15: failed writes roll back, say so, and Retry works exactly o
     const modal = editModal(page, 'Alpha')
     await titleBox(modal).fill('Alpha, edited')
     await failNextWrites(page)
-    await saveButton(modal).click()
-    failure = toast(page, "Couldn't update task")
+    await titleBox(modal).press('Enter')
+    // The message from the modal names the task and the field.
+    failure = toast(page, /Couldn.t save the title of “Alpha”/)
     await expectFailedHonestly(page, failure, before)
     await expect(modal).toBeVisible()
     await expect(titleBox(modal)).toHaveValue('Alpha, edited')
+    await expect(modal).toContainText('Your text is kept here.')
     expect((await readDb(page)).tasks['f-alpha'].title).toBe('Alpha')
     await retryButton(failure).click()
     await expect.poll(async () => (await readDb(page)).tasks['f-alpha'].title).toBe('Alpha, edited')
@@ -2244,7 +2247,7 @@ test.describe('AC-14: Task Modal', () => {
     },
   ]
 
-  test('AC-14: Esc, the X, Cancel and a click outside close the Task Modal and give focus back to what opened it', async ({
+  test('AC-14: Esc, the X, Done and a click outside close the Task Modal and give focus back to what opened it', async ({
     page,
   }) => {
     await openApp(page, '/overview')
@@ -2278,8 +2281,8 @@ test.describe('AC-14: Task Modal', () => {
       await expectClosed('the X')
 
       await open()
-      await modal.getByRole('button', { name: 'Cancel' }).click()
-      await expectClosed('Cancel')
+      await modal.getByRole('button', { name: 'Done', exact: true }).click()
+      await expectClosed('Done')
 
       await open()
       const box = await modal.boundingBox()
@@ -2304,7 +2307,7 @@ test.describe('AC-14: Task Modal', () => {
     }
   })
 
-  test('AC-14: unsaved changes: every way out asks first, Keep editing keeps everything, Discard saves nothing, ⌘/Ctrl+Enter saves', async ({
+  test('AC-14: every way out of an edit keeps it without asking, ⌘/Ctrl+Enter too; the create form still asks', async ({
     page,
   }) => {
     await openApp(page, `/projects/${ID.flat}/list`)
@@ -2312,55 +2315,77 @@ test.describe('AC-14: Task Modal', () => {
     await opener.click()
     const modal = editModal(page, 'Alpha')
     await expect(titleBox(modal)).toBeFocused()
+    await expect(modal.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0)
+    await expect(modal.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
     await page.keyboard.press('End')
     await page.keyboard.type('!')
-    await expect(saveButton(modal)).toBeEnabled()
 
-    // Esc, the X, Cancel and a click outside each ask; "Keep editing" returns to the form as it was.
+    // Esc keeps the edit and closes: no question, stored, and focus is on the row again.
     await page.keyboard.press('Escape')
-    await expect(discardAlert(page)).toBeVisible()
-    await discardAlert(page).getByRole('button', { name: 'Keep editing' }).click()
-    await expect(titleBox(modal)).toBeFocused()
-    await expect(titleBox(modal)).toHaveValue('Alpha!')
+    await expect(anyEditModal(page)).toBeHidden()
+    await expect(discardAlert(page)).toHaveCount(0)
+    await expect.poll(async () => (await readDb(page)).tasks['f-alpha'].title).toBe('Alpha!')
+    await expect(page).not.toHaveURL(/task=/)
+    await expect(
+      taskRow(page, 'Alpha!').getByRole('button', { name: 'Alpha!', exact: true }),
+    ).toBeFocused()
 
-    await modal.getByRole('button', { name: 'Close' }).click()
-    await expect(discardAlert(page)).toBeVisible()
-    await discardAlert(page).getByRole('button', { name: 'Keep editing' }).click()
-    await expect(titleBox(modal)).toHaveValue('Alpha!')
+    // The X and a click outside: the same.
+    await taskRow(page, 'Alpha!').getByRole('button', { name: 'Alpha!', exact: true }).click()
+    await expect(titleBox(anyEditModal(page))).toBeFocused()
+    await page.keyboard.type('?')
+    await anyEditModal(page).getByRole('button', { name: 'Close' }).click()
+    await expect(anyEditModal(page)).toBeHidden()
+    await expect(discardAlert(page)).toHaveCount(0)
+    await expect.poll(async () => (await readDb(page)).tasks['f-alpha'].title).toBe('Alpha!?')
 
-    const box = await modal.boundingBox()
+    await taskRow(page, 'Alpha!?').getByRole('button', { name: 'Alpha!?', exact: true }).click()
+    await expect(titleBox(anyEditModal(page))).toBeFocused()
+    await page.keyboard.type('.')
+    const box = await anyEditModal(page).boundingBox()
     if (!box) throw new Error('the modal is not visible')
     await page.mouse.click(box.x + box.width + 60, box.y + 80)
-    await expect(discardAlert(page)).toBeVisible()
-    await discardAlert(page).getByRole('button', { name: 'Keep editing' }).click()
-    await expect(modal).toBeVisible()
-
-    // Cancel → Discard: closed, nothing saved, focus on the row again.
-    await modal.getByRole('button', { name: 'Cancel' }).click()
-    await discardAlert(page).getByRole('button', { name: 'Discard' }).click()
-    await expect(modal).toBeHidden()
-    await expect(opener).toBeFocused()
-    expect((await readDb(page)).tasks['f-alpha'].title).toBe('Alpha')
-    await expect(page).not.toHaveURL(/task=/)
-
-    // A clean form closes at once; a saved edit closes, is stored and shows in the list.
-    await opener.click()
-    await expect(titleBox(modal)).toBeFocused()
-    await page.keyboard.press('Escape')
-    await expect(modal).toBeHidden()
+    await expect(anyEditModal(page)).toBeHidden()
     await expect(discardAlert(page)).toHaveCount(0)
-    await opener.click()
-    await expect(titleBox(modal)).toBeFocused()
+    await expect.poll(async () => (await readDb(page)).tasks['f-alpha'].title).toBe('Alpha!?.')
+
+    // ⌘/Ctrl+Enter: kept and closed.
+    await taskRow(page, 'Alpha!?.').getByRole('button', { name: 'Alpha!?.', exact: true }).click()
+    await expect(titleBox(anyEditModal(page))).toBeFocused()
     await page.keyboard.press('End')
     await page.keyboard.type(' saved')
     await page.keyboard.press(`${await modifierKey(page)}+Enter`)
-    await expect(modal).toBeHidden()
-    await expect.poll(async () => (await readDb(page)).tasks['f-alpha'].title).toBe('Alpha saved')
-    await expect(taskRow(page, 'Alpha saved')).toBeVisible()
+    await expect(anyEditModal(page)).toBeHidden()
+    await expect
+      .poll(async () => (await readDb(page)).tasks['f-alpha'].title)
+      .toBe('Alpha!?. saved')
+    await expect(taskRow(page, 'Alpha!?. saved')).toBeVisible()
     await expect(discardAlert(page)).toHaveCount(0)
+
+    // A clean form closes at once.
+    await taskRow(page, 'Alpha!?. saved')
+      .getByRole('button', { name: 'Alpha!?. saved', exact: true })
+      .click()
+    await expect(titleBox(anyEditModal(page))).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(anyEditModal(page)).toBeHidden()
+
+    // The create form is unchanged: typed text asks first, Keep editing keeps it, Discard drops it.
+    await page.locator('body').press('c')
+    await titleBox(newTaskModal(page)).fill('Never created')
+    await page.keyboard.press('Escape')
+    await expect(discardAlert(page)).toBeVisible()
+    await discardAlert(page).getByRole('button', { name: 'Keep editing' }).click()
+    await expect(titleBox(newTaskModal(page))).toHaveValue('Never created')
+    await newTaskModal(page).getByRole('button', { name: 'Cancel' }).click()
+    await discardAlert(page).getByRole('button', { name: 'Discard' }).click()
+    await expect(newTaskModal(page)).toBeHidden()
+    expect(
+      Object.values((await readDb(page)).tasks).some((task) => task.title === 'Never created'),
+    ).toBe(false)
   })
 
-  test('AC-14: closing or reloading the tab is guarded only while the Task Modal holds unsaved changes', async ({
+  test('AC-14: closing or reloading the tab is guarded only while task text is unsaved (Local mode)', async ({
     page,
   }) => {
     test.setTimeout(60_000)
@@ -2377,11 +2402,18 @@ test.describe('AC-14: Task Modal', () => {
     expect(await leave(), 'nothing to lose yet').toBe(false)
     await page.keyboard.press('End')
     await page.keyboard.type('?')
-    expect(await leave(), 'unsaved edit').toBe(true)
+    expect(await leave(), 'text typed but not sent yet').toBe(true)
+    // Enter sends it; in Local mode a stored title is nothing to lose any more.
+    await page.keyboard.press('Enter')
+    await expect.poll(async () => (await readDb(page)).tasks['f-beta'].title).toBe('Beta?')
+    await expect.poll(leave, { message: 'after the title was saved', timeout: 4000 }).toBe(false)
+    // Typing again is guarded; closing keeps the text and the guard goes with it.
+    await page.keyboard.type('!')
+    expect(await leave(), 'unsent text again').toBe(true)
     await page.keyboard.press('Escape')
-    await discardAlert(page).getByRole('button', { name: 'Discard' }).click()
-    await expect(modal).toBeHidden()
-    await expect.poll(leave, { message: 'after discarding', timeout: 4000 }).toBe(false)
+    await expect(anyEditModal(page)).toBeHidden()
+    await expect.poll(async () => (await readDb(page)).tasks['f-beta'].title).toBe('Beta?!')
+    await expect.poll(leave, { message: 'after closing', timeout: 4000 }).toBe(false)
     // A half-typed new task is guarded as well.
     await page.locator('body').press('c')
     await titleBox(newTaskModal(page)).fill('Half typed')
