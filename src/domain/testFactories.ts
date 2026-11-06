@@ -34,6 +34,7 @@ export function makePhase(overrides: Partial<Phase> & Pick<Phase, 'projectId'>):
   return {
     id: nextId('phase'),
     name: 'Phase',
+    color: null,
     sortOrder: 'a0',
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,

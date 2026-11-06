@@ -10,6 +10,7 @@ import {
   useId,
   useMemo,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
@@ -42,6 +43,7 @@ import {
   SCALES,
   buildHeaderTiers,
   gridBackgroundStyle,
+  weekendBandVars,
   gridLines,
 } from '@/features/gantt/model/scale'
 import { nextMilestoneIds, rowHeightOf, type TimelineRowModel } from './model/rows'
@@ -178,6 +180,10 @@ export function TimelineChart({
     () => gridLines({ scale, range: { start: rangeStart, end: rangeEnd }, window: win, dayWidth }),
     [scale, rangeStart, rangeEnd, win, dayWidth],
   )
+  const bandVars = useMemo(
+    () => weekendBandVars(scale, rangeStart, dayWidth) as CSSProperties,
+    [scale, rangeStart, dayWidth],
+  )
   const gridStyle = useMemo(
     () => gridBackgroundStyle(scale, rangeStart, dayWidth, weekStartsOn),
     [scale, rangeStart, dayWidth, weekStartsOn],
@@ -264,7 +270,7 @@ export function TimelineChart({
             />
             <div
               className="relative select-none"
-              style={{ width: contentWidth, height: bodyHeight }}
+              style={{ width: contentWidth, height: bodyHeight, ...bandVars }}
               onClick={onBodyClick}
               onFocus={(event) => {
                 const key = (event.target as Element)

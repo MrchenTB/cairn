@@ -15,10 +15,11 @@ import {
 import { Link } from 'react-router'
 import { CalendarOff, ChevronRight, CircleCheck } from 'lucide-react'
 import { ProjectDot } from '@/components/task/ProjectDot'
+import { PROJECT_COLOR_VAR } from '@/components/task/labels'
 import { ProjectStatusBadge } from '@/components/task/ProjectStatusBadge'
 import { hoverFade, insetFocus } from '@/components/ui/styles'
 import { formatDate } from '@/domain/dates'
-import type { ISODate, ProjectColor } from '@/domain/types'
+import type { ISODate } from '@/domain/types'
 import { MilestoneDiamond } from '@/features/gantt/components/bars'
 import { cellBase, cellSurface } from '@/features/gantt/components/GanttRow'
 import { measureLabelWidth } from '@/features/gantt/components/measure'
@@ -39,18 +40,6 @@ import {
   projectRowSummary,
   type ProjectRow,
 } from './model/rows'
-
-const PROJECT_COLOR_VAR: Record<ProjectColor, string> = {
-  gray: 'var(--project-gray)',
-  blue: 'var(--project-blue)',
-  violet: 'var(--project-violet)',
-  pink: 'var(--project-pink)',
-  red: 'var(--project-red)',
-  orange: 'var(--project-orange)',
-  yellow: 'var(--project-yellow)',
-  green: 'var(--project-green)',
-  teal: 'var(--project-teal)',
-}
 
 function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? '' : 's'}`

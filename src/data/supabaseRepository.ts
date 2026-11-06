@@ -91,6 +91,7 @@ const CONSTRAINT_MESSAGES: readonly (readonly [RegExp, string])[] = [
   [/tasks_title_length/, 'Task title must be 1–500 characters.'],
   [/projects_name_length/, 'Project name must be 1–200 characters.'],
   [/phases_name_length/, 'Phase name must be 1–200 characters.'],
+  [/phases_color_valid/, 'Pick one of the phase colors.'],
   [/milestones_name_length/, 'Milestone name must be 1–200 characters.'],
   [/_description_length/, 'Description must be at most 10,000 characters.'],
   [/_dates?_range/, 'Dates must be between 0001-01-01 and 9999-12-31.'],

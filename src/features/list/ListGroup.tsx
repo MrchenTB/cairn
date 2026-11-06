@@ -14,10 +14,13 @@ import {
   Diamond,
   Ellipsis,
   Layers,
+  Palette,
   Pencil,
   Plus,
   Trash,
 } from 'lucide-react'
+import { phaseColorLabel, PhaseColorPopover } from '@/components/task/PhaseColorPicker'
+import { ProjectDot } from '@/components/task/ProjectDot'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -31,7 +34,7 @@ import { insetFocus } from '@/components/ui/styles'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { OutlineGroup, OutlineTask } from '@/domain/hierarchy'
 import { computeProgress } from '@/domain/progress'
-import { NAME_MAX_LENGTH, TITLE_MAX_LENGTH, type Task } from '@/domain/types'
+import { NAME_MAX_LENGTH, resolvePhaseColor, TITLE_MAX_LENGTH, type Task } from '@/domain/types'
 import { validateName } from '@/domain/validation'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
@@ -226,6 +229,7 @@ function GroupHeader({
   const ctx = useListContext()
   const phase = group.phase
   const [renaming, setRenaming] = useState(false)
+  const [colorOpen, setColorOpen] = useState(false)
   const toggleRef = useRef<HTMLButtonElement>(null)
   /** Enter / Esc ended the rename: focus goes back to the header (a click elsewhere keeps it). */
   const refocusToggle = useRef(false)
@@ -286,11 +290,35 @@ function GroupHeader({
               !collapsed && 'rotate-90',
             )}
           />
+          {phase ? <span className="w-2 shrink-0" aria-hidden /> : null}
           <span className="truncate font-semibold text-fg-secondary">{name}</span>
           <span className="text-fg-tertiary tabular-nums" aria-hidden>
             {count}
           </span>
         </button>
+      )}
+      {renaming || !phase ? null : (
+        <PhaseColorPopover
+          phaseName={name}
+          value={phase.color}
+          projectColor={ctx.project.color}
+          onChange={(color) => ctx.phaseCommands.setColor(phase, color)}
+          open={colorOpen}
+          onOpenChange={setColorOpen}
+        >
+          <button
+            type="button"
+            aria-label={`Color of ${name}: ${phaseColorLabel(phase.color, ctx.project.color)}`}
+            className={cn(
+              'absolute top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-md hover:bg-hover',
+              insetFocus,
+            )}
+            // pl-6 (24) + toggle -ml-1 and pl-1 (0) + chevron (14) + gap (6) − (hit area − dot) / 2
+            style={{ left: 38 }}
+          >
+            <ProjectDot color={resolvePhaseColor(phase.color, ctx.project.color)} />
+          </button>
+        </PhaseColorPopover>
       )}
       {renaming ? null : (
         <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity duration-fast group-hover/header:opacity-100 group-focus-within/header:opacity-100 has-[[data-state=open]]:opacity-100">
@@ -335,6 +363,12 @@ function GroupHeader({
                   <DropdownMenuItem onSelect={() => setRenaming(true)}>
                     <Pencil />
                     Rename phase
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => ctx.openRowAfterMenu('phase-color', () => setColorOpen(true))}
+                  >
+                    <Palette />
+                    Color…
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     disabled={phaseIndex <= 0}

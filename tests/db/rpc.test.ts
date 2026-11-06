@@ -349,7 +349,9 @@ describe('import_workspace', () => {
         },
         { id: id.emptyProject, name: 'Minimal', sort_order: 'a1' },
       ],
-      phases: [{ id: id.phase, project_id: id.project, name: 'Design', sort_order: 'a0' }],
+      phases: [
+        { id: id.phase, project_id: id.project, name: 'Design', color: 'orange', sort_order: 'a0' },
+      ],
       tasks: [
         // The subtask comes first on purpose: parents must still be inserted before subtasks.
         {
@@ -444,6 +446,7 @@ describe('import_workspace', () => {
     })
     expect(await getRow<PhaseRow>(db.admin, 'phases', id.phase)).toMatchObject({
       user_id: carol.id,
+      color: 'orange', // phase colours survive a backup import
     })
     expect(await task(id.subtask)).toMatchObject({
       user_id: carol.id,
@@ -462,6 +465,17 @@ describe('import_workspace', () => {
       },
     )
     expect(await getRow<ProjectRow>(db.admin, 'projects', existing.id)).toEqual(existing)
+  })
+
+  it('a backup made before phase colours (no color key at all) imports as "inherit the project colour"', async () => {
+    const heidi = await db.createUser()
+    const { id, data } = backup()
+    for (const phase of data.phases as { color?: string }[]) delete phase.color
+    await importWorkspace(heidi, data)
+    expect(await getRow<PhaseRow>(db.admin, 'phases', id.phase)).toMatchObject({
+      user_id: heidi.id,
+      color: null,
+    })
   })
 
   it('accepts an empty import', async () => {
@@ -517,6 +531,12 @@ describe('import_workspace', () => {
     ],
     ['a duplicate id', (data) => void (data.projects[1].id = data.projects[0].id), '23505'],
     ['a blank name', (data) => void (data.phases[0].name = '   '), '23514'],
+    [
+      'a phase colour outside the palette (red is reserved)',
+      (data) => void ((data.phases[0] as { color?: string }).color = 'red'),
+      '23514',
+      'phases_color_valid',
+    ],
     ['an invalid uuid', (data) => void (data.milestones[0].id = 'not-a-uuid'), '22P02'],
     [
       'a phase from another project of the import',

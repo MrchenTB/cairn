@@ -32,6 +32,35 @@ export const PROJECT_COLORS = [
 ] as const
 export type ProjectColor = (typeof PROJECT_COLORS)[number]
 
+/**
+ * Colours a phase can take: the project palette minus red, which stays the signal for conflicts,
+ * overdue and errors. Stored as the palette's name (never a hex value), so the `--project-*`
+ * tokens define the actual shade in both themes.
+ */
+export const PHASE_COLORS = [
+  'gray',
+  'blue',
+  'violet',
+  'pink',
+  'orange',
+  'yellow',
+  'green',
+  'teal',
+] as const satisfies readonly ProjectColor[]
+export type PhaseColor = (typeof PHASE_COLORS)[number]
+
+export function isPhaseColor(value: unknown): value is PhaseColor {
+  return typeof value === 'string' && (PHASE_COLORS as readonly string[]).includes(value)
+}
+
+/** The colour a phase (and so its tasks) is drawn in: its own, else the project's. */
+export function resolvePhaseColor(
+  phaseColor: PhaseColor | null | undefined,
+  projectColor: ProjectColor,
+): ProjectColor {
+  return phaseColor ?? projectColor
+}
+
 export const TASK_STATUSES = ['todo', 'in_progress', 'done'] as const
 export type TaskStatus = (typeof TASK_STATUSES)[number]
 
@@ -72,6 +101,8 @@ export interface Phase {
   id: string
   projectId: string
   name: string
+  /** null = inherit the project's colour. */
+  color: PhaseColor | null
   sortOrder: string
   createdAt: Timestamp
   updatedAt: Timestamp
@@ -183,10 +214,12 @@ export type ProjectPatch = Partial<
 export interface NewPhaseInput {
   projectId: string
   name: string
+  /** Optional; omitted or null = inherit the project's colour. */
+  color?: PhaseColor | null
   /** Insert after this phase id; default = append at the end. */
   afterPhaseId?: string | null
 }
-export type PhasePatch = Partial<Pick<Phase, 'name' | 'sortOrder'>>
+export type PhasePatch = Partial<Pick<Phase, 'name' | 'color' | 'sortOrder'>>
 
 export interface NewTaskInput {
   projectId: string

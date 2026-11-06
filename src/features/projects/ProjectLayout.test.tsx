@@ -187,6 +187,40 @@ describe('ProjectLayout — menu', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  it('adds a phase with a colour chosen in the dialog (optional)', async () => {
+    const { project } = await seedResearch()
+    const { user } = renderLayout(`/projects/${project.id}/list`)
+    await user.click(screen.getByRole('button', { name: 'Project actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Add phase…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New phase' })
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Launch')
+    expect(within(dialog).queryByRole('radio', { name: 'Red' })).toBeNull()
+    await user.click(within(dialog).getByRole('radio', { name: 'Pink' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Add phase' }))
+    await waitFor(() => {
+      const launch = Object.values(useWorkspaceStore.getState().data.phases).find(
+        (phase) => phase.name === 'Launch',
+      )
+      expect(launch?.color).toBe('pink')
+    })
+  })
+
+  it('adds a phase without a colour: it follows the project colour', async () => {
+    const { project } = await seedResearch()
+    const { user } = renderLayout(`/projects/${project.id}/list`)
+    await user.click(screen.getByRole('button', { name: 'Project actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Add phase…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New phase' })
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Plain{Enter}')
+    await waitFor(() => {
+      const plain = Object.values(useWorkspaceStore.getState().data.phases).find(
+        (phase) => phase.name === 'Plain',
+      )
+      expect(plain).toBeDefined()
+      expect(plain?.color).toBeNull()
+    })
+  })
+
   it('adds a failed phase once: a Retry from outside the dialog finishes it', async () => {
     const { project } = await seedResearch()
     const { user } = renderLayout(`/projects/${project.id}/list`)

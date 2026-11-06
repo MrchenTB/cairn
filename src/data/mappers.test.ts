@@ -72,6 +72,22 @@ describe('row ↔ domain round trips', () => {
     expect(phaseFromRow(row)).toEqual(phase)
   })
 
+  it('phase colours: written only when set, read as null when absent or unknown', () => {
+    const plain = makePhase({ projectId: 'p1' })
+    expect(phaseToInsert(plain)).not.toHaveProperty('color') // works on a database without the column
+    const teal = makePhase({ projectId: 'p1', color: 'teal' })
+    expect(phaseToInsert(teal)).toMatchObject({ color: 'teal' })
+    expect(phaseFromRow(phaseToRow(teal))).toEqual(teal)
+    // A row from a database that has not run the migration, or from a newer palette.
+    const { color: _, ...withoutColor } = phaseToRow(plain)
+    expect(phaseFromRow(withoutColor).color).toBeNull()
+    expect(phaseFromRow({ ...phaseToRow(plain), color: 'magenta' as never }).color).toBeNull()
+    expect(phaseFromRow({ ...phaseToRow(plain), color: 'red' as never }).color).toBeNull()
+    // Patches: a colour, and null to go back to the project colour.
+    expect(phasePatchToRow({ color: 'blue' })).toEqual({ color: 'blue' })
+    expect(phasePatchToRow({ color: null })).toEqual({ color: null })
+  })
+
   it('tasks', () => {
     const task = makeTask({
       projectId: 'p1',

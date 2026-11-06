@@ -487,6 +487,45 @@ describe('validation', () => {
   })
 })
 
+describe('phase colours', () => {
+  it('createPhase takes an optional colour; updatePhase sets it, null returns to the project colour', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const plain = await h.actions.createPhase({ projectId: 'p1', name: 'Plain' })
+    const teal = await h.actions.createPhase({ projectId: 'p1', name: 'Teal', color: 'teal' })
+    if (!plain.ok || !teal.ok) throw new Error('create failed')
+    expect(plain.value.color).toBeNull()
+    expect(teal.value.color).toBe('teal')
+    expect((await h.actions.updatePhase(plain.value.id, { color: 'violet' })).ok).toBe(true)
+    expect(h.state().data.phases[plain.value.id].color).toBe('violet')
+    expect((await storedSnapshot(h)).phases.find((p) => p.id === plain.value.id)?.color).toBe(
+      'violet',
+    )
+    expect((await h.actions.updatePhase(plain.value.id, { color: null })).ok).toBe(true)
+    expect(h.state().data.phases[plain.value.id].color).toBeNull()
+  })
+
+  it('refuses red and unknown colours without touching the data', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const before = h.state().data.phases.ph1
+    for (const color of ['red', 'chartreuse', '#fff']) {
+      const result = await h.actions.updatePhase('ph1', { color: color as never })
+      expect(result).toMatchObject({ ok: false, error: { kind: 'validation' } })
+      expect(
+        (await h.actions.createPhase({ projectId: 'p1', name: 'X', color: color as never })).ok,
+      ).toBe(false)
+    }
+    expect(h.state().data.phases.ph1).toEqual(before)
+  })
+
+  it('deleting a phase puts its tasks back on the project colour (no phase, no phase colour)', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    await h.actions.updatePhase('ph1', { color: 'pink' })
+    await h.actions.deletePhase('ph1')
+    expect(h.state().data.phases.ph1).toBeUndefined()
+    expect(Object.values(h.state().data.tasks).every((t) => t.phaseId !== 'ph1')).toBe(true)
+  })
+})
+
 describe('ordering', () => {
   it('createTask honours placement among top-level tasks; createPhase/moveProject place correctly', async () => {
     const h = await setup({ rows: workspaceRows() })

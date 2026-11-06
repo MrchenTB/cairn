@@ -36,6 +36,8 @@ const COLUMNS: Record<string, [string, string, boolean][]> = {
     ['sort_order', 'text', false],
     ['created_at', 'timestamp with time zone', false],
     ['updated_at', 'timestamp with time zone', false],
+    // Added by 20261106000000_phase_color.sql (appended, so it comes last).
+    ['color', 'text', true],
   ],
   tasks: [
     ['id', 'uuid', false],

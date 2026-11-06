@@ -42,6 +42,7 @@ export interface PhaseRow {
   user_id: string
   project_id: string
   name: string
+  color: string | null
   sort_order: string
   created_at: Date
   updated_at: Date

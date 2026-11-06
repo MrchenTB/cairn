@@ -26,6 +26,7 @@ import { validateNewDependency } from '@/domain/scheduling'
 import {
   DEPENDENCY_TYPES,
   NAME_MAX_LENGTH,
+  isPhaseColor,
   PROJECT_COLORS,
   PROJECT_STATUSES,
   SCHEDULE_MODES,
@@ -197,6 +198,9 @@ const ROW_SHAPES = {
     id: isText,
     projectId: isText,
     name: isText,
+    // `color` is deliberately not checked here: a workspace saved before phase colours has no such
+    // field (and one from a newer version may hold a colour this build does not know). Both are
+    // readable; `normalizePhases` turns them into "inherit the project colour".
     sortOrder: isText,
     createdAt: isText,
     updatedAt: isText,
@@ -262,6 +266,15 @@ function readPreferences(value: unknown): Preferences | null {
   return { theme: knownTheme, sidebarCollapsed, timezone, weekStartsOn }
 }
 
+/** Phases saved before colours existed (no `color`) or with an unknown colour inherit the project's. */
+function normalizePhases(phases: Record<string, Phase>): Record<string, Phase> {
+  const out: Record<string, Phase> = {}
+  for (const [id, phase] of Object.entries(phases)) {
+    out[id] = isPhaseColor(phase.color) ? phase : { ...phase, color: null }
+  }
+  return out
+}
+
 /** The stored workspace, or null when it is not one this version can read safely. */
 function parseDb(raw: string): LocalDb | null {
   let parsed: unknown
@@ -274,7 +287,12 @@ function parseDb(raw: string): LocalDb | null {
   for (const [table, shape] of Object.entries(ROW_SHAPES)) {
     if (!isTableOf(parsed[table], shape)) return null
   }
-  return { ...(parsed as unknown as LocalDb), preferences: readPreferences(parsed.preferences) }
+  const db = parsed as unknown as LocalDb
+  return {
+    ...db,
+    phases: normalizePhases(db.phases),
+    preferences: readPreferences(parsed.preferences),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +390,11 @@ const PROJECT_PATCH_KEYS = [
   'scheduleMode',
   'sortOrder',
 ] as const satisfies readonly (keyof ProjectPatch)[]
-const PHASE_PATCH_KEYS = ['name', 'sortOrder'] as const satisfies readonly (keyof PhasePatch)[]
+const PHASE_PATCH_KEYS = [
+  'name',
+  'color',
+  'sortOrder',
+] as const satisfies readonly (keyof PhasePatch)[]
 const TASK_PATCH_KEYS = [
   'title',
   'description',
@@ -407,6 +429,11 @@ function checkTask(row: Task): void {
   checkEnum(row.priority, TASK_PRIORITIES, 'task priority')
   checkDates(row.startDate, row.dueDate)
   checkSortOrder(row.sortOrder)
+}
+
+/** phases_color_valid. */
+function checkPhaseColor(color: unknown): void {
+  if (color !== null && !isPhaseColor(color)) invalid('Pick one of the phase colors.')
 }
 
 /** Composite FK (phase_id, project_id) → phases(id, project_id). */
@@ -476,11 +503,13 @@ function insertPhaseRow(db: LocalDb, input: Phase, now: Timestamp): Phase {
     id: input.id,
     projectId: input.projectId,
     name: input.name,
+    color: input.color ?? null,
     sortOrder: input.sortOrder,
     createdAt: now,
     updatedAt: now,
   }
   checkName(row.name, NAME_MAX_LENGTH, 'Phase name')
+  checkPhaseColor(row.color)
   checkSortOrder(row.sortOrder)
   db.phases[row.id] = row
   return row
@@ -708,6 +737,7 @@ export class LocalRepository implements Repository {
       const row = { ...current }
       assignDefined(row, patch, PHASE_PATCH_KEYS)
       checkName(row.name, NAME_MAX_LENGTH, 'Phase name')
+      checkPhaseColor(row.color)
       checkSortOrder(row.sortOrder)
       row.updatedAt = now
       db.phases[id] = row
@@ -988,7 +1018,11 @@ export class LocalRepository implements Repository {
     if (raw === null) return emptyDb()
     if (raw === this.trustedRaw) {
       const db = JSON.parse(raw) as LocalDb
-      return { ...db, preferences: readPreferences(db.preferences) }
+      return {
+        ...db,
+        phases: normalizePhases(db.phases),
+        preferences: readPreferences(db.preferences),
+      }
     }
     const db = parseDb(raw)
     if (db) {

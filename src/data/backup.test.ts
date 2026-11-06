@@ -165,6 +165,38 @@ describe('backup files', () => {
     expect(parseBackupText(BOM + text).ok).toBe(true)
   })
 
+  describe('phase colours', () => {
+    const phase = makePhase({ id: 'ph', projectId: 'p', name: 'Build', color: 'teal' })
+    const withPhase = (p: unknown): BackupFile => ({
+      ...file,
+      data: { ...file.data, phases: [p as never] },
+    })
+    const phasesOf = (text: string) => {
+      const parsed = parseBackupText(text)
+      if (!parsed.ok) throw new Error('backup did not parse')
+      return parsed.value.data.phases
+    }
+
+    it('survive an export → import round trip', () => {
+      expect(phasesOf(serializeBackup(withPhase(phase)))).toEqual([phase])
+    })
+
+    it('a backup made before phase colours (no color key) imports as the project colour', () => {
+      const { color: _color, ...legacy } = phase
+      expect(
+        phasesOf(JSON.stringify({ ...withPhase(phase), data: { ...file.data, phases: [legacy] } })),
+      ).toEqual([{ ...phase, color: null }])
+    })
+
+    it('an unknown colour (a newer palette, or red) falls back to the project colour instead of rejecting the file', () => {
+      for (const color of ['red', 'chartreuse', 7, '#ff0000']) {
+        expect(phasesOf(JSON.stringify(withPhase({ ...phase, color })))).toEqual([
+          { ...phase, color: null },
+        ])
+      }
+    })
+  })
+
   it('rejects non-JSON, foreign JSON and invalid backups with validation errors', () => {
     expect(parseBackupText('{oops')).toMatchObject({
       ok: false,

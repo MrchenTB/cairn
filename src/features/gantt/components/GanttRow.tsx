@@ -2,9 +2,17 @@
  * One 32px Gantt row: the sticky outline cell (left) and its timeline lane (right). Memoized
  * with a content comparison of the row model, so a drag re-renders only the dragged row.
  */
-import { memo, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import {
+  memo,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { CalendarOff, ChevronRight } from 'lucide-react'
 import { DueLabel } from '@/components/task/DueLabel'
+import { PROJECT_COLOR_VAR } from '@/components/task/labels'
+import { PhaseColorPopover, phaseColorLabel } from '@/components/task/PhaseColorPicker'
+import { ProjectDot } from '@/components/task/ProjectDot'
 import { StatusIcon } from '@/components/task/StatusIcon'
 import { insetFocus } from '@/components/ui/styles'
 import { dueBucket } from '@/domain/buckets'
@@ -15,7 +23,13 @@ import {
   fromEpochDay,
   tryFromEpochDay,
 } from '@/domain/dates'
-import type { ISODate } from '@/domain/types'
+import {
+  resolvePhaseColor,
+  type ISODate,
+  type Phase,
+  type PhaseColor,
+  type ProjectColor,
+} from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { DUE_COLUMN_WIDTH, ROW_HEIGHT, SUBTASK_INDENT } from '../model/constants'
 import type { DragDates, DragMode } from '../model/dragReducer'
@@ -79,6 +93,14 @@ export interface GanttRowViewProps {
   top?: number
   /** Extra left padding of the outline cell, for rows nested under a parent row (Timeline). */
   indent?: number
+  /**
+   * The colour this row is drawn in (its phase's, else the project's). Unset = the default accent
+   * tokens (Timeline rows).
+   */
+  hue?: ProjectColor
+  /** Phase header rows: the project's colour (what "Use project color" shows) and the setter. */
+  projectColor?: ProjectColor
+  onPhaseColor?: (phase: Phase, color: PhaseColor | null) => void
 }
 
 function plural(count: number, word: string): string {
@@ -142,8 +164,16 @@ function GanttRowViewImpl(props: GanttRowViewProps) {
     <div
       data-row-index={index}
       data-row-key={row.key}
-      className="group/row absolute left-0 flex"
-      style={{ top, height: ROW_HEIGHT, width: paneWidth + timelineWidth }}
+      data-hue={props.hue}
+      className={cn('group/row absolute left-0 flex', props.hue && 'gantt-tint')}
+      style={{
+        top,
+        height: ROW_HEIGHT,
+        width: paneWidth + timelineWidth,
+        ...(props.hue
+          ? ({ '--gantt-bar-hue': PROJECT_COLOR_VAR[props.hue] } as CSSProperties)
+          : null),
+      }}
     >
       <LeftCell {...props} />
       <div
@@ -178,10 +208,15 @@ function LeftCell({
   onToggle,
   onOpenTask,
   onOpenMilestone,
+  projectColor,
+  onPhaseColor,
 }: GanttRowViewProps) {
   if (row.kind === 'group' || row.kind === 'unscheduled') {
     const label = row.kind === 'group' ? row.label : 'Unscheduled'
     const count = row.kind === 'group' ? row.taskCount : row.count
+    const phase = row.kind === 'group' ? row.phase : null
+    // A phase's dot sits over the gap the toggle button leaves for it (pl-2 + px-1 + chevron + gap).
+    const canColor = phase !== null && projectColor !== undefined && onPhaseColor !== undefined
     return (
       <div className={cn(cellBase, 'bg-muted pr-3 pl-2')} style={{ width: paneWidth }}>
         <button
@@ -198,9 +233,31 @@ function LeftCell({
           {row.kind === 'unscheduled' ? (
             <CalendarOff className="size-3.5 shrink-0 text-fg-tertiary" aria-hidden />
           ) : null}
+          {canColor ? <span className="w-2 shrink-0" aria-hidden /> : null}
           <span className="truncate text-meta font-semibold text-fg-secondary">{label}</span>
           <span className="text-meta text-fg-tertiary tabular-nums">{count}</span>
         </button>
+        {canColor ? (
+          <PhaseColorPopover
+            phaseName={label}
+            value={phase.color}
+            projectColor={projectColor}
+            onChange={(color) => onPhaseColor(phase, color)}
+          >
+            <button
+              type="button"
+              aria-label={`Color of ${label}: ${phaseColorLabel(phase.color, projectColor)}`}
+              className={cn(
+                'absolute top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-md hover:bg-hover',
+                insetFocus,
+              )}
+              // pl-2 (8) + toggle px-1 (4) + chevron (14) + gap (6) − (hit area − dot) / 2
+              style={{ left: 26 }}
+            >
+              <ProjectDot color={resolvePhaseColor(phase.color, projectColor)} />
+            </button>
+          </PhaseColorPopover>
+        ) : null}
       </div>
     )
   }
@@ -289,9 +346,10 @@ function Lane(props: GanttRowViewProps) {
   }
   if (row.kind === 'unscheduled') {
     return (
-      // Above the today line (z-[1]) on an opaque chart-coloured chip, so the line never cuts it.
+      // Above the today line (z-[1]). A halo in the chart colour, not a chip: this label is
+      // sticky, so a weekend band under a chip could not be matched and it would show as a patch.
       <span
-        className="pointer-events-none sticky z-[2] rounded-sm bg-(--gantt-bg) px-1 text-meta whitespace-nowrap text-fg-tertiary"
+        className="pointer-events-none sticky z-[2] px-1 text-meta whitespace-nowrap text-fg-tertiary [text-shadow:0_0_2px_var(--gantt-bg),0_0_4px_var(--gantt-bg),0_0_6px_var(--gantt-bg)]"
         style={{ left: paneWidth + 8 }}
       >
         {row.collapsed

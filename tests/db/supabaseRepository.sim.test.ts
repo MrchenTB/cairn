@@ -190,6 +190,27 @@ describe('SupabaseRepository through the simulated Supabase API', () => {
     await expectRejection(repository.updatePhase(phase.id, { name: 'x' }), 'not_found')
   })
 
+  it('phase colours round-trip through the real schema; red is refused with readable text', async () => {
+    const { repository } = await newAccount()
+    const p = await repository.insertProject(project())
+    const plain = await repository.insertPhase(makePhase({ id: uuid(), projectId: p.id }))
+    expect(plain.color).toBeNull()
+    const teal = await repository.insertPhase(
+      makePhase({ id: uuid(), projectId: p.id, color: 'teal', sortOrder: 'a1' }),
+    )
+    expect(teal.color).toBe('teal')
+    expect((await repository.updatePhase(plain.id, { color: 'orange' })).color).toBe('orange')
+    expect((await repository.updatePhase(plain.id, { color: null })).color).toBeNull()
+    await expectRejection(
+      repository.updatePhase(plain.id, { color: 'red' as never }),
+      'validation',
+      'Pick one of the phase colors.',
+    )
+    const snapshot = await repository.loadWorkspace()
+    expect(snapshot.phases.find((row) => row.id === teal.id)?.color).toBe('teal')
+    expect(snapshot.phases.find((row) => row.id === plain.id)?.color).toBeNull()
+  })
+
   it('tasks: every field, completed_at by trigger, a parent phase change reaches subtasks', async () => {
     const { repository } = await newAccount()
     const p = await repository.insertProject(project())

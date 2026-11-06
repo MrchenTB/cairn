@@ -1,6 +1,6 @@
 /** Shared state of one List view (avoids threading the same props through every row). */
 import { createContext, useContext } from 'react'
-import type { ISODate, Phase, Project, Task } from '@/domain/types'
+import type { ISODate, Phase, PhaseColor, Project, Task } from '@/domain/types'
 import type { TaskCommands } from './TaskRow'
 import type { ListDragState } from './useListDnd'
 
@@ -18,6 +18,8 @@ export interface PhaseCommands {
   move(phase: Phase, delta: -1 | 1): void
   remove(phase: Phase): void
   addMilestone(phaseId: string | null): void
+  /** null = back to the project colour. Failures are reported by the store. */
+  setColor(phase: Phase, color: PhaseColor | null): void
 }
 
 export interface ListContextValue {

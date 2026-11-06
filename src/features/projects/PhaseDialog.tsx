@@ -4,6 +4,7 @@
  */
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { ErrorState } from '@/components/layout/ErrorState'
+import { PhaseColorPicker } from '@/components/task/PhaseColorPicker'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -16,8 +17,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useActions, usePhases, useSyncState } from '@/data/hooks'
-import { NAME_MAX_LENGTH } from '@/domain/types'
+import { useActions, usePhases, useProject, useSyncState } from '@/data/hooks'
+import { NAME_MAX_LENGTH, type PhaseColor } from '@/domain/types'
 import { validateName } from '@/domain/validation'
 import { usePhaseDialog } from './phaseDialogStore'
 import { dismissSyncErrorToast } from './syncToast'
@@ -53,6 +54,8 @@ export function PhaseDialogHost() {
 function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => void }) {
   const actions = useActions()
   const [name, setName] = useState('')
+  const [color, setColor] = useState<PhaseColor | null>(null)
+  const project = useProject(projectId)
   const [error, setError] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -87,7 +90,7 @@ function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => voi
     setSubmitting(true)
     setFailed(false)
     setAttemptedName(name.trim())
-    const result = await actions.createPhase({ projectId, name: name.trim() })
+    const result = await actions.createPhase({ projectId, name: name.trim(), color })
     setSubmitting(false)
     if (result.ok) onDone()
     else if (result.error.kind === 'validation') setError(result.error.message)
@@ -134,6 +137,20 @@ function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => voi
             <p id={errorId} className="text-meta text-danger">
               {error}
             </p>
+          ) : null}
+          {project ? (
+            <>
+              <Label className="mt-2">
+                Color <span className="font-normal text-fg-tertiary">(optional)</span>
+              </Label>
+              <PhaseColorPicker
+                value={color}
+                projectColor={project.color}
+                onChange={setColor}
+                disabled={submitting}
+                className="-mx-1"
+              />
+            </>
           ) : null}
           {failed ? (
             <ErrorState

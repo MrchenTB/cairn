@@ -206,6 +206,31 @@ describe('ListView — phases', () => {
     await waitFor(() => expect(rowTitles()).toEqual(['Survey', 'Interview users', 'Write report']))
   })
 
+  it('colours a phase from its dot and from the menu; the dot shows the project colour until then', async () => {
+    const { project } = await seedPhased()
+    const phaseId = () =>
+      Object.values(useWorkspaceStore.getState().data.phases).find((p) => p.name === 'Discovery')!
+        .id
+    const color = () => useWorkspaceStore.getState().data.phases[phaseId()].color
+    const { user } = renderList(project.id)
+    // Unset: the dot is the project's colour, and says so.
+    await user.click(screen.getByRole('button', { name: /^Color of Discovery: Project color/ }))
+    await user.click(await screen.findByRole('radio', { name: 'Teal' }))
+    await waitFor(() => expect(color()).toBe('teal'))
+    // The ⋯ menu has the same picker.
+    await user.click(screen.getByRole('button', { name: 'Actions for phase Discovery' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Color…' }))
+    const teal = await screen.findByRole('radio', { name: 'Teal' })
+    expect(teal).toBeChecked()
+    await user.click(screen.getByRole('radio', { name: 'Orange' }))
+    await waitFor(() => expect(color()).toBe('orange'))
+    await user.click(screen.getByRole('button', { name: /^Color of Discovery: Orange/ }))
+    await user.click(await screen.findByRole('button', { name: 'Use project color' }))
+    await waitFor(() => expect(color()).toBeNull())
+    // "No phase" has no colour of its own.
+    expect(screen.queryByRole('button', { name: /^Color of No phase/ })).toBeNull()
+  })
+
   it('confirms a phase delete with what becomes ungrouped', async () => {
     const { project } = await seedPhased()
     const { user } = renderList(project.id)

@@ -517,6 +517,21 @@ describe('database rules mirrored', () => {
     await expectError(repo.updatePhase('ph1', { name: '' }), 'validation')
   })
 
+  it('phase colours: palette names only (never red), null goes back to the project colour', async () => {
+    expect((await repo.insertPhase(makePhase({ projectId: 'p1', color: 'blue' }))).color).toBe(
+      'blue',
+    )
+    await expectError(
+      repo.insertPhase(makePhase({ projectId: 'p1', color: 'red' as never })),
+      'validation',
+    )
+    expect((await repo.updatePhase('ph1', { color: 'orange' })).color).toBe('orange')
+    await expectError(repo.updatePhase('ph1', { color: 'red' as never }), 'validation')
+    await expectError(repo.updatePhase('ph1', { color: '#fff' as never }), 'validation')
+    expect((await repo.updatePhase('ph1', { color: null })).color).toBeNull()
+    expect((await stored()).phases.find((p) => p.id === 'ph1')?.color).toBeNull()
+  })
+
   it('sort keys are never empty', async () => {
     await repo.insertTask(task('parent'))
     await repo.insertTask(task('child', { parentTaskId: 'parent' }))
@@ -728,6 +743,43 @@ describe('unreadable data and full storage', () => {
       expect(await local.loadWorkspace()).toMatchObject({ projects: [], tasks: [] })
       expect(onUnreadableData).toHaveBeenCalledOnce()
     }
+  })
+
+  describe('workspaces saved before phase colours', () => {
+    const legacyPhase = (id: string) => {
+      const { color: _color, ...legacy } = makePhase({ id, projectId: 'p1' })
+      return legacy // exactly what an older build wrote: no `color` key
+    }
+
+    it('reads them as usual, every phase inheriting the project colour (nothing set aside)', async () => {
+      const onUnreadableData = vi.fn()
+      const task = makeTask({ id: 't1', projectId: 'p1', phaseId: 'ph1' })
+      const raw = JSON.stringify({
+        version: 1,
+        ...emptyTables,
+        projects: { p1: makeProject({ id: 'p1' }) },
+        phases: { ph1: legacyPhase('ph1'), ph2: { ...legacyPhase('ph2'), color: 'ultraviolet' } },
+        tasks: { t1: task },
+        preferences: null,
+      })
+      const local = new LocalRepository({ storage: createMemoryStorage(), onUnreadableData })
+      ;(local as unknown as { storage: StorageLike }).storage.setItem(LOCAL_STORAGE_KEY, raw)
+      const loaded = await local.loadWorkspace()
+      expect(onUnreadableData).not.toHaveBeenCalled()
+      expect(loaded.projects).toHaveLength(1)
+      expect(loaded.tasks).toHaveLength(1)
+      // An unknown colour (a newer palette) is also "inherit", not a reason to drop the workspace.
+      expect(loaded.phases.map((p) => [p.id, p.color])).toEqual([
+        ['ph1', null],
+        ['ph2', null],
+      ])
+      // The first write keeps everything and adds the new field.
+      await local.updatePhase('ph1', { color: 'green' })
+      const after = await local.loadWorkspace()
+      expect(after.phases.find((p) => p.id === 'ph1')?.color).toBe('green')
+      expect(after.phases.find((p) => p.id === 'ph2')?.color).toBeNull()
+      expect(after.tasks).toHaveLength(1)
+    })
   })
 
   it('drops unreadable preferences but keeps the data', async () => {

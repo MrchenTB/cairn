@@ -7,6 +7,7 @@
  *   `updated_at` and, for tasks, `completed_at` (set by trigger).
  * - Patches are mapped field by field: `undefined` = not part of the update, `null` = clear it.
  */
+import { isPhaseColor } from '@/domain/types'
 import type {
   BackupData,
   Dependency,
@@ -14,6 +15,7 @@ import type {
   Milestone,
   MilestonePatch,
   Phase,
+  PhaseColor,
   PhasePatch,
   Preferences,
   Project,
@@ -48,6 +50,8 @@ export interface PhaseRow {
   user_id?: string
   project_id: string
   name: string
+  /** null = inherit the project colour. Absent on a database that has not run the colour migration. */
+  color?: PhaseColor | null
   sort_order: string
   created_at: Timestamp
   updated_at: Timestamp
@@ -111,7 +115,7 @@ export type DependencyInsert = Omit<DependencyRow, 'user_id' | 'created_at'>
 export type PreferencesUpsert = Omit<PreferencesRow, ServerOwned>
 
 export type ProjectUpdate = Partial<Omit<ProjectInsert, 'id'>>
-export type PhaseUpdate = Partial<Pick<PhaseRow, 'name' | 'sort_order'>>
+export type PhaseUpdate = Partial<Pick<PhaseRow, 'name' | 'color' | 'sort_order'>>
 export type TaskUpdate = Partial<Omit<TaskInsert, 'id' | 'project_id'>>
 export type MilestoneUpdate = Partial<Pick<MilestoneRow, 'name' | 'date' | 'phase_id'>>
 
@@ -129,6 +133,7 @@ const PROJECT_PATCH_COLUMNS = {
 
 const PHASE_PATCH_COLUMNS = {
   name: 'name',
+  color: 'color',
   sortOrder: 'sort_order',
 } as const satisfies Record<keyof PhasePatch, keyof PhaseUpdate>
 
@@ -214,6 +219,8 @@ export function phaseFromRow(row: PhaseRow): Phase {
     id: row.id,
     projectId: row.project_id,
     name: row.name,
+    // A row from a database without the colour column, or with a colour this build does not know.
+    color: isPhaseColor(row.color) ? row.color : null,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -227,6 +234,9 @@ export function phaseToInsert(phase: Phase): PhaseInsert {
     id: phase.id,
     project_id: phase.projectId,
     name: phase.name,
+    // Only sent when set: a database that has not run the colour migration yet still accepts
+    // every uncoloured phase (the default), and only choosing a colour needs the new column.
+    ...(phase.color ? { color: phase.color } : null),
     sort_order: phase.sortOrder,
   }
 }

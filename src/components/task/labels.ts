@@ -33,6 +33,19 @@ export const PROJECT_COLOR_LABELS: Record<ProjectColor, string> = {
   teal: 'Teal',
 }
 
+/** The palette's CSS variable per colour (for inline `--…` overrides and colour-mix). */
+export const PROJECT_COLOR_VAR: Record<ProjectColor, string> = {
+  gray: 'var(--project-gray)',
+  blue: 'var(--project-blue)',
+  violet: 'var(--project-violet)',
+  pink: 'var(--project-pink)',
+  red: 'var(--project-red)',
+  orange: 'var(--project-orange)',
+  yellow: 'var(--project-yellow)',
+  green: 'var(--project-green)',
+  teal: 'var(--project-teal)',
+}
+
 /** Background utility per project colour (dots, swatches). */
 export const PROJECT_COLOR_BG: Record<ProjectColor, string> = {
   gray: 'bg-project-gray',

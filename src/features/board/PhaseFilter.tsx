@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import { Layers, X } from 'lucide-react'
+import { ProjectDot } from '@/components/task/ProjectDot'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -10,7 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { Phase } from '@/domain/types'
+import { resolvePhaseColor, type Phase, type ProjectColor } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { ALL_PHASES, NO_PHASE } from './boardModel'
 
@@ -18,11 +19,13 @@ export interface PhaseFilterProps {
   /** Resolved filter: ALL_PHASES, NO_PHASE or a phase id. */
   value: string
   phases: readonly Phase[]
+  /** What a phase without its own colour shows (its dot). */
+  projectColor: ProjectColor
   onChange: (value: string) => void
 }
 
 /** View-bar phase filter ("All phases" by default) with a one-click clear when active. */
-export function PhaseFilter({ value, phases, onChange }: PhaseFilterProps) {
+export function PhaseFilter({ value, phases, projectColor, onChange }: PhaseFilterProps) {
   const active = value !== ALL_PHASES
   const labelId = useId()
   const valueId = useId()
@@ -47,7 +50,10 @@ export function PhaseFilter({ value, phases, onChange }: PhaseFilterProps) {
           <SelectSeparator />
           {phases.map((phase) => (
             <SelectItem key={phase.id} value={phase.id}>
-              {phase.name}
+              <span className="flex min-w-0 items-center gap-2">
+                <ProjectDot color={resolvePhaseColor(phase.color, projectColor)} />
+                <span className="truncate">{phase.name}</span>
+              </span>
             </SelectItem>
           ))}
         </SelectContent>

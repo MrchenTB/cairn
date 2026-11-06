@@ -61,7 +61,7 @@ function weekSeed() {
 
 test.describe('quiet grid (G-1)', () => {
   for (const scale of ['day', 'week', 'month'] as const) {
-    test(`${scale}: no weekend bands, no per-day lines, phase header lanes see-through`, async ({
+    test(`${scale}: one continuous weekend band, no per-day lines, phase header lanes see-through`, async ({
       page,
     }) => {
       const seed = weekSeed()
@@ -71,13 +71,16 @@ test.describe('quiet grid (G-1)', () => {
         const s = getComputedStyle(el)
         return { image: s.backgroundImage, size: s.backgroundSize }
       })
-      expect(style.image).not.toContain('--gantt-weekend')
       if (scale === 'month') {
         expect(style.image).toBe('none') // month lines are DOM lines, no repeating grid
       } else {
-        // exactly one repeating layer: one hairline per week
-        expect(style.image.match(/linear-gradient/g)).toHaveLength(1)
-        expect(style.size).toBe(`${7 * (scale === 'day' ? 36 : 16)}px 100%`)
+        // two repeating layers per week: the hairline and the Saturday + Sunday band
+        expect(style.image.match(/linear-gradient/g)).toHaveLength(2)
+        const dayPx = scale === 'day' ? 36 : 16
+        // (computed styles resolve the variables) the band is two days wide
+        expect(style.image).toContain(`${2 * dayPx}px`)
+        const week = 7 * dayPx
+        expect(style.size).toBe(`${week}px 100%, ${week}px 100%`)
       }
       // The phase header row's time lane paints nothing, so the grid runs through it.
       const lane = chart(page)

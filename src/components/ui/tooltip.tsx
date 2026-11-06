@@ -87,6 +87,12 @@ export interface TooltipProps {
    * clicks on whatever lies under it.
    */
   passive?: boolean
+  /**
+   * Show on pointer hover only, never on keyboard focus. For items inside a popup whose own Esc
+   * must close the popup: a tooltip opened by focus would be the top layer and eat the first Esc.
+   * The trigger still needs its own accessible name.
+   */
+  hoverOnly?: boolean
   /** A single focusable element (Button, link…). */
   children: ReactElement
 }
@@ -106,6 +112,7 @@ export function Tooltip({
   delayDuration,
   disabled,
   passive = false,
+  hoverOnly = false,
   children,
 }: TooltipProps) {
   const [open, setOpen] = useState(false)
@@ -113,6 +120,8 @@ export function Tooltip({
   const pointerInside = useRef(false)
   const inactive = disabled || (!content && !shortcut)
   const onOpenChange = (next: boolean) => {
+    if (next && hoverOnly && !(pointerInside.current || triggerRef.current?.matches(':hover')))
+      return
     if (next && getInputModality() === 'pointer') {
       const hovered = pointerInside.current || (triggerRef.current?.matches(':hover') ?? false)
       if (!hovered) return // focus came back after a click elsewhere: not a reason to show

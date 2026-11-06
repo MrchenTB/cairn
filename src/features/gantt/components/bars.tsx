@@ -4,7 +4,7 @@
  * danger edge, outline and ⚠; overdue bars a danger end cap. Interactive elements expose
  * `data-handle` (+ `data-task-id` / `data-milestone-id`) for the chart's delegated pointer handler.
  */
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { StatusIcon } from '@/components/task/StatusIcon'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -36,16 +36,26 @@ const OUTSIDE_LABEL_MAX_WIDTH = 240
 
 /**
  * Opaque chip behind text that sits on the lane (outside a bar): the today line and dependency
- * lines pass behind it, never through the letters. It repeats the lane's own hover / selected
- * tint on top of the chart colour, so it never shows as a patch.
+ * lines pass behind it, never through the letters. Painted bottom-up: chart colour, the weekend
+ * band (aligned to the grid through the `--wk-*` variables the chart body sets, `left` being the
+ * chip's x on the lane), then the lane's own hover / selected tint — so on a weekend, in a hovered
+ * or selected row, the chip is indistinguishable from the lane around it.
  */
-function labelSurface(selected: boolean | undefined) {
-  return cn(
-    'rounded-sm bg-(--gantt-bg)',
-    selected
-      ? 'bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))]'
-      : 'group-hover/row:bg-[linear-gradient(var(--gantt-row-hover),var(--gantt-row-hover))]',
-  )
+function labelChip(selected: boolean | undefined, left: number) {
+  return {
+    className: cn(
+      'rounded-sm bg-(--gantt-bg) [--lane-tint:transparent]',
+      selected
+        ? '[--lane-tint:var(--gantt-row-selected)]'
+        : 'group-hover/row:[--lane-tint:var(--gantt-row-hover)]',
+    ),
+    style: {
+      backgroundImage: 'linear-gradient(var(--lane-tint), var(--lane-tint)), var(--wk-image, none)',
+      backgroundSize: '100% 100%, var(--wk-size, auto)',
+      backgroundPosition: `0 0, calc(var(--wk-x, 0px) - ${left}px) 0`,
+      backgroundRepeat: 'no-repeat, repeat-x',
+    } satisfies CSSProperties,
+  }
 }
 
 interface InteractiveProps {
@@ -136,6 +146,9 @@ export function TaskBar({
   const handle = readOnly ? 0 : resizeHandleWidth(rect.width)
   const labelInside = rect.width >= measureLabelWidth(task.title) + 24 + (conflict ? 16 : 0)
   const iconInside = !labelInside && rect.width >= 22
+  // Clear of the dependency dot, when there is one (the chip's 4px padding included).
+  const outsideLeft = rect.left + rect.width + (readOnly ? 2 : 14)
+  const outside = labelChip(selected, outsideLeft)
   return (
     <>
       <Tooltip
@@ -185,7 +198,7 @@ export function TaskBar({
               aria-hidden
               className={cn(
                 'pointer-events-none absolute inset-y-0 left-0 w-0.5 rounded-l-[3px]',
-                conflict ? 'bg-(--gantt-conflict)' : 'bg-accent',
+                conflict ? 'bg-(--gantt-conflict)' : 'bg-(--gantt-bar-hue)',
               )}
             />
           ) : null}
@@ -248,11 +261,11 @@ export function TaskBar({
           aria-hidden
           className={cn(
             'pointer-events-none absolute z-[2] flex items-center gap-1 px-1 text-meta whitespace-nowrap text-fg-secondary',
-            labelSurface(selected),
+            outside.className,
           )}
           style={{
-            // Clear of the dependency dot, when there is one (the chip's 4px padding included).
-            left: rect.left + rect.width + (readOnly ? 2 : 14),
+            ...outside.style,
+            left: outsideLeft,
             top: BAR_TOP,
             height: BAR_HEIGHT,
             maxWidth: OUTSIDE_LABEL_MAX_WIDTH,
@@ -300,6 +313,7 @@ export function DueMarker({
   onKeyDown,
 }: DueMarkerProps) {
   const danger = Boolean(conflict) || overdue
+  const chip = labelChip(selected, centerX + 16)
   return (
     <>
       <span
@@ -349,9 +363,10 @@ export function DueMarker({
         aria-hidden
         className={cn(
           'pointer-events-none absolute z-[2] flex items-center gap-1.5 px-1 text-meta whitespace-nowrap',
-          labelSurface(selected),
+          chip.className,
         )}
         style={{
+          ...chip.style,
           left: centerX + 16,
           top: BAR_TOP,
           height: BAR_HEIGHT,
@@ -488,6 +503,7 @@ export function MilestoneDiamond({
   nameOnHover = false,
   onKeyDown,
 }: MilestoneDiamondProps) {
+  const chip = labelChip(selected, centerX + 8)
   return (
     <>
       <div
@@ -526,9 +542,10 @@ export function MilestoneDiamond({
           'pointer-events-none absolute flex items-center text-meta whitespace-nowrap',
           nameOnHover
             ? 'z-[5] rounded-sm border border-default bg-elevated px-1.5 text-fg opacity-0 shadow-popover peer-hover:opacity-100 peer-focus-visible:opacity-100'
-            : cn('z-[2] px-1 text-fg-secondary', labelSurface(selected)),
+            : cn('z-[2] px-1 text-fg-secondary', chip.className),
         )}
         style={{
+          ...(nameOnHover ? null : chip.style),
           left: nameOnHover ? centerX + 12 : centerX + 8,
           top: BAR_TOP,
           height: BAR_HEIGHT,

@@ -3,6 +3,7 @@ import {
   DEPENDENCY_TYPES,
   DESCRIPTION_MAX_LENGTH,
   NAME_MAX_LENGTH,
+  PHASE_COLORS,
   PROJECT_COLORS,
   PROJECT_STATUSES,
   SCHEDULE_MODES,
@@ -105,6 +106,36 @@ describe('enumerations match src/domain/types.ts', () => {
       expect((await makeProject(alice, { color })).color).toBe(color)
     }
     await expectPgError(makeProject(alice, { color: 'purple' }), '23514', 'projects_color_check')
+  })
+
+  it('phases.color: NULL (inherit the project colour) or a palette name, never red', async () => {
+    expect((await makePhase(alice, projectId)).color).toBeNull() // default, existing rows too
+    for (const color of PHASE_COLORS) {
+      expect((await makePhase(alice, projectId, { color })).color).toBe(color)
+    }
+    await expectPgError(
+      makePhase(alice, projectId, { color: 'red' }),
+      '23514',
+      'phases_color_valid',
+    )
+    await expectPgError(
+      makePhase(alice, projectId, { color: '#ff0000' }),
+      '23514',
+      'phases_color_valid',
+    )
+    await expectPgError(makePhase(alice, projectId, { color: '' }), '23514', 'phases_color_valid')
+    // Changing it later is subject to the same rule; clearing is allowed.
+    const phase = await makePhase(alice, projectId, { color: 'teal' })
+    const { rows } = await alice.query<{ color: string | null }>(
+      'update phases set color = null where id = $1 returning color',
+      [phase.id],
+    )
+    expect(rows[0].color).toBeNull()
+    await expectPgError(
+      alice.query('update phases set color = $2 where id = $1', [phase.id, 'red']),
+      '23514',
+      'phases_color_valid',
+    )
   })
 
   it('projects.schedule_mode', async () => {

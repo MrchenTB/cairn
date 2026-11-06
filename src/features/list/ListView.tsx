@@ -326,6 +326,9 @@ function ProjectList({ project }: { project: Project }) {
       addMilestone(phaseId) {
         openMilestoneDialog({ mode: 'create', projectId: project.id, phaseId })
       },
+      setColor(phase, color) {
+        void report(actions.updatePhase(phase.id, { color }), 'Couldn’t change the phase color')
+      },
     }),
     [actions, milestones, openMilestoneDialog, phases, project.id, tasks],
   )

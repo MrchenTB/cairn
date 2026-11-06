@@ -10,6 +10,7 @@ import {
   DEPENDENCY_TYPES,
   DESCRIPTION_MAX_LENGTH,
   NAME_MAX_LENGTH,
+  PHASE_COLORS,
   PROJECT_COLORS,
   PROJECT_STATUSES,
   SCHEDULE_MODES,
@@ -141,6 +142,14 @@ const phaseSchema = z.object({
   id: idSchema,
   projectId: idSchema,
   name: nameSchema(NAME_MAX_LENGTH, 'Phase name'),
+  // Backups from before phase colours have no `color`; an unknown value (a newer app's palette)
+  // falls back to "inherit the project colour" instead of rejecting the whole file.
+  color: z
+    .enum(PHASE_COLORS)
+    .nullable()
+    .optional()
+    .catch(null)
+    .transform((c) => c ?? null),
   sortOrder: sortOrderSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,

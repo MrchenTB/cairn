@@ -186,6 +186,76 @@ describe('GanttView', () => {
     expect(chart().querySelectorAll('[data-conflict="true"]')).toHaveLength(1)
   })
 
+  describe('phase colour', () => {
+    const rowOf = (key: string) => chart().querySelector<HTMLElement>(`[data-row-key="${key}"]`)
+
+    it('rows take their phase colour, else the project colour; subtasks follow their parent', async () => {
+      const s = await seed()
+      const a = getWorkspaceActions()
+      must(await a.updateProject(s.project.id, { color: 'violet' }))
+      must(await a.updatePhase(s.design.id, { color: 'teal' }))
+      renderGantt(s.project.id)
+      // Phase tasks (and the subtask, which inherits its parent's phase) and the header: teal.
+      for (const key of [`group:${s.design.id}`, `task:${s.wire.id}`, `task:${s.child.id}`]) {
+        expect(rowOf(key)).toHaveAttribute('data-hue', 'teal')
+        expect(rowOf(key)).toHaveClass('gantt-tint')
+      }
+      // No phase → the project colour.
+      for (const key of ['group:none', `task:${s.brief.id}`, `task:${s.idea.id}`]) {
+        expect(rowOf(key)).toHaveAttribute('data-hue', 'violet')
+      }
+    })
+
+    it('a task moved to another phase takes that phase’s colour; no phase falls back to the project', async () => {
+      const s = await seed()
+      const a = getWorkspaceActions()
+      must(await a.updateProject(s.project.id, { color: 'blue' }))
+      const build = must(
+        await a.createPhase({ projectId: s.project.id, name: 'Build', color: 'orange' }),
+      )
+      must(await a.updatePhase(s.design.id, { color: 'pink' }))
+      renderGantt(s.project.id)
+      expect(rowOf(`task:${s.wire.id}`)).toHaveAttribute('data-hue', 'pink')
+      await act(async () => {
+        must(await a.updateTask(s.wire.id, { phaseId: build.id }))
+      })
+      expect(rowOf(`task:${s.wire.id}`)).toHaveAttribute('data-hue', 'orange')
+      await act(async () => {
+        must(await a.updateTask(s.wire.id, { phaseId: null }))
+      })
+      expect(rowOf(`task:${s.wire.id}`)).toHaveAttribute('data-hue', 'blue')
+    })
+
+    it('the dot on a phase header opens the palette; a pick saves, "Use project color" clears', async () => {
+      const s = await seed()
+      const { user } = renderGantt(s.project.id)
+      await user.click(screen.getByRole('button', { name: /^Color of Design: Project color/ }))
+      // Red is reserved for conflicts and overdue: not offered.
+      expect(screen.queryByRole('radio', { name: 'Red' })).toBeNull()
+      expect(
+        within(screen.getByRole('radiogroup', { name: 'Color of Design' })).getAllByRole('radio'),
+      ).toHaveLength(8)
+      await user.click(screen.getByRole('radio', { name: 'Green' }))
+      await waitFor(() =>
+        expect(useWorkspaceStore.getState().data.phases[s.design.id].color).toBe('green'),
+      )
+      await waitFor(() => expect(rowOf(`task:${s.wire.id}`)).toHaveAttribute('data-hue', 'green'))
+      await user.click(screen.getByRole('button', { name: /^Color of Design: Green/ }))
+      expect(screen.getByRole('radio', { name: 'Green' })).toBeChecked()
+      await user.click(screen.getByRole('button', { name: 'Use project color' }))
+      await waitFor(() =>
+        expect(useWorkspaceStore.getState().data.phases[s.design.id].color).toBeNull(),
+      )
+    })
+
+    it('the No phase and Unscheduled headers have no colour dot', async () => {
+      const s = await seed()
+      renderGantt(s.project.id)
+      expect(screen.queryByRole('button', { name: /^Color of No phase/ })).toBeNull()
+      expect(screen.queryByRole('button', { name: /^Color of Unscheduled/ })).toBeNull()
+    })
+  })
+
   it('hovering a bar shows its name, dates and length in a tooltip', async () => {
     const s = await seed()
     renderGantt(s.project.id)

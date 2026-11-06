@@ -108,7 +108,12 @@ export function BoardView() {
     <div className="relative flex min-h-0 flex-1 flex-col">
       {phases.length > 0 ? (
         <ViewBarActions>
-          <PhaseFilter value={filter} phases={phases} onChange={setFilter} />
+          <PhaseFilter
+            value={filter}
+            phases={phases}
+            projectColor={project.color}
+            onChange={setFilter}
+          />
         </ViewBarActions>
       ) : null}
       {filteredEmpty ? (

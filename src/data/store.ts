@@ -51,6 +51,7 @@ import {
 import { validateNewDependency } from '@/domain/scheduling'
 import {
   BACKUP_FORMAT_VERSION,
+  isPhaseColor,
   NAME_MAX_LENGTH,
   PROJECT_COLORS,
   PROJECT_STATUSES,
@@ -404,6 +405,11 @@ function sortOrderError(value: unknown): AppError | null {
   return { kind: 'validation', message: 'Invalid sort order.' }
 }
 
+function phaseColorError(value: unknown): AppError | null {
+  if (value === undefined || value === null || isPhaseColor(value)) return null
+  return { kind: 'validation', message: 'Pick one of the phase colors.' }
+}
+
 function trimmed(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -444,7 +450,7 @@ const PROJECT_PATCH_FIELDS = keysOf<ProjectPatch>({
   scheduleMode: true,
   sortOrder: true,
 })
-const PHASE_PATCH_FIELDS = keysOf<PhasePatch>({ name: true, sortOrder: true })
+const PHASE_PATCH_FIELDS = keysOf<PhasePatch>({ name: true, color: true, sortOrder: true })
 const TASK_PATCH_FIELDS = keysOf<TaskPatch>({
   title: true,
   description: true,
@@ -1406,7 +1412,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       const data = get().data
       if (!own(data.projects, input.projectId)) return invalid('This project no longer exists.')
       const name = trimmed(input.name)
-      const error = validateName(name, NAME_MAX_LENGTH, 'Phase name')
+      const error =
+        validateName(name, NAME_MAX_LENGTH, 'Phase name') ?? phaseColorError(input.color)
       if (error) return failed(error)
       const siblings = Object.values(data.phases).filter((p) => p.projectId === input.projectId)
       const timestamp = isoNow()
@@ -1414,6 +1421,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         id: presetId ?? randomId(),
         projectId: input.projectId,
         name,
+        color: input.color ?? null,
         sortOrder: input.afterPhaseId
           ? keyForPlacement(siblings, { afterId: input.afterPhaseId })
           : keyAtEnd(siblings),
@@ -1444,7 +1452,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       const error =
         (proposed.name !== undefined
           ? validateName(proposed.name, NAME_MAX_LENGTH, 'Phase name')
-          : null) ?? sortOrderError(patch.sortOrder)
+          : null) ??
+        phaseColorError(patch.color) ??
+        sortOrderError(patch.sortOrder)
       if (error) return failed(error)
       const changes = changedFields(current, proposed)
       if (isEmpty(changes)) return OK

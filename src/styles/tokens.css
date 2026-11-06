@@ -201,7 +201,7 @@
   --gantt-header-bg: var(--bg-main);
   --gantt-grid: rgba(36, 38, 49, 0.06);
   --gantt-grid-strong: rgba(36, 38, 49, 0.11);
-  --gantt-weekend: rgba(36, 38, 49, 0.032);
+  --gantt-weekend: rgba(36, 38, 49, 0.055); /* body band + Day header cell */
   --gantt-row-hover: rgba(36, 38, 49, 0.03);
   --gantt-row-selected: rgba(104, 106, 195, 0.08);
   /*
@@ -210,6 +210,12 @@
    * alpha values over --gantt-bg. `--gantt-bar-hue` is the one place a per-row (phase) colour
    * can later override.
    */
+  /* How much of the hue each status takes (the mix is redone per row, see `.gantt-tint`). */
+  --gantt-pct-fill: 14%;
+  --gantt-pct-active: 24%;
+  --gantt-pct-done: 8%;
+  --gantt-pct-border: 80%;
+  --gantt-pct-border-done: 45%;
   --gantt-bar-hue: #686ac3;
   --gantt-bar-ink: #242631;
   --gantt-bar-fill: color-mix(in srgb, var(--gantt-bar-hue) 14%, var(--gantt-bg));
@@ -319,9 +325,14 @@
   --gantt-header-bg: var(--bg-main);
   --gantt-grid: rgba(255, 255, 255, 0.045);
   --gantt-grid-strong: rgba(255, 255, 255, 0.09);
-  --gantt-weekend: rgba(255, 255, 255, 0.022);
+  --gantt-weekend: rgba(0, 0, 0, 0.16); /* darker than the day, like light mode */
   --gantt-row-hover: rgba(255, 255, 255, 0.03);
   --gantt-row-selected: rgba(144, 147, 232, 0.1);
+  --gantt-pct-fill: 22%;
+  --gantt-pct-active: 34%;
+  --gantt-pct-done: 10%;
+  --gantt-pct-border: 70%;
+  --gantt-pct-border-done: 45%;
   --gantt-bar-hue: #9093e8;
   --gantt-bar-ink: #ffffff;
   --gantt-bar-fill: color-mix(in srgb, var(--gantt-bar-hue) 22%, var(--gantt-bg));
@@ -355,6 +366,42 @@
 }
 
 /* ---------- Reduced motion: zero the motion tokens (see also the base layer) ---------- */
+/*
+ * Phase colour. A Gantt row sets `--gantt-bar-hue` (its phase's colour, else the project's) and
+ * this class re-derives every hue-dependent token for that row. Custom properties resolve where
+ * they are declared, so redefining only the hue on a row would not reach the fills defined on
+ * :root. Fills are opaque mixes into the chart background — never alpha — so the today line and
+ * dependency lines cannot show through a label. Status is still shape + glyph + fill depth:
+ * To Do light, In Progress deeper (+ the left edge), Done faint with a check. Conflict and
+ * overdue keep their own red tokens, which win over the hue where they are applied.
+ */
+.gantt-tint {
+  --gantt-bar-fill: color-mix(in srgb, var(--gantt-bar-hue) var(--gantt-pct-fill), var(--gantt-bg));
+  --gantt-bar-fill-active: color-mix(
+    in srgb,
+    var(--gantt-bar-hue) var(--gantt-pct-active),
+    var(--gantt-bg)
+  );
+  --gantt-bar-fill-done: color-mix(
+    in srgb,
+    var(--gantt-bar-hue) var(--gantt-pct-done),
+    var(--gantt-bg)
+  );
+  --gantt-bar-border: color-mix(
+    in srgb,
+    var(--gantt-bar-hue) var(--gantt-pct-border),
+    var(--gantt-bg)
+  );
+  --gantt-bar-border-done: color-mix(
+    in srgb,
+    var(--gantt-bar-hue) var(--gantt-pct-border-done),
+    var(--gantt-bg)
+  );
+  --gantt-summary: var(--gantt-bar-hue);
+  --gantt-drag-ghost: color-mix(in srgb, var(--gantt-bar-hue) 10%, transparent);
+  --gantt-drag-ghost-border: color-mix(in srgb, var(--gantt-bar-hue) 60%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --duration-fast: 0ms;

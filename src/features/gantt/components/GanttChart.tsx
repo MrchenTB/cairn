@@ -19,6 +19,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -38,7 +39,17 @@ import {
   tryToEpochDay,
 } from '@/domain/dates'
 import { validateNewDependency, type DependencyConflict } from '@/domain/scheduling'
-import type { Dependency, ISODate, Milestone, Project, ScheduleMode } from '@/domain/types'
+import {
+  resolvePhaseColor,
+  type Dependency,
+  type ISODate,
+  type Milestone,
+  type Phase,
+  type PhaseColor,
+  type Project,
+  type ProjectColor,
+  type ScheduleMode,
+} from '@/domain/types'
 import { ViewBarActions } from '@/features/projects/viewBar'
 import { useHotkeys } from '@/lib/keyboard'
 import { notify } from '@/lib/notify'
@@ -87,6 +98,7 @@ import {
   buildHeaderTiers,
   extendRange,
   gridBackgroundStyle,
+  weekendBandVars,
   gridLines,
   renderWindow,
   timelineRange,
@@ -488,10 +500,29 @@ export function GanttChart({
     () => gridLines({ scale, range: { start: rangeStart, end: rangeEnd }, window: win, dayWidth }),
     [scale, rangeStart, rangeEnd, win, dayWidth],
   )
+  const bandVars = useMemo(
+    () => weekendBandVars(scale, rangeStart, dayWidth) as CSSProperties,
+    [scale, rangeStart, dayWidth],
+  )
   const gridStyle = useMemo(
     () => gridBackgroundStyle(scale, rangeStart, dayWidth, weekStartsOn),
     [scale, rangeStart, dayWidth, weekStartsOn],
   )
+
+  /** Phase colour of a row (tasks and phase headers), else the project's. */
+  const hueOf = (row: GanttRow): ProjectColor => {
+    const phaseId =
+      row.kind === 'task' ? row.task.phaseId : row.kind === 'group' ? row.phase?.id : null
+    const phase = phaseId && Object.hasOwn(data.phases, phaseId) ? data.phases[phaseId] : null
+    return resolvePhaseColor(phase?.color, project.color)
+  }
+  const onPhaseColor = useEvent((phase: Phase, color: PhaseColor | null) => {
+    void actions.updatePhase(phase.id, { color }).then((result) => {
+      if (!result.ok && result.error.kind === 'validation') {
+        notify.error('Couldn’t change the phase color', { description: result.error.message })
+      }
+    })
+  })
 
   const upcomingMilestoneId = useMemo(
     () => milestones.find((milestone) => milestone.date >= today)?.id ?? null,
@@ -1342,7 +1373,7 @@ export function GanttChart({
           />
           <div
             className="relative select-none"
-            style={{ width: contentWidth, height: bodyHeight }}
+            style={{ width: contentWidth, height: bodyHeight, ...bandVars }}
             onPointerDown={onPointerDown}
             onFocus={(event) => {
               const target = event.target as Element
@@ -1408,6 +1439,9 @@ export function GanttChart({
                     row.kind === 'milestone' && row.milestone.id === upcomingMilestoneId
                   }
                   describedBy={helpId}
+                  hue={hueOf(row)}
+                  projectColor={project.color}
+                  onPhaseColor={onPhaseColor}
                   onToggle={onToggleRow}
                   onOpenTask={openTask}
                   onOpenMilestone={openMilestone}

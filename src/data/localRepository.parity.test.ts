@@ -441,6 +441,7 @@ const phase = (overrides: Partial<Phase> = {}): Phase => ({
   id: ID.NEW,
   projectId: ID.P1,
   name: 'Phase',
+  color: null,
   sortOrder: 'a0',
   createdAt: T0,
   updatedAt: T0,

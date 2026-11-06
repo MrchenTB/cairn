@@ -31,8 +31,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { insetFocus } from '@/components/ui/styles'
+import { ProjectDot } from '@/components/task/ProjectDot'
+import { useProject } from '@/data/hooks'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
+  resolvePhaseColor,
   TASK_PRIORITIES,
   type ISODate,
   type Phase,
@@ -87,6 +90,7 @@ function CardContent({
   hidden = false,
 }: CardContentProps) {
   const chip = showPhase ? phase : null
+  const project = useProject(task.projectId)
   const hasMeta = task.priority !== 'none' || task.dueDate !== null || subtasksTotal > 0 || chip
   return (
     <div className={cn('pointer-events-none relative', hidden && 'invisible')}>
@@ -116,7 +120,11 @@ function CardContent({
             </span>
           ) : null}
           {chip ? (
-            <span className="inline-flex h-5 max-w-40 min-w-0 items-center rounded-full border border-default px-1.5">
+            <span className="inline-flex h-5 max-w-40 min-w-0 items-center gap-1 rounded-full border border-default px-1.5">
+              <ProjectDot
+                color={resolvePhaseColor(chip.color, project?.color ?? 'gray')}
+                size={6}
+              />
               <span className="truncate">{chip.name}</span>
             </span>
           ) : null}

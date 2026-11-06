@@ -32,8 +32,8 @@ export interface ScaleSpec {
   paddingDays: number
   /** Days added when the user scrolls (or drags) close to either end. */
   extendDays: number
-  /** Week lines in the chart body (Day and Week only; Month has just month lines). */
-  weekLines: boolean
+  /** Week lines and weekend bands in the chart body (Day and Week only; Month has just month lines). */
+  dayGrid: boolean
 }
 
 /*
@@ -51,7 +51,7 @@ export const SCALES: Record<GanttScale, ScaleSpec> = {
     dayWidth: 36,
     paddingDays: 14,
     extendDays: 42,
-    weekLines: true,
+    dayGrid: true,
   },
   week: {
     id: 'week',
@@ -59,7 +59,7 @@ export const SCALES: Record<GanttScale, ScaleSpec> = {
     dayWidth: 16,
     paddingDays: 42,
     extendDays: 126,
-    weekLines: true,
+    dayGrid: true,
   },
   month: {
     id: 'month',
@@ -67,7 +67,7 @@ export const SCALES: Record<GanttScale, ScaleSpec> = {
     dayWidth: 5,
     paddingDays: 92,
     extendDays: 366,
-    weekLines: false,
+    dayGrid: false,
   },
 }
 
@@ -334,11 +334,16 @@ export interface GridBackgroundStyle {
   backgroundPosition: string
 }
 
+/** Weekend band layer: Saturday + Sunday of every week, as one gradient tile per week. */
+const WEEKEND_GRADIENT = (dayWidth: number) =>
+  `linear-gradient(90deg, var(--gantt-weekend) 0 ${2 * dayWidth}px, transparent ${2 * dayWidth}px)`
+
 /**
- * Regular grid painted with CSS gradients — no per-day DOM nodes. One hairline per week (aligned
- * by a background-position offset to the origin's weekday), the same on Day and Week. There is
- * deliberately no weekend shading and no per-day line in the body: both stack with the phase
- * rows into a checkerboard that out-shouts the tasks. Weekends stay visible in the Day header
+ * Regular grid painted with CSS gradients — no per-day DOM nodes. Two tiles per week, aligned by
+ * a background-position offset to the origin's weekday: a hairline at the week start (the same on
+ * Day and Week) and the Saturday + Sunday band. The band is one continuous column through every
+ * row — it only reads as a calendar, not a checkerboard, because the phase header lanes paint
+ * nothing over it and there is no per-day line. Weekend dates are also tinted in the Day header
  * cells (TimeHeader). Month = none (month lines are `gridLines`).
  */
 export function gridBackgroundStyle(
@@ -347,12 +352,36 @@ export function gridBackgroundStyle(
   dayWidth: number,
   weekStartsOn: 0 | 1,
 ): GridBackgroundStyle | null {
-  if (!SCALES[scale].weekLines) return null
+  if (!SCALES[scale].dayGrid) return null
   const originWeekday = dayOfWeek(fromEpochDay(originDay)) // 0 = Sunday
+  const week = 7 * dayWidth
   return {
-    backgroundImage: 'linear-gradient(90deg, var(--gantt-grid) 0 1px, transparent 1px)',
-    backgroundSize: `${7 * dayWidth}px 100%`,
-    backgroundPosition: `${mod(weekStartsOn - originWeekday, 7) * dayWidth}px 0`,
+    backgroundImage: [
+      'linear-gradient(90deg, var(--gantt-grid) 0 1px, transparent 1px)',
+      WEEKEND_GRADIENT(dayWidth),
+    ].join(', '),
+    backgroundSize: `${week}px 100%, ${week}px 100%`,
+    backgroundPosition: `${mod(weekStartsOn - originWeekday, 7) * dayWidth}px 0, ${mod(6 - originWeekday, 7) * dayWidth}px 0`,
+  }
+}
+
+/**
+ * The weekend band as CSS custom properties (`--wk-image`, `--wk-size`, `--wk-x`), set once on the
+ * chart body. Text chips that sit on the lane (outside bar labels) paint the same band under
+ * themselves, aligned to the grid, so an opaque chip never shows as a lighter patch on a weekend.
+ * Empty on Month (no band).
+ */
+export function weekendBandVars(
+  scale: GanttScale,
+  originDay: number,
+  dayWidth: number,
+): Record<string, string> {
+  if (!SCALES[scale].dayGrid) return {}
+  const originWeekday = dayOfWeek(fromEpochDay(originDay))
+  return {
+    '--wk-image': WEEKEND_GRADIENT(dayWidth),
+    '--wk-size': `${7 * dayWidth}px 100%`,
+    '--wk-x': `${mod(6 - originWeekday, 7) * dayWidth}px`,
   }
 }
 
