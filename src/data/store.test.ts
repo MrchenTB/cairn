@@ -1490,6 +1490,94 @@ const lastToastAction = (h: Harness) =>
   (h.notifier.error.mock.calls.at(-1)?.[1] as ToastAction | undefined)?.action
 const settled = () => new Promise((resolve) => setTimeout(resolve, 10))
 
+describe('write options (naming what failed)', () => {
+  it('updateTask reports with the label and second action; its Retry keeps them', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const open = { label: 'Open', onClick: vi.fn() }
+    const options = { label: 'save the title of “A”', secondaryAction: open }
+    h.repo.failNextWrites(2)
+    await h.actions.updateTask('a', { title: 'New' }, options)
+    expect(h.notifier.error).toHaveBeenLastCalledWith(
+      "Couldn't save the title of “A”",
+      expect.objectContaining({ id: SYNC_ERROR_TOAST_ID, cancel: open }),
+    )
+    h.notifier.error.mockClear()
+    await h.actions.retryLastFailed()
+    expect(h.notifier.error).toHaveBeenLastCalledWith(
+      "Couldn't save the title of “A”",
+      expect.objectContaining({ cancel: open }),
+    )
+  })
+
+  it('applySchedule reports with the label; without options the old wording stays', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(2)
+    await h.actions.applySchedule(
+      [{ taskId: 'a', startDate: '2026-11-05', dueDate: '2026-11-06' }],
+      { label: 'save the dates of “A”' },
+    )
+    expect(h.notifier.error.mock.calls.at(-1)?.[0]).toBe("Couldn't save the dates of “A”")
+    await h.actions.updateTask('a', { title: 'New' })
+    expect(h.notifier.error.mock.calls.at(-1)?.[0]).toBe("Couldn't update task")
+  })
+})
+
+describe('withdrawFailedChanges', () => {
+  it('takes the failed field off Retry and the toast away; with nothing left the error is over', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Old attempt' })
+    const retry = lastToastAction(h)
+    expect(h.state().sync).toMatchObject({ canRetry: true })
+    expect(h.state().sync.lastError).not.toBeNull()
+
+    h.actions.withdrawFailedChanges('a', ['title'])
+    expect(h.state().sync).toMatchObject({ canRetry: false, lastError: null })
+    expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
+
+    // The toast's old Retry can't bring it back any more.
+    retry?.onClick()
+    await settled()
+    await idle(h)
+    expect(h.state().data.tasks.a.title).not.toBe('Old attempt')
+    expect((await storedTask(h, 'a'))?.title).not.toBe('Old attempt')
+  })
+
+  it('leaves other fields and other tasks alone', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Failed title' })
+
+    h.actions.withdrawFailedChanges('a', ['description'])
+    h.actions.withdrawFailedChanges('b', ['title'])
+    expect(h.state().sync.canRetry).toBe(true)
+    await h.actions.retryLastFailed()
+    await idle(h)
+    expect((await storedTask(h, 'a'))?.title).toBe('Failed title')
+  })
+})
+
+describe('paired dates in a row, one failing', () => {
+  it('an older pair failing leaves the newer pair whole', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    h.repo.setLatency(5)
+    const first = h.actions.applySchedule([
+      { taskId: 'a', startDate: '2026-11-05', dueDate: '2026-11-06' },
+    ])
+    const second = h.actions.applySchedule([
+      { taskId: 'a', startDate: '2026-11-07', dueDate: '2026-11-09' },
+    ])
+    await Promise.all([first, second])
+    await idle(h)
+    expect(h.state().data.tasks.a).toMatchObject({ startDate: '2026-11-07', dueDate: '2026-11-09' })
+    expect(await storedTask(h, 'a')).toMatchObject({
+      startDate: '2026-11-07',
+      dueDate: '2026-11-09',
+    })
+  })
+})
+
 describe('Retry never overwrites newer changes', () => {
   it("a failed change's toast Retry does nothing once a newer change of that field was saved", async () => {
     const h = await setup({ rows: workspaceRows() })

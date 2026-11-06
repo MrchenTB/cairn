@@ -35,6 +35,7 @@ import type {
   WorkspaceData,
 } from '@/domain/types'
 import { notify, type NotifyAction } from '@/lib/notify'
+import type { WriteOptions } from '@/data/contracts'
 import type { ScheduleChangeSource } from './plannerTypes'
 import {
   requestReschedule,
@@ -141,7 +142,7 @@ export function computeReschedulePlan(
 
 export interface PlannerEnv {
   getData(): WorkspaceData
-  applySchedule(changes: readonly ScheduleChange[]): Promise<Result>
+  applySchedule(changes: readonly ScheduleChange[], options?: WriteOptions): Promise<Result>
   warn(message: string, options: { description?: string; action?: NotifyAction }): void
   requestReschedule(
     request: RescheduleRequest,
@@ -168,6 +169,8 @@ export type UndoOutcome =
 
 export interface PlanOptions {
   source?: ScheduleChangeSource
+  /** How a failed write is reported (the Task Modal names the task and the field). */
+  writeOptions?: WriteOptions
   /**
    * Called once with the record of the write, right after it succeeded (not for 'unchanged', a
    * cancelled preview or a failed write).
@@ -282,7 +285,7 @@ export function createPlanner(env: PlannerEnv): Planner {
           const t = own(current.tasks, c.taskId)
           return { taskId: c.taskId, startDate: t?.startDate ?? null, dueDate: t?.dueDate ?? null }
         })
-        const result = await env.applySchedule(changes)
+        const result = await env.applySchedule(changes, options.writeOptions)
         if (result.ok) record = { applied: changes.map(normalizeChange), previous }
         return result
       }
@@ -306,7 +309,9 @@ export function createPlanner(env: PlannerEnv): Planner {
         outcome = fromResult(await write([normalized]))
       }
       if (outcome.status === 'written') {
-        warnAboutNewConflicts(projectId, before)
+        // The Task Modal shows conflicts live in its banner, and every pick now saves right away:
+        // a toast would fire for the in-between state of changing both dates.
+        if (options.source !== 'modal') warnAboutNewConflicts(projectId, before)
         // With a preview, the dialog already listed them; without one nobody would know.
         if (shifts.length === 0 && blocked.length > 0) {
           const names = blocked.map((s) => `“${own(data.tasks, s.taskId)?.title ?? 'A task'}”`)
@@ -358,7 +363,7 @@ export function createPlanner(env: PlannerEnv): Planner {
 
 const browserPlanner = createPlanner({
   getData: () => useWorkspaceStore.getState().data,
-  applySchedule: (changes) => getWorkspaceActions().applySchedule(changes),
+  applySchedule: (changes, options) => getWorkspaceActions().applySchedule(changes, options),
   warn: (message, options) => {
     notify.warning(message, options)
   },

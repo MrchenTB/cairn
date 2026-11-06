@@ -56,6 +56,8 @@ export const notify = {
     options?: {
       description?: string
       action?: NotifyAction
+      /** A second, quieter action (e.g. Open next to Retry). */
+      cancel?: NotifyAction
       id?: string | number
       /** ms; default 8000 (Infinity = until dismissed) */
       duration?: number

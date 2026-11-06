@@ -1,6 +1,6 @@
 /**
  * Feedback after a date change made on the Gantt (move, resize, draw on an undated row, or a
- * keyboard nudge): one quiet toast with the new range and an Undo that puts the dates back.
+ * keyboard nudge) or in the Task Modal: one quiet toast with the new range and an Undo that puts the dates back.
  *
  * There is only ever ONE such toast (a fixed id: the next change replaces it), and its Undo takes
  * back exactly what the toast says. A burst of changes to the same task (nudging with the keys,
@@ -21,12 +21,13 @@ export const DATE_TOAST_ID = 'gantt-dates'
 export const BURST_MS = 8000
 const TOAST_MS = 6000
 
-export type DateChangeKind = 'moved' | 'resized' | 'scheduled'
+export type DateChangeKind = 'moved' | 'resized' | 'scheduled' | 'updated'
 
 const VERBS: Record<DateChangeKind, string> = {
   moved: 'Moved',
   resized: 'Resized',
   scheduled: 'Scheduled',
+  updated: 'Updated',
 }
 
 interface Shown {
@@ -65,7 +66,7 @@ export function mergeRecord(
 }
 
 /** "Nov 3 – Nov 7", "Nov 3 –", "– Nov 7" or "No dates" for stored dates. */
-function rangeText(change: ScheduleChange, today: ISODate): string {
+export function rangeText(change: ScheduleChange, today: ISODate): string {
   const start = change.startDate ?? null
   const end = change.dueDate ?? null
   if (start === null && end === null) return 'No dates'

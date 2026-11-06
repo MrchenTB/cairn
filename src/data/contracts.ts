@@ -199,6 +199,14 @@ export interface SyncState {
   canRetry: boolean
 }
 
+/** How a write's failure is reported (the default names only the kind of change). */
+export interface WriteOptions {
+  /** Toast title: `Couldn't ${label}`, e.g. 'save the title of “Plan”'. */
+  label?: string
+  /** A second toast action next to Retry, e.g. opening what failed. */
+  secondaryAction?: { label: string; onClick: () => void }
+}
+
 /**
  * Store actions. Rules every implementation follows:
  * 1. Validate first (domain validators). Validation failures return
@@ -236,7 +244,7 @@ export interface WorkspaceActions {
 
   createTask(input: NewTaskInput): Promise<Result<Task>>
   /** Validates title/dates/hierarchy. A parent's phase change also moves its subtasks. */
-  updateTask(id: string, patch: TaskPatch): Promise<Result>
+  updateTask(id: string, patch: TaskPatch, options?: WriteOptions): Promise<Result>
   /** Drag-and-drop reorder / regroup / restatus (see MoveTaskInput). */
   moveTask(input: MoveTaskInput): Promise<Result>
   /** keepSubtasks=true promotes subtasks to top level at the parent's position. */
@@ -251,7 +259,7 @@ export interface WorkspaceActions {
   removeDependency(id: string): Promise<Result>
 
   /** Several tasks' dates in ONE atomic write (Gantt drag, auto-schedule apply). */
-  applySchedule(changes: readonly ScheduleChange[]): Promise<Result>
+  applySchedule(changes: readonly ScheduleChange[], options?: WriteOptions): Promise<Result>
 
   updatePreferences(patch: Partial<Preferences>): Promise<Result>
 
@@ -266,6 +274,11 @@ export interface WorkspaceActions {
    * re-sent (it would overwrite that newer change), nor one a refresh showed the server applied.
    */
   retryLastFailed(): Promise<Result>
+  /**
+   * The user replaced these task fields' failed changes with something that writes nothing (typed
+   * the stored value back, discarded a draft): their Retry and toast are withdrawn.
+   */
+  withdrawFailedChanges(taskId: string, fields: readonly string[]): void
 }
 
 export interface WorkspaceState {

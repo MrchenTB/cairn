@@ -108,6 +108,7 @@ import type {
   SyncState,
   WorkspaceActions,
   WorkspaceState,
+  WriteOptions,
 } from './contracts'
 import { DEFAULT_PREFERENCES, EMPTY_WORKSPACE } from './defaults'
 import { isRetryable, toAppError } from './errors'
@@ -555,6 +556,8 @@ const tableRow = (table: keyof WorkspaceData, row: { id: string }): RowUpdate =>
 interface WriteSpec<T> {
   /** Toast title: `Couldn't ${label}`. */
   label: string
+  /** A second toast action next to Retry (see WriteOptions). */
+  secondaryAction?: WriteOptions['secondaryAction']
   /** Optimistic change (omit for writes that wait for the server, e.g. import). */
   recipe?: (draft: Draft<Doc>) => void
   /**
@@ -826,6 +829,22 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       }
     }
 
+    /**
+     * The user gave up on these fields' failed changes (typed something else, even back to the
+     * stored value, which writes nothing and so would not replace them by itself): their Retry
+     * must not put the older text back. With nothing left to retry, the error is over too.
+     */
+    function withdrawFailedChanges(taskId: string, fields: readonly string[]): void {
+      const before = failedWrites.length
+      const toastBefore = toastRetry
+      supersedeFailures(
+        fields.map((field) => ['data', 'tasks', taskId, field]),
+        Number.POSITIVE_INFINITY,
+      )
+      const withdrew = failedWrites.length !== before || toastRetry !== toastBefore
+      if (withdrew && !hasFailedWrites() && !lastErrorFromLoad) updateSync({ lastError: null })
+    }
+
     function onWriteFailed<T>(
       spec: WriteSpec<T>,
       error: AppError,
@@ -886,6 +905,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
               onClick: () => void runRetry([...failedWrites, handle]),
             }
           : undefined,
+        ...(spec.secondaryAction ? { cancel: spec.secondaryAction } : {}),
       })
     }
 
@@ -1669,7 +1689,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
      * top-level task's phase change also moves its subtasks. A subtask's phase always follows its
      * parent (a different `phaseId` for a subtask is ignored, like the database does).
      */
-    async function updateTask(id: string, input: TaskPatch): Promise<Result> {
+    async function updateTask(
+      id: string,
+      input: TaskPatch,
+      options: WriteOptions = {},
+    ): Promise<Result> {
       const data = get().data
       const task = own(data.tasks, id)
       if (!task) return missing('task')
@@ -1718,11 +1742,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       if (isEmpty(changes)) return OK
       return toVoid(
         await write({
-          label: 'update task',
+          label: options.label ?? 'update task',
+          secondaryAction: options.secondaryAction,
           recipe: (draft) => applyTaskChanges(draft, data, id, changes, isoNow()),
           persist: (repo) => repo.updateTask(id, changes),
           reconcile: (row) => [tableRow('tasks', row)],
-          retry: () => updateTask(id, patch),
+          retry: () => updateTask(id, patch, options),
         }),
       )
     }
@@ -1981,7 +2006,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
 
     // -- schedule --------------------------------------------------------------
 
-    async function applySchedule(changes: readonly ScheduleChange[]): Promise<Result> {
+    async function applySchedule(
+      changes: readonly ScheduleChange[],
+      options: WriteOptions = {},
+    ): Promise<Result> {
       const tasks = get().data.tasks
       const seen = new Set<string>()
       const effective: ScheduleChange[] = []
@@ -2002,7 +2030,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       if (effective.length === 0) return OK
       return toVoid(
         await write({
-          label: effective.length > 1 ? 'reschedule tasks' : 'change dates',
+          label: options.label ?? (effective.length > 1 ? 'reschedule tasks' : 'change dates'),
+          secondaryAction: options.secondaryAction,
           recipe: (draft) => {
             const timestamp = isoNow()
             for (const { taskId, startDate, dueDate } of effective) {
@@ -2011,7 +2040,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           },
           persist: (repo) => repo.applySchedule(effective),
           reconcile: (rows) => rows.map((row) => tableRow('tasks', row)),
-          retry: () => applySchedule(changes),
+          retry: () => applySchedule(changes, options),
         }),
       )
     }
@@ -2272,6 +2301,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       exportBackup,
       importBackup,
       retryLastFailed,
+      withdrawFailedChanges,
     }
 
     return {

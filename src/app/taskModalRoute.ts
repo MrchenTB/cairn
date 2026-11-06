@@ -12,6 +12,8 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router'
 export const TASK_PARAM = 'task'
 /** History state key: consecutive task entries pushed since the page they were opened from. */
 const DEPTH_KEY = 'cairnTaskDepth'
+/** History state key: the task this entry was opened from (inside the modal), if any. */
+const FROM_KEY = 'cairnTaskFrom'
 
 function depthOf(state: unknown, search: string): number {
   if (!new URLSearchParams(search).has(TASK_PARAM)) return 0
@@ -46,15 +48,25 @@ export function useOpenTask(): (taskId: string) => void {
       if (!taskId || new URLSearchParams(search).get(TASK_PARAM) === taskId) return
       navigate(
         { pathname, search: withTaskParam(search, taskId), hash },
-        { preventScrollReset: true, state: { [DEPTH_KEY]: depthOf(state, search) + 1 } },
+        {
+          preventScrollReset: true,
+          state: {
+            [DEPTH_KEY]: depthOf(state, search) + 1,
+            [FROM_KEY]: new URLSearchParams(search).get(TASK_PARAM),
+          },
+        },
       )
     },
     [navigate, pathname, search, hash, state],
   )
 }
 
-/** Closes the Task Modal, keeping the rest of the URL (steps back over the entries it pushed). */
-export function useCloseTask(): () => void {
+/**
+ * Closes the Task Modal, keeping the rest of the URL (steps back over the entries it pushed). With
+ * `toParent`: a subtask opened from that parent returns to it (one step) instead of closing
+ * everything; a subtask reached any other way closes as usual.
+ */
+export function useCloseTask(): (options?: { toParent?: string | null }) => void {
   const navigate = useNavigate()
   const { pathname, search, hash, state, key } = useLocation()
   /** The entry a step back was already requested from: a second close must not step again. */
@@ -63,23 +75,42 @@ export function useCloseTask(): () => void {
   useEffect(() => {
     leavingRef.current = null
   }, [key])
-  return useCallback(() => {
-    if (!new URLSearchParams(search).has(TASK_PARAM)) return
-    const depth = depthOf(state, search)
-    if (depth > 0) {
-      if (leavingRef.current === key) return
-      leavingRef.current = key
-      navigate(-depth)
-      return
-    }
-    navigate(
-      { pathname, search: withTaskParam(search, null), hash },
-      { replace: true, preventScrollReset: true },
-    )
-  }, [navigate, pathname, search, hash, state, key])
+  return useCallback(
+    (options) => {
+      if (!new URLSearchParams(search).has(TASK_PARAM)) return
+      const depth = depthOf(state, search)
+      if (depth > 0) {
+        if (leavingRef.current === key) return
+        leavingRef.current = key
+        const from = (state as Record<string, unknown> | null)?.[FROM_KEY]
+        const returnsToParent = depth > 1 && options?.toParent != null && from === options.toParent
+        navigate(returnsToParent ? -1 : -depth)
+        return
+      }
+      navigate(
+        { pathname, search: withTaskParam(search, null), hash },
+        { replace: true, preventScrollReset: true },
+      )
+    },
+    [navigate, pathname, search, hash, state, key],
+  )
 }
 
 /** Link target (`{ pathname, search }`) that opens a task over a given page, e.g. from search. */
 export function taskLocation(pathname: string, taskId: string, search = '') {
   return { pathname, search: withTaskParam(search, taskId) }
+}
+
+/**
+ * Opening a task from outside React (a toast's "Open", the draft list): the mounted Task Modal host
+ * registers how. Does nothing while no host is mounted.
+ */
+let taskOpener: ((taskId: string) => void) | null = null
+
+export function registerTaskOpener(opener: ((taskId: string) => void) | null): void {
+  taskOpener = opener
+}
+
+export function openTaskFromAnywhere(taskId: string): void {
+  taskOpener?.(taskId)
 }

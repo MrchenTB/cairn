@@ -142,6 +142,47 @@ describe('planScheduleChange — Manual', () => {
     await vi.waitFor(() => expect(h.requests).toEqual([{ kind: 'resolve', projectId: 'p' }]))
   })
 
+  it('from the Task Modal: same write, no toast (its banner shows the conflict live)', async () => {
+    const h = setup({
+      tasks: [
+        makeTask({
+          id: 'a',
+          projectId: 'p',
+          title: 'Alpha',
+          startDate: '2026-11-02',
+          dueDate: '2026-11-04',
+        }),
+        makeTask({
+          id: 'b',
+          projectId: 'p',
+          title: 'Beta',
+          startDate: '2026-11-05',
+          dueDate: '2026-11-06',
+        }),
+      ],
+      links: [['a', 'b']],
+    })
+    const outcome = await h.planner.planScheduleChange(
+      { taskId: 'a', startDate: '2026-11-02', dueDate: '2026-11-10' },
+      { source: 'modal' },
+    )
+    expect(outcome).toEqual({ status: 'written' })
+    expect(h.writes).toHaveLength(1)
+    expect(h.warnings).toEqual([])
+  })
+
+  it('passes the write options on, so a failure can name the task', async () => {
+    const h = setup({
+      tasks: [makeTask({ id: 'a', projectId: 'p', title: 'Alpha' })],
+    })
+    const writeOptions = { label: 'save the dates of “Alpha”' }
+    await h.planner.planScheduleChange(
+      { taskId: 'a', startDate: '2026-11-02', dueDate: '2026-11-10' },
+      { source: 'modal', writeOptions },
+    )
+    expect(h.applySchedule).toHaveBeenCalledWith(expect.anything(), writeOptions)
+  })
+
   it('does not warn when no NEW conflict appears', async () => {
     const h = setup({ tasks: chain(), links })
     await h.planner.planScheduleChange({

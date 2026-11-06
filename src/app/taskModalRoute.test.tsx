@@ -13,7 +13,8 @@ function Probe() {
       <output aria-label="task">{taskId ?? 'none'}</output>
       <button onClick={() => openTask('t-42')}>open</button>
       <button onClick={() => openTask('t-43')}>open other</button>
-      <button onClick={closeTask}>close</button>
+      <button onClick={() => closeTask()}>close</button>
+      <button onClick={() => closeTask({ toParent: 't-42' })}>close to parent</button>
     </div>
   )
 }
@@ -63,6 +64,27 @@ describe('task modal URL state', () => {
     })
     expect(router.state.location.pathname).toBe('/projects/p1/list')
     expect(router.state.location.search).toBe('')
+  })
+
+  it('a subtask opened from its parent returns to it; a second close leaves the page', async () => {
+    const router = setup('/projects/p/list')
+    await act(() => screen.getByRole('button', { name: 'open' }).click())
+    await act(() => screen.getByRole('button', { name: 'open other' }).click())
+    expect(router.state.location.search).toBe('?task=t-43')
+
+    await act(() => screen.getByRole('button', { name: 'close to parent' }).click())
+    expect(router.state.location.search).toBe('?task=t-42')
+
+    await act(() => screen.getByRole('button', { name: 'close' }).click())
+    expect(router.state.location.search).toBe('')
+    expect(router.state.location.pathname).toBe('/projects/p/list')
+  })
+
+  it('a subtask not opened from that parent closes as usual', async () => {
+    const direct = setup('/projects/p/list')
+    await act(() => screen.getByRole('button', { name: 'open other' }).click())
+    await act(() => screen.getByRole('button', { name: 'close to parent' }).click())
+    expect(direct.state.location.search).toBe('')
   })
 
   it('steps back only once when close is called twice before the step completes', async () => {
