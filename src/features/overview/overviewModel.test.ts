@@ -34,16 +34,25 @@ describe('upcomingTasks', () => {
     const result = upcomingTasks(myTasks(data, TODAY), 3)
     expect(result.tasks.map((t) => t.id)).toEqual(['late', 'today', 'up-1'])
     expect(result.total).toBe(4)
-    expect(result.tab).toBe('overdue')
   })
 
-  it('points "View all" at the first non-empty bucket', () => {
-    const onlyUpcoming = makeWorkspace({ projects: [project], tasks: [task('a', '2026-11-05')] })
-    expect(upcomingTasks(myTasks(onlyUpcoming, TODAY)).tab).toBe('upcoming')
-    const today = makeWorkspace({ projects: [project], tasks: [task('a', TODAY)] })
-    expect(upcomingTasks(myTasks(today, TODAY)).tab).toBe('today')
+  it('is empty without tasks in those buckets', () => {
     const none = upcomingTasks(myTasks(makeWorkspace({ projects: [project] }), TODAY))
-    expect(none).toEqual({ tasks: [], total: 0, tab: 'upcoming' })
+    expect(none).toEqual({ tasks: [], total: 0 })
+    const laterOnly = makeWorkspace({ projects: [project], tasks: [task('a', '2026-12-30')] })
+    expect(upcomingTasks(myTasks(laterOnly, TODAY))).toEqual({ tasks: [], total: 0 })
+  })
+
+  it('lists exactly the My Tasks overdue, today and upcoming tasks (same counts as the tabs)', () => {
+    const data = makeWorkspace({
+      projects: [project],
+      tasks: [task('late', '2026-10-30'), task('today', TODAY), task('soon', '2026-11-08')],
+    })
+    const buckets = myTasks(data, TODAY)
+    const result = upcomingTasks(buckets)
+    expect(result.total).toBe(
+      buckets.overdue.length + buckets.today.length + buckets.upcoming.length,
+    )
   })
 })
 
@@ -76,9 +85,9 @@ describe('projectSpan', () => {
   const milestones = [{ date: '2026-11-25' }]
 
   it('prefers the project’s own dates, end by end', () => {
-    expect(projectSpan({ startDate: '2026-11-01', dueDate: '2026-12-01' }, tasks, milestones)).toEqual(
-      { start: '2026-11-01', end: '2026-12-01' },
-    )
+    expect(
+      projectSpan({ startDate: '2026-11-01', dueDate: '2026-12-01' }, tasks, milestones),
+    ).toEqual({ start: '2026-11-01', end: '2026-12-01' })
     expect(projectSpan({ startDate: '2026-11-01', dueDate: null }, tasks, milestones)).toEqual({
       start: '2026-11-01',
       end: '2026-11-25',
@@ -109,9 +118,9 @@ describe('projectSpan', () => {
       start: '2026-11-30',
       end: '2026-11-30',
     })
-    expect(projectSpan({ startDate: null, dueDate: null }, [{ startDate: null, dueDate: null }], [])).toBe(
-      null,
-    )
+    expect(
+      projectSpan({ startDate: null, dueDate: null }, [{ startDate: null, dueDate: null }], []),
+    ).toBe(null)
     expect(projectSpan({ startDate: 'not-a-date', dueDate: null }, [], [])).toBe(null)
   })
 })
@@ -187,6 +196,59 @@ describe('miniTimeline', () => {
     expect(result.rows[1].milestones.map((m) => m.id)).toEqual(['m-c'])
     expect(result.idle).toBe(2)
     expect(result.more).toBe(0)
+  })
+
+  it('keeps a project whose own dates ended before its open work does (a slipped deadline)', () => {
+    const projects = [
+      makeProject({
+        id: 'slipped',
+        sortOrder: 'a0',
+        startDate: '2026-09-01',
+        dueDate: '2026-10-30',
+      }),
+      makeProject({
+        id: 'finished',
+        sortOrder: 'a1',
+        startDate: '2026-09-01',
+        dueDate: '2026-10-30',
+      }),
+      makeProject({ id: 'idle', sortOrder: 'a2', startDate: '2026-09-01', dueDate: '2026-10-30' }),
+    ]
+    const data = makeWorkspace({
+      projects,
+      tasks: [
+        makeTask({
+          id: 't-open',
+          projectId: 'slipped',
+          startDate: '2026-11-04',
+          dueDate: '2026-11-06',
+        }),
+        // Open work outside the window does not stretch the bar.
+        makeTask({ id: 't-ancient', projectId: 'slipped', dueDate: '2026-01-05' }),
+        makeTask({ id: 't-far', projectId: 'slipped', dueDate: '2027-06-01' }),
+        // Done work and work far beyond the window do not bring a project back.
+        makeTask({ id: 't-done', projectId: 'finished', dueDate: '2026-11-05', status: 'done' }),
+        makeTask({ id: 't-later', projectId: 'idle', dueDate: '2027-03-01' }),
+      ],
+    })
+    const result = miniTimeline(data, projects, timelineWindow(TODAY, 1))
+    expect(result.rows.map((row) => row.project.id)).toEqual(['slipped'])
+    // The bar follows the work that is still open, and says so for assistive technology.
+    expect(result.rows[0].span).toEqual({ start: '2026-11-04', end: '2026-11-06' })
+    expect(result.rows[0].placed).not.toBeNull()
+    expect(result.idle).toBe(2)
+  })
+
+  it('keeps the project’s own dates when they reach into the window', () => {
+    const projects = [
+      makeProject({ id: 'a', sortOrder: 'a0', startDate: '2026-10-01', dueDate: '2026-11-10' }),
+    ]
+    const data = makeWorkspace({
+      projects,
+      tasks: [makeTask({ projectId: 'a', dueDate: '2026-12-01' })],
+    })
+    const result = miniTimeline(data, projects, timelineWindow(TODAY, 1))
+    expect(result.rows[0].span).toEqual({ start: '2026-10-01', end: '2026-11-10' })
   })
 
   it('caps the rows and counts the rest', () => {

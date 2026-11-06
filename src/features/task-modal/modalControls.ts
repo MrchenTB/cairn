@@ -6,6 +6,8 @@
 export interface ModalControls {
   requestClose: () => void
   submit: () => void
+  /** Puts focus back on the form's first field (after a prompt that did not move it there). */
+  focus: () => void
 }
 
 /** Pluralised count: plural(1, 'subtask') → '1 subtask'; plural(3, 'dependency', 'dependencies'). */

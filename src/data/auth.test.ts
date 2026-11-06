@@ -50,6 +50,7 @@ function fakeSupabaseAuth() {
       data: { user: session?.user ?? null },
       error: null as unknown,
     })),
+    refreshSession: vi.fn(async () => ({ data: { session }, error: null as unknown })),
   }
   return {
     auth,
@@ -65,6 +66,58 @@ function fakeSupabaseAuth() {
 }
 
 describe('Supabase auth service', () => {
+  describe('revalidate (the server rejected the current session)', () => {
+    it('a renewed session keeps the user', async () => {
+      const fake = fakeSupabaseAuth()
+      fake.setSession({ user: { id: 'u1', email: 'a@example.com' } })
+      expect(await fake.service.revalidate?.()).toEqual({ id: 'u1', email: 'a@example.com' })
+      expect(fake.auth.signOut).not.toHaveBeenCalled()
+    })
+
+    it('a refused refresh ends the session on this device, even if its copy still looks valid', async () => {
+      const fake = fakeSupabaseAuth()
+      fake.setSession({ user: { id: 'u1' } })
+      fake.auth.refreshSession.mockResolvedValueOnce({
+        data: { session: null },
+        error: { name: 'AuthApiError', status: 400, code: 'refresh_token_not_found', message: 'x' },
+      })
+      expect(await fake.service.revalidate?.()).toBeNull()
+      expect(fake.auth.signOut).toHaveBeenCalledWith({ scope: 'local' })
+    })
+
+    it.each([
+      [
+        'too many requests',
+        { name: 'AuthApiError', status: 429, code: 'over_request_rate_limit', message: 'x' },
+      ],
+      [
+        'a server failure',
+        { name: 'AuthApiError', status: 500, code: 'unexpected_failure', message: 'x' },
+      ],
+      [
+        'a server failure without a code',
+        { name: 'AuthApiError', status: 500, message: 'Database error' },
+      ],
+    ])('%s is no verdict on the session: it stays', async (_name, error) => {
+      const fake = fakeSupabaseAuth()
+      fake.setSession({ user: { id: 'u1' } })
+      fake.auth.refreshSession.mockResolvedValueOnce({ data: { session: null }, error })
+      await expect(fake.service.revalidate?.()).rejects.toBeDefined()
+      expect(fake.auth.signOut).not.toHaveBeenCalled()
+    })
+
+    it('a refresh that could not reach the server changes nothing', async () => {
+      const fake = fakeSupabaseAuth()
+      fake.setSession({ user: { id: 'u1' } })
+      fake.auth.refreshSession.mockResolvedValueOnce({
+        data: { session: null },
+        error: { name: 'AuthRetryableFetchError', status: 503, message: 'x' },
+      })
+      await expect(fake.service.revalidate?.()).rejects.toMatchObject({ kind: 'network' })
+      expect(fake.auth.signOut).not.toHaveBeenCalled()
+    })
+  })
+
   it('reads the current user from the stored session', async () => {
     const fake = fakeSupabaseAuth()
     expect(await fake.service.getUser()).toBeNull()
@@ -216,6 +269,33 @@ describe('toAuthError', () => {
     [{ name: 'AuthApiError', status: 500, message: 'Database error saving new user' }, 'auth'],
   ] as const)('%o → %s', (error, kind) => {
     expect(toAuthError(error).kind).toBe(kind)
+  })
+
+  it('a server failure is not blamed on the connection, and the session is not treated as refused', () => {
+    // supabase-js: 5xx = AuthRetryableFetchError with the status; no answer at all = status 0
+    const server = (status: number, message: string) =>
+      toAuthError({ name: 'AuthRetryableFetchError', status, message })
+    expect(server(500, 'Error sending recovery email')).toMatchObject({
+      kind: 'network',
+      message: 'Error sending recovery email.',
+    })
+    for (const [status, reason] of [
+      [500, 'Internal Server Error'],
+      [502, 'Bad Gateway'],
+      [503, 'Service Unavailable'],
+      [504, 'Gateway Timeout'],
+      [521, 'HTTP 521'],
+      [500, '{"weird":"json"}'],
+    ] as const) {
+      expect(server(status, reason)).toMatchObject({
+        kind: 'network',
+        message: "The server couldn't complete the request. Try again.",
+      })
+    }
+    expect(server(0, 'Failed to fetch')).toMatchObject({
+      kind: 'network',
+      message: 'Network error — check your connection.',
+    })
   })
 
   it('a missing session (e.g. a reset link left open too long) reads as an expired session', () => {
@@ -520,6 +600,44 @@ describe('session transitions', () => {
     expect(workspace.getState().data.projects).toEqual({})
   })
 
+  it('a background refresh the server refuses re-checks the session too, instead of showing old data', async () => {
+    const { store: workspace, repo } = realWorkspace()
+    const auth = controllableService({ id: 'u1', email: 'me@example.com' })
+    const store = createAuthStore({ mode: 'supabase', auth: auth.service, workspace })
+    await store.getState().actions.init()
+    await vi.waitFor(() => expect(workspace.getState().status).toBe('ready'))
+    await repo.insertProject(makeProject({ id: 'p1' }))
+    await workspace.getState().actions.refresh()
+
+    auth.expireSilently()
+    vi.spyOn(repo, 'loadWorkspace').mockRejectedValueOnce(
+      new RepositoryError('auth', 'Your session has expired. Sign in again.'),
+    )
+    await workspace.getState().actions.refresh({ silent: true })
+    await vi.waitFor(() => expect(store.getState().status).toBe('signed_out'))
+    expect(workspace.getState().data.projects).toEqual({})
+  })
+
+  it('a session renewed after the server rejected it brings the screen up to date', async () => {
+    const { store: workspace, repo } = realWorkspace()
+    const auth = controllableService({ id: 'u1', email: 'me@example.com' })
+    const store = createAuthStore({ mode: 'supabase', auth: auth.service, workspace })
+    await store.getState().actions.init()
+    await vi.waitFor(() => expect(workspace.getState().status).toBe('ready'))
+
+    vi.spyOn(repo, 'loadWorkspace').mockRejectedValueOnce(
+      new RepositoryError('auth', 'Your session has expired. Sign in again.'),
+    )
+    await workspace.getState().actions.refresh({ silent: true })
+    expect(workspace.getState().sync.lastError).toMatchObject({ kind: 'auth' })
+    await repo.insertProject(makeProject({ id: 'from-elsewhere' }))
+    await vi.waitFor(() =>
+      expect(workspace.getState().data.projects['from-elsewhere']).toBeDefined(),
+    )
+    expect(workspace.getState().sync.lastError).toBeNull()
+    expect(store.getState().status).toBe('signed_in')
+  })
+
   it('sign-out waits for pending writes, so the last change is saved', async () => {
     const { store: workspace, repo } = realWorkspace()
     const auth = controllableService({ id: 'u1', email: 'me@example.com' })
@@ -543,6 +661,50 @@ describe('session transitions', () => {
     expect(auth.service.signOut).toHaveBeenCalledOnce()
     expect(store.getState().status).toBe('signed_out')
     expect(workspace.getState().data.tasks).toEqual({})
+  })
+
+  it('a write still queued when another account signs in is never sent with its session', async () => {
+    const { store: workspace, repo } = realWorkspace()
+    const auth = controllableService({ id: 'alice', email: 'alice@example.com' })
+    const store = createAuthStore({ mode: 'supabase', auth: auth.service, workspace })
+    await store.getState().actions.init()
+    await vi.waitFor(() => expect(workspace.getState().status).toBe('ready'))
+
+    repo.setLatency(100)
+    const insert = vi.spyOn(repo, 'insertProject')
+    const inFlight = workspace.getState().actions.createProject({ name: "Alice's first" })
+    const queued = workspace.getState().actions.createProject({ name: "Alice's second" })
+    await vi.waitFor(() => expect(insert).toHaveBeenCalledOnce(), { interval: 1 })
+
+    auth.emit({ id: 'bob', email: 'bob@example.com' })
+    await inFlight
+    expect((await queued).ok).toBe(false)
+    expect(insert).toHaveBeenCalledOnce()
+    expect(insert.mock.calls[0][0]).toMatchObject({ name: "Alice's first" })
+  })
+
+  it("the answer to the previous account's load never shows up in the next account", async () => {
+    const { store: workspace, repo } = realWorkspace()
+    await repo.insertProject(makeProject({ id: 'private', name: "Alice's project" }))
+    const nothing = await new LocalRepository({ storage: createMemoryStorage() }).loadWorkspace()
+    const seen = new Set<string>()
+    workspace.subscribe((state) => {
+      for (const project of Object.values(state.data.projects)) seen.add(project.name)
+    })
+    repo.setLatency(100)
+    const load = vi.spyOn(repo, 'loadWorkspace')
+    const auth = controllableService({ id: 'alice', email: 'alice@example.com' })
+    const store = createAuthStore({ mode: 'supabase', auth: auth.service, workspace })
+    void store.getState().actions.init()
+    await vi.waitFor(() => expect(load).toHaveBeenCalledOnce(), { interval: 1 })
+
+    load.mockResolvedValueOnce(nothing)
+    auth.emit({ id: 'bob', email: 'bob@example.com' })
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2), { interval: 1 })
+    await vi.waitFor(() => expect(workspace.getState().status).toBe('ready'), { interval: 1 })
+
+    expect(workspace.getState().data.projects).toEqual({})
+    expect(seen).toEqual(new Set())
   })
 
   it('stops listening once its signal is aborted (hot reload)', async () => {

@@ -37,6 +37,14 @@ function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? '' : 's'}`
 }
 
+/*
+ * The view bar (PageHeader, a `@container/viewbar`) holds the project tabs on the left and these
+ * controls on the right; together they need ~830px. Narrower than that the conflicts chip,
+ * Unscheduled and the mode menu keep their icon (and count) and lose their words — still read by
+ * screen readers, so every control keeps its name.
+ */
+const compactOnly = '@max-[840px]/viewbar:sr-only'
+
 export interface GanttToolbarProps {
   scale: GanttScale
   onScaleChange: (scale: GanttScale) => void
@@ -61,7 +69,7 @@ export const GanttToolbar = memo(function GanttToolbar(props: GanttToolbarProps)
         <Tooltip content="Jump to the tasks without dates">
           <Button variant="ghost" size="sm" onClick={props.onShowUnscheduled}>
             <CalendarOff aria-hidden />
-            Unscheduled
+            <span className={compactOnly}>Unscheduled</span>{' '}
             <span className="text-fg-tertiary tabular-nums">{props.unscheduledCount}</span>
           </Button>
         </Tooltip>
@@ -98,10 +106,12 @@ function ConflictsChip({
         <Button
           variant="ghost"
           size="sm"
+          title={plural(conflicts.length, 'dependency conflict')}
           className="text-danger hover:bg-danger-subtle hover:text-danger data-[state=open]:bg-danger-subtle data-[state=open]:text-danger"
         >
           <TriangleAlert aria-hidden />
-          {plural(conflicts.length, 'conflict')}
+          <span className="tabular-nums">{conflicts.length}</span>{' '}
+          <span className={compactOnly}>{conflicts.length === 1 ? 'conflict' : 'conflicts'}</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[340px] p-0">
@@ -157,11 +167,14 @@ function ConflictList({
                 insetFocus,
               )}
             >
-              <span className="flex w-full min-w-0 items-center gap-1.5 text-ui text-fg">
-                <span className="truncate">{title(conflict.predecessorId)}</span>
-                <ArrowRight className="size-3 shrink-0 text-fg-tertiary" aria-hidden />
+              {/* Two lines, each with the full width: side by side both names were cut to ~20 characters. */}
+              <span className="flex w-full min-w-0 flex-col text-ui text-fg">
+                <span className="truncate text-fg-secondary">{title(conflict.predecessorId)}</span>
                 <span className="sr-only">has to finish before</span>
-                <span className="truncate font-medium">{title(conflict.successorId)}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ArrowRight className="size-3 shrink-0 text-fg-tertiary" aria-hidden />
+                  <span className="truncate font-medium">{title(conflict.successorId)}</span>
+                </span>
               </span>
               <span className="text-meta text-fg-tertiary tabular-nums">
                 Needs to start {formatDateSmart(conflict.requiredStart, today)} or later · starts{' '}
@@ -198,7 +211,7 @@ function ScheduleModeMenu({
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="sm" aria-label={`Dependencies: ${MODE_LABELS[mode]}`}>
             <Workflow aria-hidden />
-            {MODE_LABELS[mode]}
+            <span className="@max-[840px]/viewbar:hidden">{MODE_LABELS[mode]}</span>
             <ChevronDown className="size-3.5 text-fg-tertiary" aria-hidden />
           </Button>
         </DropdownMenuTrigger>

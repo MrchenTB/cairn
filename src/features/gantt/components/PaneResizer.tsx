@@ -20,9 +20,17 @@ export interface PaneResizerProps {
   onCommit: () => void
   /** The pane casts a soft shadow when the timeline is scrolled underneath it. */
   scrolled: boolean
+  /** Accessible name of the handle. */
+  label?: string
 }
 
-export function PaneResizer({ width, onResize, onCommit, scrolled }: PaneResizerProps) {
+export function PaneResizer({
+  width,
+  onResize,
+  onCommit,
+  scrolled,
+  label = 'Resize task list',
+}: PaneResizerProps) {
   const drag = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null)
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -70,7 +78,7 @@ export function PaneResizer({ width, onResize, onCommit, scrolled }: PaneResizer
         role="separator"
         tabIndex={0}
         aria-orientation="vertical"
-        aria-label="Resize task list"
+        aria-label={label}
         aria-valuenow={width}
         aria-valuemin={PANE_WIDTH_MIN}
         aria-valuemax={PANE_WIDTH_MAX}

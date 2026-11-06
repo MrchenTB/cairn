@@ -36,7 +36,11 @@ export function UpcomingMilestones({ milestones, projects, today }: UpcomingMile
               <MilestoneRow
                 key={milestone.id}
                 milestone={milestone}
-                project={Object.hasOwn(projects, milestone.projectId) ? projects[milestone.projectId] : undefined}
+                project={
+                  Object.hasOwn(projects, milestone.projectId)
+                    ? projects[milestone.projectId]
+                    : undefined
+                }
                 today={today}
               />
             ))}

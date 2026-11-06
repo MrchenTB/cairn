@@ -37,6 +37,14 @@ export interface ListContextValue {
   /** Creates a task at the end of its group / parent; resolves an inline error or null. */
   createTask(request: CreateTaskRequest): Promise<string | null>
   openMilestone(milestoneId: string): void
+  /**
+   * A menu item that opens the inline row `rowKey` calls this instead of opening it: `open` runs
+   * once the menu has closed, and the row's field takes the cursor. (A field mounted under an
+   * open menu loses focus to it at once, and Radix then gives focus back to the menu's trigger.)
+   */
+  openRowAfterMenu(rowKey: string, open: () => void): void
+  /** Pass as `onCloseAutoFocus` of the menus that hold such items. */
+  onMenuClosed(event: Event): void
   drag: ListDragState | null
   /** The OS asks for reduced motion: rows don't animate while they make room. */
   reducedMotion: boolean

@@ -30,7 +30,12 @@ import {
   useProjectTasks,
   useToday,
 } from '@/data/hooks'
-import { buildProjectOutline, subtasksOf, topLevelTasks, type OutlineTask } from '@/domain/hierarchy'
+import {
+  buildProjectOutline,
+  subtasksOf,
+  topLevelTasks,
+  type OutlineTask,
+} from '@/domain/hierarchy'
 import {
   NAME_MAX_LENGTH,
   TITLE_MAX_LENGTH,
@@ -52,6 +57,7 @@ import { deletePhaseDescription, phaseContents, plural } from '@/features/projec
 import { ViewBarActions } from '@/features/projects/viewBar'
 import { notify } from '@/lib/notify'
 import { InlineCreate } from './InlineCreate'
+import { inlineRowInput } from './inlineRows'
 import { ListContext, addRowKey, type ListContextValue, type PhaseCommands } from './listContext'
 import {
   findContainer,
@@ -116,6 +122,8 @@ function ProjectList({ project }: { project: Project }) {
   const dropAnimation = useDropAnimation()
   const reducedMotion = usePrefersReducedMotion()
   const [editingRow, setEditingRow] = useState<string | null>(null)
+  /** An inline row a menu item asked for: it opens when that menu has closed. */
+  const rowAfterMenu = useRef<{ rowKey: string; open: () => void } | null>(null)
 
   const outline = useMemo(
     () => buildProjectOutline(project, phases, tasks, milestones),
@@ -123,7 +131,8 @@ function ProjectList({ project }: { project: Project }) {
   )
   const entries = useMemo(() => {
     const map = new Map<string, OutlineTask>()
-    for (const group of outline.groups) for (const entry of group.tasks) map.set(entry.task.id, entry)
+    for (const group of outline.groups)
+      for (const entry of group.tasks) map.set(entry.task.id, entry)
     return map
   }, [outline])
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks])
@@ -201,7 +210,11 @@ function ProjectList({ project }: { project: Project }) {
           confirmLabel: 'Delete task',
           destructive: true,
         })
-        if (confirmed) void report(actions.deleteTask(task.id, { keepSubtasks: false }), 'Couldn’t delete the task')
+        if (confirmed)
+          void report(
+            actions.deleteTask(task.id, { keepSubtasks: false }),
+            'Couldn’t delete the task',
+          )
         return
       }
       const all = touching(new Set([task.id, ...subtasks.map((subtask) => subtask.id)]))
@@ -222,6 +235,21 @@ function ProjectList({ project }: { project: Project }) {
     },
     [actions, dependencies, tasks],
   )
+
+  // A menu item that opens an inline row waits for its menu to close (see openRowAfterMenu): then
+  // the row opens, and focus goes to its field instead of back to the menu's trigger.
+  const openRowAfterMenu = useCallback((rowKey: string, open: () => void) => {
+    rowAfterMenu.current = { rowKey, open }
+  }, [])
+  const onMenuClosed = useCallback((event: Event) => {
+    const row = rowAfterMenu.current
+    rowAfterMenu.current = null
+    if (!row) return
+    event.preventDefault()
+    row.open()
+    // A row that was open already mounts nothing new: give its field the cursor directly.
+    inlineRowInput(row.rowKey)?.focus()
+  }, [])
 
   // Rows are memoised on ONE commands object for the life of the view; the commands read the
   // latest outline and callbacks when they run.
@@ -251,9 +279,13 @@ function ProjectList({ project }: { project: Project }) {
         }
       },
       addSubtask: (taskId) => {
-        setTasksExpanded([taskId], true)
-        setEditingRow(addRowKey.subtask(taskId))
+        const rowKey = addRowKey.subtask(taskId)
+        openRowAfterMenu(rowKey, () => {
+          setTasksExpanded([taskId], true)
+          setEditingRow(rowKey)
+        })
       },
+      onMenuClosed,
       move: (task, delta) => {
         const input = stepMove(latest.current.siblingOrder(task), task.id, delta)
         if (input) latest.current.moveTask(input)
@@ -264,7 +296,7 @@ function ProjectList({ project }: { project: Project }) {
       },
       remove: (task) => void latest.current.removeTask(task),
     }),
-    [actions],
+    [actions, openRowAfterMenu, onMenuClosed],
   )
 
   const phaseCommands = useMemo<PhaseCommands>(
@@ -279,7 +311,8 @@ function ProjectList({ project }: { project: Project }) {
           phase.id,
           delta,
         )
-        if (afterId !== undefined) void report(actions.movePhase(phase.id, afterId), 'Couldn’t move the phase')
+        if (afterId !== undefined)
+          void report(actions.movePhase(phase.id, afterId), 'Couldn’t move the phase')
       },
       async remove(phase) {
         const confirmed = await confirm({
@@ -328,6 +361,8 @@ function ProjectList({ project }: { project: Project }) {
       setEditingRow,
       createTask,
       openMilestone: (milestoneId) => openMilestoneDialog({ mode: 'edit', milestoneId }),
+      openRowAfterMenu,
+      onMenuClosed,
       drag: dnd.drag,
       reducedMotion,
     }),
@@ -342,13 +377,18 @@ function ProjectList({ project }: { project: Project }) {
       editingRow,
       createTask,
       openMilestoneDialog,
+      openRowAfterMenu,
+      onMenuClosed,
       dnd.drag,
       reducedMotion,
     ],
   )
 
   const parentIds = useMemo(
-    () => [...entries.values()].filter((entry) => entry.subtasks.length > 0).map((entry) => entry.task.id),
+    () =>
+      [...entries.values()]
+        .filter((entry) => entry.subtasks.length > 0)
+        .map((entry) => entry.task.id),
     [entries],
   )
   const allExpanded = parentIds.length > 0 && parentIds.every((id) => expanded.has(id))
@@ -362,9 +402,13 @@ function ProjectList({ project }: { project: Project }) {
   const announcements: Announcements = {
     onDragStart: ({ active }) => `Picked up ${titleOf(active.id)}.`,
     onDragOver: ({ active, over }) =>
-      over && over.id !== active.id ? `${titleOf(active.id)} is over ${placeOf(over.id)}.` : undefined,
+      over && over.id !== active.id
+        ? `${titleOf(active.id)} is over ${placeOf(over.id)}.`
+        : undefined,
     onDragEnd: ({ active, over }) =>
-      over ? `${titleOf(active.id)} was dropped.` : `${titleOf(active.id)} was dropped back in place.`,
+      over
+        ? `${titleOf(active.id)} was dropped.`
+        : `${titleOf(active.id)} was dropped back in place.`,
     onDragCancel: ({ active }) => `Moving ${titleOf(active.id)} was cancelled.`,
   }
 
@@ -463,7 +507,9 @@ function ProjectList({ project }: { project: Project }) {
                 validate={validatePhaseName}
                 onSubmit={async (name) => {
                   const result = await actions.createPhase({ projectId: project.id, name })
-                  return !result.ok && result.error.kind === 'validation' ? result.error.message : null
+                  return !result.ok && result.error.kind === 'validation'
+                    ? result.error.message
+                    : null
                 }}
                 className="pr-3 pl-6"
               />
@@ -475,9 +521,7 @@ function ProjectList({ project }: { project: Project }) {
                 task={activeTask}
                 depth={dnd.drag?.kind === 'subtask' ? 1 : 0}
                 subtaskCount={
-                  dnd.drag?.kind === 'task'
-                    ? (entries.get(activeTask.id)?.subtasks.length ?? 0)
-                    : 0
+                  dnd.drag?.kind === 'task' ? (entries.get(activeTask.id)?.subtasks.length ?? 0) : 0
                 }
                 destination={dropDestination}
               />

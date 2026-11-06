@@ -90,9 +90,9 @@
   --gantt-milestone-size: 12px;
   --gantt-handle-width: 8px;
   --gantt-connector-size: 8px;
-  --gantt-day-width-day: 32px;
-  --gantt-day-width-week: 14px;
-  --gantt-day-width-month: 4px;
+  --gantt-day-width-day: 36px;
+  --gantt-day-width-week: 16px;
+  --gantt-day-width-month: 5px;
 
   /* ---------- Motion ---------- */
   --duration-instant: 0ms; /* hover background in */
@@ -108,6 +108,8 @@
   --z-sidebar: 20;
   --z-overlay: 60;
   --z-modal: 61;
+  /* A confirmation opened over another modal (Discard changes?, Delete…): dims and covers it. */
+  --z-confirm: 63;
   /* Menus, popovers, selects: above modals, which open them (Task Modal, project dialog…). */
   --z-dropdown: 65;
   --z-command: 70;

@@ -54,9 +54,9 @@ describe('ProjectDialogHost — create', () => {
     await user.type(nameField(), 'Launch')
     await user.keyboard('{Control>}{Enter}{/Control}')
     await waitFor(() =>
-      expect(Object.values(useWorkspaceStore.getState().data.projects).map((p) => p.name)).toEqual(
-        ['Launch'],
-      ),
+      expect(Object.values(useWorkspaceStore.getState().data.projects).map((p) => p.name)).toEqual([
+        'Launch',
+      ]),
     )
   })
 })
@@ -102,5 +102,41 @@ describe('ProjectDialogHost — edit', () => {
     )
     await waitFor(() => expect(useUIStore.getState().projectDialog).toBeNull())
     expect(useWorkspaceStore.getState().data.projects[projectId].name).toBe('Research v2')
+  })
+})
+
+describe('ProjectDialogHost — a create that failed', () => {
+  const projects = () => Object.values(useWorkspaceStore.getState().data.projects)
+
+  async function failFirstCreate() {
+    const view = renderHost()
+    act(() => useUIStore.getState().openProjectDialog({ mode: 'create' }))
+    await screen.findByRole('dialog', { name: 'New project' })
+    await view.user.type(nameField(), 'Research')
+    window.__cairnTest?.failNextWrites(1)
+    await view.user.click(within(dialog()).getByRole('button', { name: 'Create project' }))
+    await within(dialog()).findByText('Couldn’t create the project')
+    expect(projects()).toHaveLength(0)
+    return view
+  }
+
+  it('keeps the form and creates the project on "Try again"', async () => {
+    const { user, router } = await failFirstCreate()
+    await user.click(within(dialog()).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(useUIStore.getState().projectDialog).toBeNull())
+    expect(projects().map((project) => project.name)).toEqual(['Research'])
+    expect(router.state.location.pathname).toBe(`/projects/${projects()[0].id}/list`)
+  })
+
+  it('finishes with the project a Retry from outside the form created (never a second one)', async () => {
+    const { user, router } = await failFirstCreate()
+    // The sidebar's / the toast's Retry re-sends the failed create while the form is still open.
+    await act(async () => {
+      await getWorkspaceActions().retryLastFailed()
+    })
+    await waitFor(() => expect(useUIStore.getState().projectDialog).toBeNull())
+    expect(projects().map((project) => project.name)).toEqual(['Research'])
+    expect(router.state.location.pathname).toBe(`/projects/${projects()[0].id}/list`)
+    expect(user).toBeDefined()
   })
 })

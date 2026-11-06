@@ -72,7 +72,9 @@ export type ListDragState =
     }
   | { kind: 'subtask'; activeId: string; parentId: string; siblings: readonly string[] }
 
-function dataOf(entry: { data: { current?: unknown } } | null | undefined): ListDragData | undefined {
+function dataOf(
+  entry: { data: { current?: unknown } } | null | undefined,
+): ListDragData | undefined {
   return entry?.data.current as ListDragData | undefined
 }
 
@@ -268,7 +270,13 @@ export function useListDnd({ containers, subtaskIds, isAppendOnly, onMove }: Use
     recentlyMoved.current = true
     commit({
       ...next,
-      current: moveToContainer(next.current, next.activeId, to, overIsGroup ? null : overId, placeAfter),
+      current: moveToContainer(
+        next.current,
+        next.activeId,
+        to,
+        overIsGroup ? null : overId,
+        placeAfter,
+      ),
     })
   }
 

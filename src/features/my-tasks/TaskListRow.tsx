@@ -4,6 +4,7 @@
  * Modal and covers the whole row as its click target, the project (dot + name, a link to the
  * project), the priority glyph and the due date in the shared bucket language.
  */
+import { memo } from 'react'
 import { Link } from 'react-router'
 import { DueLabel } from '@/components/task/DueLabel'
 import { PriorityIcon } from '@/components/task/PriorityIcon'
@@ -27,7 +28,11 @@ export interface TaskListRowProps {
   className?: string
 }
 
-export function TaskListRow({
+/**
+ * Memoised: every prop is a stable reference (store rows are structurally shared, the callbacks
+ * are `useCallback`s), so changing one task re-renders its row only — not a list of hundreds.
+ */
+export const TaskListRow = memo(function TaskListRow({
   task,
   parent,
   project,
@@ -57,6 +62,8 @@ export function TaskListRow({
       data-task-row={task.id}
       className={cn(
         'group/row relative flex h-9 items-center gap-1 text-ui',
+        // Fixed 36px rows: off-screen rows skip style and layout work (see list/TaskRow).
+        '[contain-intrinsic-size:auto_36px] [content-visibility:auto]',
         'transition-colors duration-fast hover:bg-hover hover:duration-instant',
         // The status menu of this row is open: keep the row marked.
         'has-[[data-state=open]]:bg-hover',
@@ -126,4 +133,4 @@ export function TaskListRow({
       </span>
     </li>
   )
-}
+})

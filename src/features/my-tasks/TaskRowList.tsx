@@ -77,7 +77,11 @@ export function TaskRowList({
   const headed = sections.some((section) => section.title)
   if (!headed) {
     return (
-      <ul aria-label={label} onKeyDown={onRowListKeyDown} className={cn('flex flex-col', className)}>
+      <ul
+        aria-label={label}
+        onKeyDown={onRowListKeyDown}
+        className={cn('flex flex-col', className)}
+      >
         {sections.map((section) => rows(section.tasks, data))}
       </ul>
     )

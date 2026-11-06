@@ -207,22 +207,31 @@ export interface BoardDrop {
  * - Other, EMPTY column → there are no neighbours to anchor to, so the card keeps its place in the
  *   project order: its current project neighbours (`projectOrder`) are passed, which the store
  *   sees as "already placed" — only the status changes, and the List order stays as it was.
+ * - `seen`: the columns the user was looking at when they dropped (the drag preview). The
+ *   neighbours must come from there — `overIndex` is an index into the preview, and the store can
+ *   have changed under a drag (an earlier failed move rolled back, say), which would shift the
+ *   neighbours picked from `columns` by a slot. Defaults to `columns`.
  */
 export function moveForBoardDrop(
   drop: BoardDrop,
   columns: BoardColumnIds,
   projectOrder: readonly string[],
+  seen: BoardColumnIds = columns,
 ): MoveTaskInput | null {
   const { activeId, overColumn } = drop
   const fromColumn = findColumn(columns, activeId)
   if (!fromColumn || parseColumnDroppableId(activeId)) return null
-  const others = columns[overColumn].filter((id) => id !== activeId)
+  const others = seen[overColumn].filter((id) => id !== activeId)
   const index = clampIndex(drop.overIndex, others.length)
   const afterId = others[index - 1] ?? null
   const beforeId = others[index] ?? null
 
   if (fromColumn === overColumn) {
-    if (columns[fromColumn].indexOf(activeId) === index) return null
+    // "Dropped where it was" is only certain when the column is what the user saw; otherwise let
+    // the store decide (it writes nothing when the card is already at that place).
+    const current = columns[fromColumn].filter((id) => id !== activeId)
+    const unchanged = current.length === others.length && current.every((id, i) => id === others[i])
+    if (unchanged && columns[fromColumn].indexOf(activeId) === index) return null
     return { taskId: activeId, afterId, beforeId }
   }
   if (others.length === 0) {

@@ -42,7 +42,8 @@ import { MilestoneRow } from './MilestoneRow'
 import { TaskRow } from './TaskRow'
 import type { ListDragData } from './useListDnd'
 
-const validateTitle = (value: string) => validateName(value, TITLE_MAX_LENGTH, 'Task title')?.message ?? null
+const validateTitle = (value: string) =>
+  validateName(value, TITLE_MAX_LENGTH, 'Task title')?.message ?? null
 
 const taskCountLabel = (count: number) => `${count} ${count === 1 ? 'task' : 'tasks'}`
 
@@ -108,13 +109,18 @@ export function ListGroup({
           onCollapsedChange={onCollapsedChange}
           isDropTarget={isDropTarget}
           onAddTask={openAddRow}
+          onAddTaskFromMenu={() => ctx.openRowAfterMenu(addKey, openAddRow)}
           phaseIndex={phaseIndex}
           phaseCount={phaseCount}
         />
       ) : null}
       {collapsed && showHeader ? null : (
         <div id={bodyId}>
-          <SortableContext id={containerId} items={taskIds as string[]} strategy={verticalListSortingStrategy}>
+          <SortableContext
+            id={containerId}
+            items={taskIds as string[]}
+            strategy={verticalListSortingStrategy}
+          >
             <ul aria-label={showHeader ? `Tasks in ${name}` : 'Tasks'}>
               {taskIds.map((taskId) => {
                 const entry = entries.get(taskId)
@@ -144,9 +150,15 @@ export function ListGroup({
             onOpenChange={(open) => ctx.setEditingRow(open ? addKey : null)}
             validate={validateTitle}
             onSubmit={(title) =>
-              ctx.createTask({ title, phaseId: group.phase?.id ?? null, parentTaskId: null, afterId: lastTaskId })
+              ctx.createTask({
+                title,
+                phaseId: group.phase?.id ?? null,
+                parentTaskId: null,
+                afterId: lastTaskId,
+              })
             }
             className="pr-3 pl-12"
+            rowKey={addKey}
           />
         </div>
       )}
@@ -191,7 +203,10 @@ interface GroupHeaderProps {
   collapsed: boolean
   onCollapsedChange: (collapsed: boolean) => void
   isDropTarget: boolean
+  /** The "+" button: opens the add row (its field takes focus when it mounts). */
   onAddTask: () => void
+  /** The menu item: the same, once the menu has closed (the cursor then goes to the field). */
+  onAddTaskFromMenu: () => void
   phaseIndex: number
   phaseCount: number
 }
@@ -204,6 +219,7 @@ function GroupHeader({
   onCollapsedChange,
   isDropTarget,
   onAddTask,
+  onAddTaskFromMenu,
   phaseIndex,
   phaseCount,
 }: GroupHeaderProps) {
@@ -295,15 +311,17 @@ function GroupHeader({
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  aria-label={phase ? `Actions for phase ${name}` : 'Actions for tasks without a phase'}
+                  aria-label={
+                    phase ? `Actions for phase ${name}` : 'Actions for tasks without a phase'
+                  }
                   className={insetFocus}
                 >
                   <Ellipsis />
                 </Button>
               </DropdownMenuTrigger>
             </Tooltip>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuItem onSelect={onAddTask}>
+            <DropdownMenuContent align="end" className="w-52" onCloseAutoFocus={ctx.onMenuClosed}>
+              <DropdownMenuItem onSelect={onAddTaskFromMenu}>
                 <Plus />
                 Add task
               </DropdownMenuItem>
@@ -333,7 +351,10 @@ function GroupHeader({
                     Move phase down
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onSelect={() => ctx.phaseCommands.remove(phase)}>
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => ctx.phaseCommands.remove(phase)}
+                  >
                     <Trash />
                     Delete phase…
                   </DropdownMenuItem>
@@ -432,12 +453,19 @@ function RenameInput({
 function TopLevelItem({ entry, containerId }: { entry: OutlineTask; containerId: string }) {
   const ctx = useListContext()
   const { task, subtasks } = entry
-  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
-    useSortable({
-      id: task.id,
-      data: { type: 'task', containerId } satisfies ListDragData,
-      transition: ctx.reducedMotion ? null : undefined,
-    })
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: task.id,
+    data: { type: 'task', containerId } satisfies ListDragData,
+    transition: ctx.reducedMotion ? null : undefined,
+  })
   const style: CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition: transition,
@@ -483,7 +511,12 @@ function SubtaskBlock({ parent, subtasks }: { parent: Task; subtasks: readonly T
         <SortableContext id={containerId} items={ids} strategy={verticalListSortingStrategy}>
           <ul aria-label={`Subtasks of ${parent.title}`}>
             {subtasks.map((subtask) => (
-              <SubtaskItem key={subtask.id} task={subtask} parentId={parent.id} containerId={containerId} />
+              <SubtaskItem
+                key={subtask.id}
+                task={subtask}
+                parentId={parent.id}
+                containerId={containerId}
+              />
             ))}
           </ul>
         </SortableContext>
@@ -496,22 +529,43 @@ function SubtaskBlock({ parent, subtasks }: { parent: Task; subtasks: readonly T
         onOpenChange={(open) => ctx.setEditingRow(open ? addKey : null)}
         validate={validateTitle}
         onSubmit={(title) =>
-          ctx.createTask({ title, phaseId: parent.phaseId, parentTaskId: parent.id, afterId: ids.at(-1) ?? null })
+          ctx.createTask({
+            title,
+            phaseId: parent.phaseId,
+            parentTaskId: parent.id,
+            afterId: ids.at(-1) ?? null,
+          })
         }
         className="pr-3 pl-[68px]"
+        rowKey={addKey}
       />
     </div>
   )
 }
 
-function SubtaskItem({ task, parentId, containerId }: { task: Task; parentId: string; containerId: string }) {
+function SubtaskItem({
+  task,
+  parentId,
+  containerId,
+}: {
+  task: Task
+  parentId: string
+  containerId: string
+}) {
   const ctx = useListContext()
-  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
-    useSortable({
-      id: task.id,
-      data: { type: 'subtask', containerId, parentId } satisfies ListDragData,
-      transition: ctx.reducedMotion ? null : undefined,
-    })
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: task.id,
+    data: { type: 'subtask', containerId, parentId } satisfies ListDragData,
+    transition: ctx.reducedMotion ? null : undefined,
+  })
   const style: CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition: transition,

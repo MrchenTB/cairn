@@ -39,5 +39,15 @@ blob-report
 supabase/.temp
 supabase/.branches
 
+# Cloudflare Wrangler local state and secrets
+.wrangler
+.dev.vars*
+
+# Claude Code machine-specific state
+.claude/scheduled_tasks.lock
+
 # Playwright MCP / browser tool output
 .playwright-mcp/
+
+# Internal hand-off notes between build and QA agents
+.agent-notes/

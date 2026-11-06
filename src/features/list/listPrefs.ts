@@ -53,7 +53,8 @@ function createSessionSet(key: string) {
         if (included) next.add(id)
         else next.delete(id)
       }
-      if (next.size !== snapshot.size || ids.some((id) => snapshot.has(id) !== included)) commit(next)
+      if (next.size !== snapshot.size || ids.some((id) => snapshot.has(id) !== included))
+        commit(next)
     },
     /** Test helper. */
     reset() {

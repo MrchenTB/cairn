@@ -36,6 +36,8 @@ export interface InlineCreateProps {
   sticky?: boolean
   /** Where the "Enter to add · Esc to cancel" hint goes (default: after the input). */
   hint?: 'inline' | 'below'
+  /** Identifies the open row for `inlineRowInput` (a menu that opened it moves focus into it). */
+  rowKey?: string
 }
 
 /**
@@ -55,6 +57,7 @@ export function InlineCreate({
   icon,
   sticky = false,
   hint = 'inline',
+  rowKey,
 }: InlineCreateProps) {
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -141,7 +144,7 @@ export function InlineCreate({
 
   const hintText = `Enter to add · Esc to ${sticky ? 'clear' : 'cancel'}`
   return (
-    <div>
+    <div data-inline-row={rowKey}>
       <div className={cn('flex h-9 items-center gap-2', className)}>
         <span
           className="flex size-4 shrink-0 items-center justify-center text-fg-tertiary"

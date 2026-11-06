@@ -22,9 +22,12 @@ export interface UpcomingTasksProps {
 export function UpcomingTasks({ upcoming, hasTasks }: UpcomingTasksProps) {
   const openNewTask = useUIStore((s) => s.openNewTask)
   const sections = useMemo(() => [{ key: 'upcoming', tasks: upcoming.tasks }], [upcoming.tasks])
-  const viewAll = `/my-tasks/${upcoming.tab}`
   return (
-    <OverviewSection title="Upcoming tasks" count={upcoming.total} hint="Overdue, today and next 7 days">
+    <OverviewSection
+      title="Upcoming tasks"
+      count={upcoming.total}
+      hint="Overdue, today and next 7 days"
+    >
       {upcoming.total === 0 ? (
         hasTasks ? (
           <SectionEmpty
@@ -69,7 +72,7 @@ export function UpcomingTasks({ upcoming, hasTasks }: UpcomingTasksProps) {
                 Showing {upcoming.tasks.length} of {upcoming.total}
               </span>
             ) : null}
-            <SectionLink to={viewAll}>View all in My Tasks</SectionLink>
+            <SectionLink to="/my-tasks/all">View all in My Tasks</SectionLink>
           </div>
         </>
       )}

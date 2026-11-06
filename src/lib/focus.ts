@@ -22,17 +22,51 @@ export function getFocusReturnTarget(doc: Document = document): HTMLElement | nu
 const OPEN_DIALOG = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'
 
 /**
- * Focuses `target` unless that would be wrong now: it left the document, something else already
- * took focus (e.g. the user clicked into a field), or another dialog that does not contain it is
- * open (it owns focus). Returns true when it moved focus.
+ * An element that is re-created when its data changes (a board card that moves to another column
+ * is unmounted and mounted again) can carry `data-focus-key="<stable key>"`: when focus has to go
+ * back to the old element and it is gone, `restoreFocus` finds the element with the same key.
+ */
+export const FOCUS_KEY_ATTRIBUTE = 'data-focus-key'
+
+/** `target` when it is still in the document, else the element that took its place (same key). */
+function resolveFocusTarget(target: HTMLElement | null, doc: Document): HTMLElement | null {
+  if (!target) return null
+  if (target.isConnected) return target
+  const key = target.getAttribute(FOCUS_KEY_ATTRIBUTE)
+  if (!key) return null
+  for (const candidate of doc.querySelectorAll<HTMLElement>(`[${FOCUS_KEY_ATTRIBUTE}]`)) {
+    if (candidate.getAttribute(FOCUS_KEY_ATTRIBUTE) === key) return candidate
+  }
+  return null
+}
+
+/**
+ * True when an open dialog that does not contain `target` is on screen: that dialog owns focus
+ * now (a search overlay opened while the dialog `target` belongs to was still closing), and a
+ * delayed focus return to `target` must not pull focus out of it. Checks every open dialog, not
+ * just the first one in the document.
+ */
+export function isFocusOwnedElsewhere(target: Element, doc: Document = document): boolean {
+  for (const dialog of doc.querySelectorAll(OPEN_DIALOG)) {
+    if (!dialog.contains(target)) return true
+  }
+  return false
+}
+
+/**
+ * Focuses `target` unless that would be wrong now: it left the document (and nothing with its
+ * `data-focus-key` replaced it), something else already took focus (e.g. the user clicked into a
+ * field), or another dialog that does not contain it is open (it owns focus). Returns true when it
+ * moved focus. A replacement may sit elsewhere on the page, so it is scrolled into view; the
+ * original element has not moved, so it is not.
  */
 export function restoreFocus(target: HTMLElement | null, doc: Document = document): boolean {
-  if (!target?.isConnected) return false
+  const live = resolveFocusTarget(target, doc)
+  if (!live) return false
   const active = doc.activeElement
-  if (active && active !== doc.body && active !== target) return false
-  const openDialog = doc.querySelector(OPEN_DIALOG)
-  if (openDialog && !openDialog.contains(target)) return false
-  target.focus({ preventScroll: true })
+  if (active && active !== doc.body && active !== live) return false
+  if (isFocusOwnedElsewhere(live, doc)) return false
+  live.focus({ preventScroll: live === target })
   return true
 }
 

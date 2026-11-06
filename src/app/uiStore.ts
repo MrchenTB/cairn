@@ -10,8 +10,6 @@ export interface NewTaskDefaults {
   /** Pre-selected project. When omitted the modal asks the user to pick one. */
   projectId?: string | null
   phaseId?: string | null
-  /** Create as a subtask of this task. */
-  parentTaskId?: string | null
   status?: TaskStatus
   priority?: TaskPriority
   startDate?: ISODate | null

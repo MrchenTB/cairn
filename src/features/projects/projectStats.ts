@@ -76,7 +76,8 @@ export function deleteProjectDescription(contents: ProjectContents): string {
   if (contents.subtasks > 0) parts.push(plural(contents.subtasks, 'subtask'))
   if (contents.phases > 0) parts.push(plural(contents.phases, 'phase'))
   if (contents.milestones > 0) parts.push(plural(contents.milestones, 'milestone'))
-  if (parts.length === 0) return 'The project has no tasks, phases or milestones. This can’t be undone.'
+  if (parts.length === 0)
+    return 'The project has no tasks, phases or milestones. This can’t be undone.'
   return `Deletes ${listJoin(parts)} along with the project. This can’t be undone.`
 }
 

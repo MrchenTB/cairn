@@ -32,10 +32,15 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useActions, useProject, useProjects } from '@/data/hooks'
-import { SYNC_ERROR_TOAST_ID } from '@/data/store'
+import { useActions, useProject, useProjects, useSyncState } from '@/data/hooks'
 import {
   NAME_MAX_LENGTH,
   PROJECT_COLORS,
@@ -48,7 +53,7 @@ import {
 } from '@/domain/types'
 import { validateDateRange, validateDescription, validateName } from '@/domain/validation'
 import { isMac } from '@/lib/keyboard'
-import { notify } from '@/lib/notify'
+import { dismissSyncErrorToast } from './syncToast'
 
 interface FormValues {
   name: string
@@ -200,6 +205,16 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
   const [errors, setErrors] = useState<FormErrors>({})
   const [submitting, setSubmitting] = useState(false)
   const [submitFailed, setSubmitFailed] = useState(false)
+  const sync = useSyncState()
+  // A failed create can still be sent by a Retry from outside the form (the toast's, the sidebar's)
+  // while the form is open. The project that shows up that way, under the name this form tried to
+  // create, is this form's project: the form then finishes instead of creating a second one.
+  const [openedWith] = useState<ReadonlySet<string>>(() => new Set(projects.map((p) => p.id)))
+  const [attemptedName, setAttemptedName] = useState<string | null>(null)
+  const retriedProject =
+    !isEdit && submitFailed && attemptedName !== null
+      ? projects.find((p) => !openedWith.has(p.id) && p.name === attemptedName)
+      : undefined
 
   const nameRef = useRef<HTMLInputElement>(null)
   const descriptionRef = useRef<HTMLTextAreaElement>(null)
@@ -226,6 +241,16 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
     if (missing) onDone()
   }, [missing, onDone])
 
+  const retriedId = retriedProject?.id
+  const savingElsewhere = sync.pending > 0
+  useEffect(() => {
+    // Once the Retry is saved (not while it may still fail again).
+    if (retriedId && !submitting && !savingElsewhere) {
+      onDone()
+      navigate(`/projects/${retriedId}/list`)
+    }
+  }, [retriedId, submitting, savingElsewhere, onDone, navigate])
+
   const set = <K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
     setSubmitFailed(false)
@@ -241,6 +266,8 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
 
   const submit = async () => {
     if (submitting) return
+    // A Retry already created the project: the effect above opens it as soon as it is saved.
+    if (retriedProject) return
     const next: FormErrors = {
       name: validateName(values.name, NAME_MAX_LENGTH, 'Project name')?.message,
       description: validateDescription(values.description)?.message,
@@ -269,12 +296,12 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
         return
       }
       // The store rolled the change back and toasted it. While this form is open it owns the
-      // retry ("Try again" re-sends the form), so the toast's Retry — which would create the
-      // project a second time — is taken away.
-      notify.dismiss(SYNC_ERROR_TOAST_ID)
+      // retry ("Try again" re-sends the form), so the toast with its own Retry is taken away.
+      dismissSyncErrorToast()
       setSubmitFailed(true)
     }
     if (state.mode === 'create') {
+      setAttemptedName(input.name)
       const result = await actions.createProject(input)
       setSubmitting(false)
       if (!result.ok) return fail(result.error)
@@ -294,7 +321,11 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
+    if (
+      event.key === 'Enter' &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.nativeEvent.isComposing
+    ) {
       event.preventDefault()
       void submit()
     }
@@ -379,7 +410,10 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
           <div className="grid grid-cols-3 gap-3">
             <div className="flex min-w-0 flex-col gap-1.5">
               <Label htmlFor={ids.status}>Status</Label>
-              <Select value={values.status} onValueChange={(next) => set('status', next as ProjectStatus)}>
+              <Select
+                value={values.status}
+                onValueChange={(next) => set('status', next as ProjectStatus)}
+              >
                 <SelectTrigger id={ids.status}>
                   <SelectValue />
                 </SelectTrigger>
@@ -441,7 +475,7 @@ function ProjectForm({ state, onDirtyChange, onCancel, onDone }: ProjectFormProp
               message="Your changes are still here."
               retryLabel="Try again"
               onRetry={() => void submit()}
-              retrying={submitting}
+              retrying={submitting || retriedProject !== undefined}
             />
           ) : null}
         </DialogBody>

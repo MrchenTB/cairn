@@ -1,4 +1,5 @@
-@import 'tailwindcss';
+/* src only: a scanned file outside the module graph (docs, README) reloads every open dev page. */
+@import 'tailwindcss' source('.');
 @import 'tw-animate-css';
 @import './styles/tokens.css';
 

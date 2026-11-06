@@ -38,13 +38,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state'
 import { NavTab, NavTabs } from '@/components/ui/tabs'
 import { Tooltip } from '@/components/ui/tooltip'
-import {
-  useMilestones,
-  usePhases,
-  useProject,
-  useProjectTasks,
-  useToday,
-} from '@/data/hooks'
+import { useMilestones, usePhases, useProject, useProjectTasks, useToday } from '@/data/hooks'
 import { formatDateRange } from '@/domain/dates'
 import { computeProgress } from '@/domain/progress'
 import type { Project } from '@/domain/types'
@@ -155,7 +149,11 @@ function ProjectFrame({ project }: { project: Project }) {
         }
         actions={
           <>
-            <Button variant="secondary" size="sm" onClick={() => openNewTask({ projectId: project.id })}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => openNewTask({ projectId: project.id })}
+            >
               <Plus strokeWidth={2} />
               New task
             </Button>
@@ -196,7 +194,12 @@ function ProjectFrame({ project }: { project: Project }) {
         tabs={
           <NavTabs aria-label="Project views">
             {VIEW_TABS.map((tab) => (
-              <Tooltip key={tab.view} content={`${tab.label} view`} shortcut={tab.shortcut} side="bottom">
+              <Tooltip
+                key={tab.view}
+                content={`${tab.label} view`}
+                shortcut={tab.shortcut}
+                side="bottom"
+              >
                 <NavTab
                   to={`/projects/${project.id}/${tab.view}`}
                   onClick={() => setProjectView(project.id, tab.view)}

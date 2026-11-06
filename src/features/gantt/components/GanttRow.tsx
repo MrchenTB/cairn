@@ -8,7 +8,13 @@ import { DueLabel } from '@/components/task/DueLabel'
 import { StatusIcon } from '@/components/task/StatusIcon'
 import { insetFocus } from '@/components/ui/styles'
 import { dueBucket } from '@/domain/buckets'
-import { formatDate, formatDateRange, formatDateSmart, fromEpochDay } from '@/domain/dates'
+import {
+  formatDate,
+  formatDateRange,
+  formatDateSmart,
+  fromEpochDay,
+  tryFromEpochDay,
+} from '@/domain/dates'
 import type { ISODate } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { DUE_COLUMN_WIDTH, ROW_HEIGHT, SUBTASK_INDENT } from '../model/constants'
@@ -67,6 +73,12 @@ export interface GanttRowViewProps {
   onOpenTask: (taskId: string) => void
   onOpenMilestone: (milestoneId: string) => void
   onBarKeyDown: (event: ReactKeyboardEvent<HTMLElement>, row: GanttRow) => void
+  /** Bars only open their task / milestone: no drag cursors, grips or dependency dots (Timeline). */
+  readOnly?: boolean
+  /** Vertical position when rows differ in height (default: index × ROW_HEIGHT). */
+  top?: number
+  /** Extra left padding of the outline cell, for rows nested under a parent row (Timeline). */
+  indent?: number
 }
 
 function plural(count: number, word: string): string {
@@ -74,7 +86,7 @@ function plural(count: number, word: string): string {
 }
 
 function iso(day: number | null): ISODate | null {
-  return day === null ? null : fromEpochDay(day)
+  return day === null ? null : tryFromEpochDay(day)
 }
 
 function rangeTitle(label: string, range: DayRange, today: ISODate): string {
@@ -112,8 +124,8 @@ function MilestoneGlyph({ past }: { past: boolean }) {
  * The outline cell sticks to the left edge over the timeline, so its base is opaque; hover and
  * selection tint it with a background-image layer (under the content, never over the text).
  */
-const cellBase = 'sticky left-0 z-[11] flex h-full shrink-0 items-center'
-const cellSurface =
+export const cellBase = 'sticky left-0 z-[11] flex h-full shrink-0 items-center'
+export const cellSurface =
   'bg-(--gantt-bg) group-hover/row:bg-[linear-gradient(var(--gantt-row-hover),var(--gantt-row-hover))]'
 const cellSelected =
   'bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))] shadow-[inset_2px_0_0_var(--accent)] group-hover/row:bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))]'
@@ -124,14 +136,14 @@ const chevron = (open: boolean) =>
   )
 
 function GanttRowViewImpl(props: GanttRowViewProps) {
-  const { row, index, paneWidth, timelineWidth, selected } = props
+  const { row, index, paneWidth, timelineWidth, selected, top = index * ROW_HEIGHT } = props
   const header = row.kind === 'group' || row.kind === 'unscheduled'
   return (
     <div
       data-row-index={index}
       data-row-key={row.key}
       className="group/row absolute left-0 flex"
-      style={{ top: index * ROW_HEIGHT, height: ROW_HEIGHT, width: paneWidth + timelineWidth }}
+      style={{ top, height: ROW_HEIGHT, width: paneWidth + timelineWidth }}
     >
       <LeftCell {...props} />
       <div
@@ -160,6 +172,7 @@ function LeftCell({
   today,
   todayDay,
   selected,
+  indent = 0,
   onToggle,
   onOpenTask,
   onOpenMilestone,
@@ -196,7 +209,7 @@ function LeftCell({
     return (
       <div
         className={cn(cellBase, 'gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
-        style={{ width: paneWidth, paddingLeft: 12 }}
+        style={{ width: paneWidth, paddingLeft: 12 + indent }}
       >
         <span className="w-4 shrink-0" aria-hidden />
         <MilestoneGlyph past={past} />
@@ -210,7 +223,7 @@ function LeftCell({
           {milestone.name}
         </button>
         <span
-          className="shrink-0 truncate text-right text-meta text-fg-tertiary tabular-nums"
+          className="flex shrink-0 justify-end text-meta whitespace-nowrap text-fg-tertiary tabular-nums"
           style={{ width: DUE_COLUMN_WIDTH }}
           title={row.day !== null ? formatDate(milestone.date, 'medium') : undefined}
         >
@@ -224,7 +237,7 @@ function LeftCell({
   return (
     <div
       className={cn(cellBase, 'gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
-      style={{ width: paneWidth, paddingLeft: 12 + row.depth * SUBTASK_INDENT }}
+      style={{ width: paneWidth, paddingLeft: 12 + indent + row.depth * SUBTASK_INDENT }}
     >
       {row.subtaskCount > 0 ? (
         <button
@@ -290,6 +303,7 @@ function Lane(props: GanttRowViewProps) {
     if (day === null) return null
     const moving = props.override !== null
     const origin = props.override?.origin.start ?? null
+    const date = iso(day)
     return (
       <>
         {moving && origin !== null && origin !== day ? (
@@ -300,11 +314,12 @@ function Lane(props: GanttRowViewProps) {
           name={row.milestone.name}
           centerX={dayCenterX(day, geometry)}
           rowIndex={props.index}
-          ariaLabel={`Milestone ${row.milestone.name}, ${formatDate(fromEpochDay(day), 'medium')}`}
+          ariaLabel={`Milestone ${row.milestone.name}${date ? `, ${formatDate(date, 'medium')}` : ''}`}
           describedBy={props.describedBy}
           past={day < props.todayDay}
           upcoming={props.upcomingMilestone}
           dragging={props.override?.mode != null}
+          readOnly={props.readOnly}
           onKeyDown={(event) => props.onBarKeyDown(event, row)}
         />
       </>
@@ -344,6 +359,7 @@ function TaskLane(props: GanttRowViewProps & { row: TaskRow }) {
     linkState: props.linkState,
     dragging,
     linkSource: props.linkSource,
+    readOnly: props.readOnly,
     onKeyDown,
   }
 
@@ -365,6 +381,7 @@ function TaskLane(props: GanttRowViewProps & { row: TaskRow }) {
         task={task}
         rect={rangeRect(span.start, span.end, geometry)}
         overdue={overdue}
+        paneWidth={paneWidth}
       />
     )
   } else if (span.kind === 'due_only' && span.end !== null) {

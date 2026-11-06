@@ -34,7 +34,7 @@ function task(fields: Partial<Task> = {}): Task {
 }
 
 describe('validateTaskForm', () => {
-  const valid = initialCreateValues({}, null)
+  const valid = initialCreateValues({})
 
   it('requires a title (whitespace does not count)', () => {
     expect(validateTaskForm({ ...valid, title: '' }).title).toBe('Task title is required.')
@@ -75,7 +75,7 @@ describe('titles', () => {
 
 describe('create defaults and payload', () => {
   it('starts as To Do, no priority, no dates', () => {
-    expect(initialCreateValues({}, null)).toEqual({
+    expect(initialCreateValues({})).toEqual({
       title: '',
       description: '',
       status: 'todo',
@@ -86,7 +86,7 @@ describe('create defaults and payload', () => {
     })
   })
 
-  it("takes the opener's defaults, and a subtask takes its parent's phase", () => {
+  it("takes the opener's defaults", () => {
     const defaults = {
       projectId: 'p1',
       phaseId: 'ph-other',
@@ -94,17 +94,16 @@ describe('create defaults and payload', () => {
       priority: 'high' as const,
       dueDate: '2026-11-20',
     }
-    expect(initialCreateValues(defaults, null)).toMatchObject({
+    expect(initialCreateValues(defaults)).toMatchObject({
       status: 'in_progress',
       priority: 'high',
       phaseId: 'ph-other',
       dueDate: '2026-11-20',
     })
-    expect(initialCreateValues(defaults, { phaseId: 'ph-parent' }).phaseId).toBe('ph-parent')
   })
 
   it('is dirty only when something would be lost', () => {
-    const initial = initialCreateValues({ status: 'done' }, null)
+    const initial = initialCreateValues({ status: 'done' })
     expect(isCreateDirty(initial, initial)).toBe(false)
     expect(isCreateDirty({ ...initial, title: '  ' }, initial)).toBe(false)
     expect(isCreateDirty({ ...initial, title: 'x' }, initial)).toBe(true)
@@ -113,8 +112,8 @@ describe('create defaults and payload', () => {
   })
 
   it('builds the createTask input: trimmed title, null for an empty description', () => {
-    const values = { ...initialCreateValues({}, null), title: '  Draft survey  ', description: ' ' }
-    expect(buildNewTaskInput(values, { projectId: 'p1', parentTaskId: null })).toEqual({
+    const values = { ...initialCreateValues({}), title: '  Draft survey  ', description: ' ' }
+    expect(buildNewTaskInput(values, { projectId: 'p1' })).toEqual({
       projectId: 'p1',
       title: 'Draft survey',
       description: null,
@@ -128,10 +127,9 @@ describe('create defaults and payload', () => {
     expect(
       buildNewTaskInput(values, {
         projectId: 'p1',
-        parentTaskId: 't1',
         placement: { afterId: 't0' },
       }),
-    ).toMatchObject({ parentTaskId: 't1', placement: { afterId: 't0' } })
+    ).toMatchObject({ parentTaskId: null, placement: { afterId: 't0' } })
   })
 })
 

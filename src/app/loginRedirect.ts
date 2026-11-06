@@ -13,7 +13,13 @@ export function safeReturnPath(from: string | undefined, origin = window.locatio
   }
   try {
     const url = new URL(from, origin)
-    if (url.origin !== origin || url.pathname === '/login' || url.pathname.startsWith('/login/')) {
+    if (
+      url.origin !== origin ||
+      // "/.//evil.com" normalises to the protocol-relative "//evil.com".
+      url.pathname.startsWith('//') ||
+      url.pathname === '/login' ||
+      url.pathname.startsWith('/login/')
+    ) {
       return FALLBACK
     }
     return `${url.pathname}${url.search}${url.hash}`

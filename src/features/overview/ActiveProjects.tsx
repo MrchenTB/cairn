@@ -23,7 +23,12 @@ export interface ActiveProjectsProps {
  * Dense rows of active projects: colour, name (links to the project), leaf-task progress — or
  * "No tasks", never a fake 100% — and the due date. At most ACTIVE_PROJECTS_LIMIT rows.
  */
-export function ActiveProjects({ projects, progress, today, hasOtherProjects }: ActiveProjectsProps) {
+export function ActiveProjects({
+  projects,
+  progress,
+  today,
+  hasOtherProjects,
+}: ActiveProjectsProps) {
   const shown = projects.slice(0, ACTIVE_PROJECTS_LIMIT)
   const more = projects.length - shown.length
   return (

@@ -2,7 +2,7 @@
  * "Add phase" dialog, opened from the project header menu (any view). The List view also adds
  * phases inline; both go through actions.createPhase.
  */
-import { useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { ErrorState } from '@/components/layout/ErrorState'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,12 +16,11 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useActions } from '@/data/hooks'
-import { SYNC_ERROR_TOAST_ID } from '@/data/store'
+import { useActions, usePhases, useSyncState } from '@/data/hooks'
 import { NAME_MAX_LENGTH } from '@/domain/types'
 import { validateName } from '@/domain/validation'
-import { notify } from '@/lib/notify'
 import { usePhaseDialog } from './phaseDialogStore'
+import { dismissSyncErrorToast } from './syncToast'
 
 export function PhaseDialogHost() {
   const projectId = usePhaseDialog((s) => s.projectId)
@@ -57,12 +56,28 @@ function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => voi
   const [error, setError] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const phases = usePhases(projectId)
+  const sync = useSyncState()
+  // A failed save can still be sent by a Retry from outside the form (the toast's, the sidebar's):
+  // the phase that shows up that way under the attempted name is this form's, so the form finishes
+  // instead of adding a second one.
+  const [openedWith] = useState<ReadonlySet<string>>(() => new Set(phases.map((p) => p.id)))
+  const [attemptedName, setAttemptedName] = useState<string | null>(null)
+  const retried =
+    failed && attemptedName !== null
+      ? phases.find((p) => !openedWith.has(p.id) && p.name === attemptedName)
+      : undefined
+  const savingElsewhere = sync.pending > 0
+  useEffect(() => {
+    // Once the Retry is saved (not while it may still fail again).
+    if (retried && !submitting && !savingElsewhere) onDone()
+  }, [retried, submitting, savingElsewhere, onDone])
   const inputRef = useRef<HTMLInputElement>(null)
   const inputId = useId()
   const errorId = useId()
 
   const submit = async () => {
-    if (submitting) return
+    if (submitting || retried) return
     const invalid = validateName(name, NAME_MAX_LENGTH, 'Phase name')
     if (invalid) {
       setError(invalid.message)
@@ -71,13 +86,14 @@ function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => voi
     }
     setSubmitting(true)
     setFailed(false)
+    setAttemptedName(name.trim())
     const result = await actions.createPhase({ projectId, name: name.trim() })
     setSubmitting(false)
     if (result.ok) onDone()
     else if (result.error.kind === 'validation') setError(result.error.message)
     else {
       // Rolled back and toasted by the store; the form keeps the name and owns the retry.
-      notify.dismiss(SYNC_ERROR_TOAST_ID)
+      dismissSyncErrorToast()
       setFailed(true)
     }
   }
@@ -126,7 +142,7 @@ function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => voi
               title="Couldn’t add the phase"
               retryLabel="Try again"
               onRetry={() => void submit()}
-              retrying={submitting}
+              retrying={submitting || retried !== undefined}
             />
           ) : null}
         </DialogBody>

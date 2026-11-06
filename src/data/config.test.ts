@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { isSecretSupabaseKey, resolveConfig } from './config'
+import { findSecretEnvVars, isSecretSupabaseKey, resolveConfig } from './config'
+import { supabaseUrlProblem } from './secretKeys'
 
 const URL = 'https://abcd1234.supabase.co'
 const KEY = 'sb_publishable_123'
@@ -78,5 +79,55 @@ describe('isSecretSupabaseKey', () => {
     expect(isSecretSupabaseKey(jwt({ role: 'anon' }))).toBe(false)
     expect(isSecretSupabaseKey(KEY)).toBe(false)
     expect(isSecretSupabaseKey('a.b.c')).toBe(false)
+  })
+})
+
+describe('findSecretEnvVars', () => {
+  it('names every VITE_ variable holding a secret key, whatever it is called', () => {
+    expect(
+      findSecretEnvVars({
+        VITE_SUPABASE_URL: URL,
+        VITE_SUPABASE_PUBLISHABLE_KEY: KEY,
+        VITE_SUPABASE_SERVICE_ROLE_KEY: ' sb_secret_abc ',
+        VITE_SOMETHING_ELSE: jwt({ role: 'service_role' }),
+        VITE_SUPABASE_ANON_KEY: jwt({ role: 'anon' }),
+        VITE_EMPTY: '',
+        NOT_PUBLIC: 'sb_secret_abc',
+        DEV: false,
+      }),
+    ).toEqual(['VITE_SUPABASE_SERVICE_ROLE_KEY', 'VITE_SOMETHING_ELSE'])
+    expect(findSecretEnvVars({ VITE_SUPABASE_PUBLISHABLE_KEY: KEY })).toEqual([])
+  })
+})
+
+describe('supabaseUrlProblem', () => {
+  it('accepts a hosted project URL, with or without a trailing slash', () => {
+    expect(supabaseUrlProblem('https://abcdefgh.supabase.co')).toBeNull()
+    expect(supabaseUrlProblem('https://abcdefgh.supabase.co/')).toBeNull()
+  })
+
+  it('flags URLs that leave a deployed build in local mode', () => {
+    for (const url of [
+      'abcdefgh.supabase.co',
+      'abcdefgh.supabase.co:443',
+      'ftp://abcdefgh.supabase.co',
+    ]) {
+      expect(supabaseUrlProblem(url), url).toMatch(/local mode/)
+    }
+  })
+
+  it('flags URLs that the CSP blocks on a deployed site', () => {
+    for (const url of [
+      'http://abcdefgh.supabase.co',
+      'http://127.0.0.1:54321',
+      'https://db.example.com',
+      'https://supabase.co.evil.example',
+    ]) {
+      expect(supabaseUrlProblem(url), url).toMatch(/connect-src/)
+    }
+  })
+
+  it('flags a URL with a path: supabase-js adds its own', () => {
+    expect(supabaseUrlProblem('https://abcdefgh.supabase.co/rest/v1/')).toMatch(/without a path/)
   })
 })

@@ -3,7 +3,7 @@
  * with the shared calendar helpers, so the year only appears outside the current one.
  */
 import { STATUS_LABELS } from '@/components/task/labels'
-import { durationDays, formatDateRange, fromEpochDay } from '@/domain/dates'
+import { durationDays, formatDateRange, tryFromEpochDay } from '@/domain/dates'
 import type { ISODate, Task } from '@/domain/types'
 import type { DragDates, DragMode } from './dragReducer'
 import type { DaySpan } from './geometry'
@@ -12,12 +12,20 @@ function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? '' : 's'}`
 }
 
+/** A drag can pass the ends of the supported calendar: such a day has no date (null). */
 function iso(day: number | null): ISODate | null {
-  return day === null ? null : fromEpochDay(day)
+  return day === null ? null : tryFromEpochDay(day)
+}
+
+const OUTSIDE_CALENDAR = 'Outside the supported calendar'
+
+function outsideCalendar(dates: DragDates): boolean {
+  return (dates.start !== null && !iso(dates.start)) || (dates.end !== null && !iso(dates.end))
 }
 
 /** "Nov 4 – Nov 7 · 4 days", "Due Nov 5", "Starts Nov 2" or "Nov 5" (a single-day range). */
 export function datesLabel(dates: DragDates, today: ISODate): string {
+  if (outsideCalendar(dates)) return OUTSIDE_CALENDAR
   const start = iso(dates.start)
   const end = iso(dates.end)
   if (start && end) {
@@ -57,9 +65,11 @@ export function dragTooltip(
   today: ISODate,
   milestone = false,
 ): { text: string; detail: string | null } {
-  const text = milestone
-    ? formatDateRange(iso(dates.start), iso(dates.start), today)
-    : datesLabel(dates, today)
+  const text = outsideCalendar(dates)
+    ? OUTSIDE_CALENDAR
+    : milestone
+      ? formatDateRange(iso(dates.start), iso(dates.start), today)
+      : datesLabel(dates, today)
   return { text, detail: deltaLabel(dragDelta(mode, dates, origin)) }
 }
 

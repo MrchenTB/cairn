@@ -6,7 +6,13 @@ import { cn } from '@/lib/utils'
 /** Diamond glyph: filled for upcoming milestones, outlined once the date has passed. */
 export function MilestoneGlyph({ past, className }: { past: boolean; className?: string }) {
   return (
-    <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden className={cn('shrink-0', className)}>
+    <svg
+      viewBox="0 0 16 16"
+      width={16}
+      height={16}
+      aria-hidden
+      className={cn('shrink-0', className)}
+    >
       <rect
         x="4.25"
         y="4.25"
@@ -49,7 +55,9 @@ export function MilestoneRow({
         <span className="grid size-6 shrink-0 place-items-center">
           <MilestoneGlyph past={past} className={past ? 'text-fg-tertiary' : 'text-fg-secondary'} />
         </span>
-        <span className={cn('min-w-0 flex-1 truncate px-1.5', past ? 'text-fg-secondary' : 'text-fg')}>
+        <span
+          className={cn('min-w-0 flex-1 truncate px-1.5', past ? 'text-fg-secondary' : 'text-fg')}
+        >
           {milestone.name}
         </span>
         {/* Same right-hand columns as a task row: priority · start · due · menu. */}

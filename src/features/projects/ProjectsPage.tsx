@@ -27,7 +27,16 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ArrowDown, ArrowUp, Ellipsis, FolderKanban, GripVertical, Plus, Search, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Ellipsis,
+  FolderKanban,
+  GripVertical,
+  Plus,
+  Search,
+  X,
+} from 'lucide-react'
 import { useViewShortcut } from '@/app/shortcuts'
 import { useUIStore } from '@/app/uiStore'
 import { PageContainer } from '@/components/layout/PageContainer'
@@ -52,6 +61,7 @@ import { formatDateRange } from '@/domain/dates'
 import { progressByProject, type ProgressInfo } from '@/domain/progress'
 import { searchWorkspace } from '@/domain/search'
 import type { ISODate, Project } from '@/domain/types'
+import { isImeKeyEvent } from '@/lib/keyboard'
 import { cn } from '@/lib/utils'
 import {
   POINTER_SENSOR_OPTIONS,
@@ -87,9 +97,9 @@ function parseFilter(value: string | null): StatusFilter {
 const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates }
 const MODIFIERS = [restrictToVerticalAxis]
 
-/** Project table columns; narrower panels drop Dates, then Tasks (container queries). */
+/** Project table columns; narrower panels drop Tasks (< 56rem, so a 1280px window still shows it next to a classic scrollbar), then Dates (< 48rem). */
 const GRID =
-  'grid grid-cols-[minmax(0,1fr)_7rem_9rem_2rem] @3xl:grid-cols-[minmax(0,1fr)_7rem_9rem_10rem_2rem] @5xl:grid-cols-[minmax(0,1fr)_7rem_9rem_10rem_4.5rem_2rem]'
+  'grid grid-cols-[minmax(0,1fr)_7rem_9rem_2rem] @3xl:grid-cols-[minmax(0,1fr)_7rem_9rem_10rem_2rem] @[56rem]:grid-cols-[minmax(0,1fr)_7rem_9rem_10rem_4.5rem_2rem]'
 
 export function ProjectsPage() {
   const projects = useProjects({ includeArchived: true })
@@ -119,7 +129,13 @@ export function ProjectsPage() {
   // The domain search (NFKC, case-insensitive, every term in name or description) over projects.
   const matches = useMemo(() => {
     if (trimmedQuery === '') return null
-    const projectsOnly = { projects: data.projects, phases: {}, tasks: {}, milestones: {}, dependencies: {} }
+    const projectsOnly = {
+      projects: data.projects,
+      phases: {},
+      tasks: {},
+      milestones: {},
+      dependencies: {},
+    }
     return new Set(
       searchWorkspace(projectsOnly, trimmedQuery, { limit: Number.POSITIVE_INFINITY }).map(
         (result) => result.id,
@@ -176,7 +192,11 @@ export function ProjectsPage() {
           title="No projects yet"
           description="A project holds your tasks — phases and milestones are optional."
           action={
-            <Button variant="primary" size="md" onClick={() => openProjectDialog({ mode: 'create' })}>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => openProjectDialog({ mode: 'create' })}
+            >
               <Plus strokeWidth={2} />
               Create your first project
             </Button>
@@ -199,13 +219,7 @@ export function ProjectsPage() {
             options={filterOptions}
           />
         }
-        viewActions={
-          <FilterInput
-            inputRef={filterRef}
-            value={query}
-            onChange={setQuery}
-          />
-        }
+        viewActions={<FilterInput inputRef={filterRef} value={query} onChange={setQuery} />}
       />
       {visible.length === 0 ? (
         <EmptyState
@@ -268,6 +282,11 @@ function FilterInput({
 }) {
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Escape') return
+    if (isImeKeyEvent(event.nativeEvent)) {
+      // The Esc that drops a composition: a search field would also clear itself natively.
+      event.preventDefault()
+      return
+    }
     if (value !== '') {
       event.preventDefault()
       onChange('')
@@ -374,7 +393,10 @@ function ProjectsTable({
         <div role="rowgroup" className="sticky top-(--viewbar-height) z-(--z-sticky) bg-main">
           <div
             role="row"
-            className={cn(GRID, 'h-8 items-center gap-4 border-b border-subtle px-6 text-meta font-medium text-fg-tertiary')}
+            className={cn(
+              GRID,
+              'h-8 items-center gap-4 border-b border-subtle px-6 text-meta font-medium text-fg-tertiary',
+            )}
           >
             <span role="columnheader">Project</span>
             <span role="columnheader">Status</span>
@@ -382,8 +404,12 @@ function ProjectsTable({
             <span role="columnheader" className="hidden @3xl:block">
               Dates
             </span>
-            <span role="columnheader" className="hidden text-right @5xl:block" title="Open / total tasks">
-              Tasks
+            <span
+              role="columnheader"
+              className="hidden text-right @[56rem]:block"
+              title="Open / total tasks (subtasks included)"
+            >
+              Open / total
             </span>
             <span role="columnheader">
               <span className="sr-only">Actions</span>
@@ -399,7 +425,11 @@ function ProjectsTable({
           onDragEnd={onDragEnd}
           onDragCancel={() => setActiveId(null)}
         >
-          <SortableContext items={ids} strategy={verticalListSortingStrategy} disabled={!reorderable}>
+          <SortableContext
+            items={ids}
+            strategy={verticalListSortingStrategy}
+            disabled={!reorderable}
+          >
             <div role="rowgroup" className="pt-1">
               {projects.map((project, index) => (
                 <ProjectRow
@@ -463,12 +493,19 @@ function ProjectRow({
   onMove,
   onDelete,
 }: ProjectRowProps) {
-  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
-    useSortable({
-      id: project.id,
-      disabled: !reorderable,
-      transition: reducedMotion ? null : undefined,
-    })
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: project.id,
+    disabled: !reorderable,
+    transition: reducedMotion ? null : undefined,
+  })
   const style: CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition: transition,
@@ -556,7 +593,10 @@ function ProjectRow({
             today={today}
             className={cn(isDragging && 'opacity-0')}
           />
-          <div role="cell" className={cn('relative z-[1] flex justify-end', isDragging && 'opacity-0')}>
+          <div
+            role="cell"
+            className={cn('relative z-[1] flex justify-end', isDragging && 'opacity-0')}
+          >
             <DropdownMenu>
               <Tooltip content="Project actions">
                 <DropdownMenuTrigger asChild>
@@ -614,7 +654,10 @@ function ProjectFacts({ project, progress, counts, today, className }: ProjectFa
       </div>
       <div
         role="cell"
-        className={cn('hidden truncate text-meta text-fg-secondary tabular-nums @3xl:block', className)}
+        className={cn(
+          'hidden truncate text-meta text-fg-secondary tabular-nums @3xl:block',
+          className,
+        )}
       >
         {dates || (
           <>
@@ -625,7 +668,10 @@ function ProjectFacts({ project, progress, counts, today, className }: ProjectFa
           </>
         )}
       </div>
-      <div role="cell" className={cn('hidden text-right text-meta tabular-nums @5xl:block', className)}>
+      <div
+        role="cell"
+        className={cn('hidden text-right text-meta tabular-nums @[56rem]:block', className)}
+      >
         {total === 0 ? (
           <>
             <span className="text-fg-tertiary" aria-hidden>

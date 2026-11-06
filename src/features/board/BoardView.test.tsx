@@ -152,6 +152,29 @@ describe('BoardView', () => {
     expect(router.state.location.search).toBe(`?task=${tasks.Prototype.id}`)
   })
 
+  it('keys the card and its ⋯ button so focus finds them again after the card moved columns', async () => {
+    const { projectId, tasks } = await seed()
+    const { user } = renderBoard(`/projects/${projectId}/board`)
+    const id = tasks['Plan retro'].id
+    expect(screen.getByRole('button', { name: 'Plan retro' })).toHaveAttribute(
+      'data-focus-key',
+      `board-card:${id}`,
+    )
+    expect(screen.getByRole('button', { name: 'More actions for Plan retro' })).toHaveAttribute(
+      'data-focus-key',
+      `board-card-menu:${id}`,
+    )
+
+    // The card is a new element in its new column, with the same key.
+    const before = screen.getByRole('button', { name: 'Plan retro' })
+    const card = before.closest('li') as HTMLElement
+    await user.click(within(card).getByRole('button', { name: 'Status: To Do' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /In Progress/ }))
+    const after = screen.getByRole('button', { name: 'Plan retro' })
+    expect(before.isConnected).toBe(false)
+    expect(after).toHaveAttribute('data-focus-key', `board-card:${id}`)
+  })
+
   it('changes column through the status menu (non-drag alternative)', async () => {
     const { projectId, tasks } = await seed()
     const { user } = renderBoard(`/projects/${projectId}/board`)

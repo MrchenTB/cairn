@@ -61,10 +61,13 @@ export function PageHeader({
       {hasViewBar ? (
         <div
           data-slot="view-bar"
-          className="sticky top-0 z-(--z-sticky) flex h-(--viewbar-height) shrink-0 items-center justify-between gap-3 bg-main px-6"
+          className="@container/viewbar sticky top-0 z-(--z-sticky) flex h-(--viewbar-height) shrink-0 items-center justify-between gap-3 bg-main px-6"
         >
-          <div className="flex min-w-0 items-center gap-1">{tabs}</div>
-          <div ref={viewActionsRef} className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1">{tabs}</div>
+          <div
+            ref={viewActionsRef}
+            className="-m-1 flex min-w-0 items-center gap-1.5 overflow-x-auto p-1 [scrollbar-width:none]"
+          >
             {viewActions}
           </div>
         </div>

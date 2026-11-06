@@ -38,6 +38,8 @@ interface InteractiveProps {
   conflict: string | null
   linkState: LinkTargetState
   dragging: boolean
+  /** Only opens on click / Enter: no drag cursor, resize grips or dependency dots (Timeline). */
+  readOnly?: boolean
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void
 }
 
@@ -83,6 +85,11 @@ export interface TaskBarProps extends InteractiveProps {
   overdue: boolean
   /** This bar is the source of a dependency being drawn (keep its dots visible). */
   linkSource: boolean
+  /**
+   * Width of the sticky outline the timeline scrolls under. A label inside the bar sticks just
+   * right of it while the bar's start is scrolled out of sight, so it stays readable.
+   */
+  paneWidth?: number
 }
 
 /** Range bar (start and due). Body = move, ends = resize, outer dots = draw a dependency. */
@@ -97,10 +104,12 @@ export function TaskBar({
   dragging,
   overdue,
   linkSource,
+  paneWidth = 0,
+  readOnly = false,
   onKeyDown,
 }: TaskBarProps) {
   const done = task.status === 'done'
-  const handle = resizeHandleWidth(rect.width)
+  const handle = readOnly ? 0 : resizeHandleWidth(rect.width)
   const labelInside = rect.width >= measureLabelWidth(task.title) + 24 + (conflict ? 16 : 0)
   const iconInside = !labelInside && rect.width >= 22
   return (
@@ -114,12 +123,17 @@ export function TaskBar({
         data-link-target=""
         aria-label={ariaLabel}
         aria-describedby={describedBy}
-        aria-keyshortcuts="Enter Alt+ArrowLeft Alt+ArrowRight Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
+        aria-keyshortcuts={
+          readOnly
+            ? 'Enter'
+            : 'Enter Alt+ArrowLeft Alt+ArrowRight Alt+Shift+ArrowLeft Alt+Shift+ArrowRight'
+        }
         title={conflict ?? undefined}
         onKeyDown={onKeyDown}
         className={cn(
-          'group/bar absolute z-[2] flex touch-none items-center rounded-sm border text-meta font-medium select-none',
-          dragging ? 'cursor-grabbing shadow-drag' : 'cursor-grab',
+          'group/bar absolute z-[2] flex items-center rounded-sm border text-meta font-medium select-none',
+          !readOnly && 'touch-none',
+          dragging ? 'cursor-grabbing shadow-drag' : readOnly ? 'cursor-pointer' : 'cursor-grab',
           done
             ? 'border-(--gantt-bar-border-done) bg-(--gantt-bar-fill-done) text-(--gantt-bar-text-done)'
             : 'border-(--gantt-bar-border) text-(--gantt-bar-text)',
@@ -167,26 +181,42 @@ export function TaskBar({
           </>
         ) : null}
         {labelInside ? (
-          <span className="pointer-events-none flex min-w-0 flex-1 items-center gap-1 overflow-hidden px-1.5 whitespace-nowrap">
-            {conflict ? (
-              <TriangleAlert className="size-3 shrink-0 text-(--gantt-conflict)" aria-hidden />
-            ) : null}
-            <StatusIcon status={task.status} size={12} decorative />
-            <span className="truncate">{task.title}</span>
+          // No overflow clipping here: that would make this span the sticky container (the label
+          // fits the bar anyway, labelInside checks). The inner group sticks to the outline's edge.
+          <span className="pointer-events-none flex min-w-0 flex-1 items-center px-1.5 whitespace-nowrap">
+            <span
+              className="sticky flex max-w-full min-w-0 items-center gap-1"
+              style={{ left: paneWidth + 6 }}
+            >
+              {conflict ? (
+                <TriangleAlert className="size-3 shrink-0 text-(--gantt-conflict)" aria-hidden />
+              ) : null}
+              <StatusIcon status={task.status} size={12} decorative />
+              <span className="truncate">{task.title}</span>
+            </span>
           </span>
         ) : iconInside ? (
           <span className="pointer-events-none flex items-center px-1">
             <StatusIcon status={task.status} size={12} decorative />
           </span>
         ) : null}
-        <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
-        <Connector side="out" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+        {readOnly ? null : (
+          <>
+            <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+            <Connector side="out" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+          </>
+        )}
       </div>
       {labelInside ? null : (
         <span
           aria-hidden
           className="pointer-events-none absolute z-[2] flex items-center gap-1 text-meta whitespace-nowrap text-fg-secondary"
-          style={{ left: rect.left + rect.width + 18, top: BAR_TOP, height: BAR_HEIGHT }}
+          style={{
+            // Clear of the dependency dot, when there is one.
+            left: rect.left + rect.width + (readOnly ? 6 : 18),
+            top: BAR_TOP,
+            height: BAR_HEIGHT,
+          }}
         >
           {conflict ? (
             <TriangleAlert className="size-3 shrink-0 text-(--gantt-conflict)" aria-hidden />
@@ -225,6 +255,7 @@ export function DueMarker({
   dragging,
   overdue,
   linkSource,
+  readOnly = false,
   onKeyDown,
 }: DueMarkerProps) {
   const danger = Boolean(conflict) || overdue
@@ -244,12 +275,13 @@ export function DueMarker({
         data-link-target=""
         aria-label={ariaLabel}
         aria-describedby={describedBy}
-        aria-keyshortcuts="Enter Alt+ArrowLeft Alt+ArrowRight"
+        aria-keyshortcuts={readOnly ? 'Enter' : 'Enter Alt+ArrowLeft Alt+ArrowRight'}
         title={conflict ?? 'No start date'}
         onKeyDown={onKeyDown}
         className={cn(
-          'group/bar absolute z-[2] touch-none rounded-sm select-none',
-          dragging ? 'cursor-grabbing' : 'cursor-grab',
+          'group/bar absolute z-[2] rounded-sm select-none',
+          !readOnly && 'touch-none',
+          dragging ? 'cursor-grabbing' : readOnly ? 'cursor-pointer' : 'cursor-grab',
           focusRing,
           linkRing(linkState),
         )}
@@ -265,8 +297,12 @@ export function DueMarker({
           <path d="M7 2.5v15.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           <path d="M7.75 2.5 13 5.25 7.75 8Z" fill="currentColor" />
         </svg>
-        <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
-        <Connector side="out" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+        {readOnly ? null : (
+          <>
+            <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+            <Connector side="out" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+          </>
+        )}
       </div>
       <span
         aria-hidden
@@ -310,6 +346,7 @@ export function StartMarker({
   linkState,
   dragging,
   linkSource,
+  readOnly = false,
   onKeyDown,
 }: StartMarkerProps) {
   const width = Math.max(56, dayWidth * 4)
@@ -323,16 +360,17 @@ export function StartMarker({
       data-link-target=""
       aria-label={ariaLabel}
       aria-describedby={describedBy}
-      aria-keyshortcuts="Enter Alt+ArrowLeft Alt+ArrowRight"
+      aria-keyshortcuts={readOnly ? 'Enter' : 'Enter Alt+ArrowLeft Alt+ArrowRight'}
       title={conflict ?? 'No due date'}
       onKeyDown={onKeyDown}
       className={cn(
-        'group/bar absolute z-[2] flex touch-none items-center rounded-l-sm border-l-2 bg-linear-to-r to-transparent pl-1.5 text-meta select-none',
+        'group/bar absolute z-[2] flex items-center rounded-l-sm border-l-2 bg-linear-to-r to-transparent pl-1.5 text-meta select-none',
+        !readOnly && 'touch-none',
         task.status === 'done'
           ? 'border-(--gantt-bar-border-done) from-(--gantt-bar-fill-done)'
           : 'border-(--gantt-bar-border) from-(--gantt-bar-fill-active)',
         conflict && 'border-(--gantt-conflict)',
-        dragging ? 'cursor-grabbing' : 'cursor-grab',
+        dragging ? 'cursor-grabbing' : readOnly ? 'cursor-pointer' : 'cursor-grab',
         focusRing,
         linkRing(linkState),
       )}
@@ -346,14 +384,18 @@ export function StartMarker({
         <span className="font-medium text-fg-secondary tabular-nums">{dateLabel}</span>
         <span className="text-fg-tertiary">{task.title}</span>
       </span>
-      <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
-      <Connector
-        side="out"
-        taskId={task.id}
-        rowIndex={rowIndex}
-        visible={linkSource}
-        left={startMarkerOutOffset(dayWidth)}
-      />
+      {readOnly ? null : (
+        <>
+          <Connector side="in" taskId={task.id} rowIndex={rowIndex} visible={linkSource} />
+          <Connector
+            side="out"
+            taskId={task.id}
+            rowIndex={rowIndex}
+            visible={linkSource}
+            left={startMarkerOutOffset(dayWidth)}
+          />
+        </>
+      )}
     </div>
   )
 }
@@ -369,6 +411,13 @@ export interface MilestoneDiamondProps {
   /** The next milestone to come (accent ring). */
   upcoming: boolean
   dragging: boolean
+  /** Only opens on click / Enter: no drag cursor (Timeline). */
+  readOnly?: boolean
+  /**
+   * Name as a chip on hover / keyboard focus instead of always beside the diamond (rows with
+   * several diamonds). Wrap each diamond in its own parent: the chip follows it as a CSS peer.
+   */
+  nameOnHover?: boolean
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void
 }
 
@@ -383,6 +432,8 @@ export function MilestoneDiamond({
   past,
   upcoming,
   dragging,
+  readOnly = false,
+  nameOnHover = false,
   onKeyDown,
 }: MilestoneDiamondProps) {
   return (
@@ -395,11 +446,13 @@ export function MilestoneDiamond({
         data-row-index={rowIndex}
         aria-label={ariaLabel}
         aria-describedby={describedBy}
-        aria-keyshortcuts="Enter Alt+ArrowLeft Alt+ArrowRight"
+        aria-keyshortcuts={readOnly ? 'Enter' : 'Enter Alt+ArrowLeft Alt+ArrowRight'}
         onKeyDown={onKeyDown}
         className={cn(
-          'absolute z-[2] flex touch-none items-center justify-center rounded-sm select-none',
-          dragging ? 'cursor-grabbing' : 'cursor-grab',
+          'absolute z-[2] flex items-center justify-center rounded-sm select-none',
+          !readOnly && 'touch-none',
+          nameOnHover && 'peer',
+          dragging ? 'cursor-grabbing' : readOnly ? 'cursor-pointer' : 'cursor-grab',
           focusRing,
         )}
         style={{ left: centerX - 8, width: 16, top: ROW_HEIGHT / 2 - 8, height: 16 }}
@@ -417,7 +470,12 @@ export function MilestoneDiamond({
       </div>
       <span
         aria-hidden
-        className="pointer-events-none absolute z-[2] flex items-center text-meta whitespace-nowrap text-fg-secondary"
+        className={cn(
+          'pointer-events-none absolute flex items-center text-meta whitespace-nowrap',
+          nameOnHover
+            ? 'z-[5] rounded-sm border border-default bg-elevated px-1.5 text-fg opacity-0 shadow-popover peer-hover:opacity-100 peer-focus-visible:opacity-100'
+            : 'z-[2] text-fg-secondary',
+        )}
         style={{ left: centerX + 12, top: BAR_TOP, height: BAR_HEIGHT }}
       >
         {name}

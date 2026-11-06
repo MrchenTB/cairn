@@ -65,13 +65,15 @@ export function tasksCsvFileName(today: ISODate = localToday()): string {
 
 /**
  * One RFC 4180 field: quoted when it contains a comma, quote, CR/LF or edge whitespace, with
- * inner quotes doubled. Text starting with = + - @ (or tab/CR) gets a leading apostrophe so
- * spreadsheet apps never evaluate it as a formula (CSV injection).
+ * inner quotes doubled. Also quoted when it contains a semicolon or tab, the cell separators of
+ * many spreadsheet locales. Text starting with = + - @ (half or full width, also after whitespace,
+ * which importers may trim) or tab/CR/LF gets a leading apostrophe so spreadsheet apps never
+ * evaluate it as a formula (CSV injection).
  */
 export function csvField(value: string | null | undefined): string {
   let text = value ?? ''
-  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
-  return /[",\r\n]/.test(text) || text !== text.trim() ? `"${text.replace(/"/g, '""')}"` : text
+  if (/^\s*[=+\-@＝＋－＠]|^[\t\r\n]/.test(text)) text = `'${text}`
+  return /[",;\t\r\n]/.test(text) || text !== text.trim() ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 /** Rows (fields already as strings) → CSV text with CRLF line breaks. */

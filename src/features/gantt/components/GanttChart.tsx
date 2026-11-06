@@ -123,7 +123,7 @@ interface DragInteraction {
   rowIndex: number
   subject: Subject
   state: DragState
-  /** Scroller rect at pointer-down (the scroller itself does not move while dragging). */
+  /** Scroller rect, re-read on every sample: the sidebar can collapse during a drag. */
   rect: DOMRect
   clientX: number
   clientY: number
@@ -208,6 +208,9 @@ function sameDates(a: DragDates, b: DragDates): boolean {
 
 const DRAG_HANDLES = new Set(['move', 'resize-start', 'resize-end', 'point'])
 
+/** Shown when a dependency is dropped on a task that has no bar (no dates of its own). */
+const UNSCHEDULED_LINK_MESSAGE = 'Schedule this task first to link it on the chart.'
+
 // ---------------------------------------------------------------------------
 // Chart
 // ---------------------------------------------------------------------------
@@ -266,8 +269,23 @@ export function GanttChart({
   /** Growth from scrolling near either end (per scale; never shrinks while mounted). */
   const [grown, setGrown] = useState<{ scale: GanttScale; range: DayRange } | null>(null)
   const growth = grown !== null && grown.scale === scale ? grown.range : null
-  const rangeStart = growth ? Math.min(baseRange.start, growth.start) : baseRange.start
-  const rangeEnd = growth ? Math.max(baseRange.end, growth.end) : baseRange.end
+  /**
+   * The widest natural range seen for this scale. The data's first / last date moving INWARD (the
+   * earliest task dragged later, a date edited in the Task Modal) must not shrink the timeline
+   * under the user: with the old range kept, the same days stay where they are on screen.
+   */
+  const [seen, setSeen] = useState<{ scale: GanttScale; range: DayRange } | null>(null)
+  const floor = seen !== null && seen.scale === scale ? seen.range : null
+  if (floor === null || baseRange.start < floor.start || baseRange.end > floor.end) {
+    setSeen({
+      scale,
+      range: floor
+        ? { start: Math.min(floor.start, baseRange.start), end: Math.max(floor.end, baseRange.end) }
+        : baseRange,
+    })
+  }
+  const rangeStart = Math.min(baseRange.start, growth?.start ?? Infinity, floor?.start ?? Infinity)
+  const rangeEnd = Math.max(baseRange.end, growth?.end ?? -Infinity, floor?.end ?? -Infinity)
   const geometry = useMemo<TimelineGeometry>(
     () => ({ originDay: rangeStart, dayWidth }),
     [rangeStart, dayWidth],
@@ -648,6 +666,28 @@ export function GanttChart({
     revealRow(UNSCHEDULED_KEY)
   })
 
+  /**
+   * Keyboard focus must never land behind the sticky outline or time header. The browser only
+   * scrolls an element into the scroll PORT, and both sticky layers cover part of it, so a bar
+   * reached with Tab could sit entirely under the outline with its focus ring invisible. (CSS
+   * scroll-padding would also move the sticky outline's own buttons, hence this.) Pointer focus is
+   * left alone: the bar under the cursor must not jump while it is being pressed.
+   */
+  const keepFocusVisible = useEvent((target: Element) => {
+    const scroller = scrollerRef.current
+    if (!scroller || !target.isConnected || !target.matches(':focus-visible')) return
+    const area = scroller.getBoundingClientRect()
+    const box = target.getBoundingClientRect()
+    const top = area.top + HEADER_HEIGHT
+    if (box.top < top) scroller.scrollTop -= top - box.top
+    if (target.closest('[data-handle="lane"]')) {
+      const left = area.left + latest.current.paneWidth
+      // Show the whole bar right of the outline (a very long one: its last half screen).
+      const needed = Math.min(box.width + 8, (area.right - left) / 2)
+      if (box.right - left < needed) scroller.scrollLeft -= left + needed - box.right
+    }
+  })
+
   // ---- opening things ------------------------------------------------------
   const openTask = useEvent((taskId: string) => openTaskRoute(taskId))
   const openMilestone = useEvent((milestoneId: string) =>
@@ -741,7 +781,9 @@ export function GanttChart({
     }
     if (mode === 'auto' && conflicts.length > 0) {
       notify.info('Auto scheduling is on', {
-        description: `${plural(conflicts.length, 'existing conflict')} stay until you resolve them.`,
+        description: `${plural(conflicts.length, 'existing conflict')} ${
+          conflicts.length === 1 ? 'stays until you resolve it' : 'stay until you resolve them'
+        }.`,
         action: { label: 'Review', onClick: () => void reviewConflicts(project.id) },
       })
     }
@@ -797,6 +839,8 @@ export function GanttChart({
 
   useHotkeys(['delete', 'backspace'], () => void removeSelected(), {
     enabled: selectedDep !== null,
+    description: 'Remove selected dependency',
+    group: 'Current view',
   })
   useHotkeys('escape', () => setSelectedDep(null), { enabled: selectedDep !== null })
   useEffect(() => {
@@ -824,8 +868,21 @@ export function GanttChart({
       const lane = hit?.closest('[data-handle="lane"]')
       const row = lane ? latest.current.rows[Number(lane.getAttribute('data-row-index'))] : null
       if (row?.kind === 'task' && row.span.kind !== 'unscheduled') taskId = row.task.id
+      else if (row?.kind === 'task' && row.task.id !== it.sourceId) {
+        // No bar to land on: a task without dates cannot be linked on the chart. Say so (the Task
+        // Modal's Dependencies section links it) instead of silently ignoring the drop.
+        it.target = { taskId: row.task.id, valid: false, message: UNSCHEDULED_LINK_MESSAGE }
+        return
+      }
     }
-    if (!taskId || taskId === it.sourceId) {
+    // Over the source's own dots (where the drag began) or its row there is nothing to say yet;
+    // over its own bar the drop would link a task to itself, which `validateNewDependency` refuses
+    // with a message ("A task can't depend on itself.") like every other invalid target.
+    const overOwnBar =
+      taskId === it.sourceId &&
+      hit?.closest('[data-link-target]') != null &&
+      hit.closest('[data-handle^="link-"]') === null
+    if (!taskId || (taskId === it.sourceId && !overOwnBar)) {
       it.target = null
       return
     }
@@ -888,6 +945,7 @@ export function GanttChart({
     const el = scrollerRef.current
     if (!it || !el) return
     if (it.kind === 'drag' && it.state.phase !== 'dragging') return
+    it.rect = el.getBoundingClientRect()
     const pw = latest.current.paneWidth
     const dx = autoScrollStep(it.clientX, it.rect.left + pw, it.rect.left + el.clientWidth)
     const dy =
@@ -1073,6 +1131,7 @@ export function GanttChart({
     if (!it || event.pointerId !== it.pointerId) return
     it.clientX = event.clientX
     it.clientY = event.clientY
+    it.rect = scrollerRef.current?.getBoundingClientRect() ?? it.rect
     if (it.kind === 'drag') {
       it.state = updateDrag(it.state, sampleAt(event.clientX, event.clientY, it.rect))
       if (it.state.phase !== 'dragging') return
@@ -1085,6 +1144,7 @@ export function GanttChart({
     if (!it || event.pointerId !== it.pointerId) return
     it.clientX = event.clientX
     it.clientY = event.clientY
+    it.rect = scrollerRef.current?.getBoundingClientRect() ?? it.rect
     if (it.kind === 'drag')
       it.state = updateDrag(it.state, sampleAt(event.clientX, event.clientY, it.rect))
     else findLinkTarget(it)
@@ -1118,6 +1178,17 @@ export function GanttChart({
     )
   })
 
+  /** A bar wider than the view, still in it after a nudge: its far edge must not pull the view. */
+  const wideBarInView = (dates: DragDates): boolean => {
+    const el = scrollerRef.current
+    if (!el || dates.start === null || dates.end === null) return false
+    const { geometry: g, paneWidth: pw } = latest.current
+    const visible = Math.max(0, el.clientWidth - pw)
+    const left = dayToX(dates.start, g)
+    const right = dayToX(dates.end + 1, g)
+    return right - left >= visible && left < el.scrollLeft + visible && right > el.scrollLeft
+  }
+
   const onBarKeyDown = useEvent((event: ReactKeyboardEvent<HTMLElement>, row: GanttRow) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
@@ -1138,6 +1209,15 @@ export function GanttChart({
         )
         return
       }
+      // The bar must not slide under the sticky outline or off the edge while it is nudged: follow
+      // the edge that moves (instant, so a held key does not queue up smooth scrolls).
+      const edge =
+        nudge.kind === 'resize-end' || nudge.delta > 0
+          ? (next.end ?? next.start)
+          : (next.start ?? next.end)
+      if (edge !== null && !(nudge.kind === 'move' && wideBarInView(next))) {
+        scrollDayIntoView(edge, false)
+      }
       void commitTaskDates(
         row.task.id,
         row.key,
@@ -1146,6 +1226,7 @@ export function GanttChart({
         'keyboard',
       )
     } else if (row.kind === 'milestone' && row.day !== null && nudge.kind === 'move') {
+      scrollDayIntoView(row.day + nudge.delta, false)
       void commitMilestone(row.milestone.id, row.key, row.day + nudge.delta, row.day)
     }
   })
@@ -1217,7 +1298,11 @@ export function GanttChart({
         role="region"
         aria-label="Gantt chart"
         className="relative isolate min-h-0 flex-1 overflow-auto overscroll-contain border-t border-subtle bg-(--gantt-bg)"
-        onScroll={() => syncScroll()}
+        onScroll={() => {
+          syncScroll()
+          // A wheel or Today scroll mid-drag changes the day under a still pointer.
+          if (interactionRef.current) requestTick()
+        }}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
@@ -1243,10 +1328,12 @@ export function GanttChart({
             style={{ width: contentWidth, height: bodyHeight }}
             onPointerDown={onPointerDown}
             onFocus={(event) => {
-              const key = (event.target as Element)
-                .closest('[data-row-key]')
-                ?.getAttribute('data-row-key')
-              setFocusedRowKey(key ?? null)
+              const target = event.target as Element
+              setFocusedRowKey(
+                target.closest('[data-row-key]')?.getAttribute('data-row-key') ?? null,
+              )
+              // After the browser's own focus scroll.
+              requestAnimationFrame(() => keepFocusVisible(target))
             }}
             onBlur={(event) => {
               const next = event.relatedTarget as Element | null

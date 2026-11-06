@@ -21,8 +21,10 @@ import {
   takePendingProjectCreate,
 } from './createSupport'
 import { CreateTaskForm } from './CreateTaskForm'
+import { confirmDiscard } from './discard'
 import {
   afterDialogsClosed,
+  focusIfNotCovered,
   ignoreEscapeWhileComposing,
   ignorePointerDownOnToasts,
   returnFocusAfterClose,
@@ -68,16 +70,30 @@ export function TaskModalHost() {
   const allProjects = useProjects({ includeArchived: true })
   const { status } = useWorkspaceStatus()
 
+  // Keep the last session rendered while the dialog animates out.
+  const [shown, setShown] = useState<ShownSession | null>(null)
+  /** The form on screen holds unsaved work (reported by the form; false once it unmounts). */
+  const [formDirty, setFormDirty] = useState(false)
+  /** A "New task" request whose form on screen the user agreed to discard. */
+  const [approvedCreate, setApprovedCreate] = useState<NewTaskDefaults | null>(null)
+
   // Create is opened explicitly on top of whatever page (or task) is showing, so it wins.
-  const session: Session | null = newTask
+  const requested: Session | null = newTask
     ? { kind: 'create', defaults: newTask }
     : taskParam
       ? { kind: 'edit', taskId: taskParam }
       : null
+  // ⌘K → "New task" works from inside the modal: a form with unsaved work stays on screen until
+  // the user agrees to discard it (see the effect below).
+  const holding =
+    requested?.kind === 'create' &&
+    requested.defaults !== approvedCreate &&
+    shown !== null &&
+    shown.key !== sessionKey(requested) &&
+    formDirty
+  const session = holding && shown ? shown.session : requested
   const open = session !== null && (session.kind === 'create' || task !== undefined)
 
-  // Keep the last session rendered while the dialog animates out.
-  const [shown, setShown] = useState<ShownSession | null>(null)
   if (open && session && shown?.key !== sessionKey(session)) {
     setShown({ session, key: sessionKey(session) })
   }
@@ -102,6 +118,32 @@ export function TaskModalHost() {
     if (open && !wasOpenRef.current) openerRef.current = getFocusReturnTarget()
     wasOpenRef.current = open
   }, [open])
+
+  // A "New task" request while another form has unsaved work: ask first. Keep editing puts the
+  // request away again (a create form in progress is restored with what was typed).
+  useEffect(() => {
+    if (!holding || !newTask || !shown) return undefined
+    const request = newTask
+    const previous = shown.session
+    let active = true
+    void confirmDiscard().then((discard) => {
+      if (!active) return
+      if (discard) {
+        setApprovedCreate(request)
+        return
+      }
+      if (previous.kind === 'create') useUIStore.getState().openNewTask(previous.defaults)
+      else useUIStore.getState().closeNewTask()
+      // The prompt's focus return target (the search overlay's option) is gone: back to the form.
+      const modal = document.querySelector('[data-slot="dialog-content"]')
+      afterDialogsClosed(() => focusIfNotCovered(modal, () => controlsRef.current?.focus()), {
+        except: modal,
+      })
+    })
+    return () => {
+      active = false
+    }
+  }, [holding, newTask, shown])
 
   // ?task=<id> for a task that does not exist (any more).
   useEffect(() => {
@@ -217,6 +259,7 @@ export function TaskModalHost() {
               onClose={closeNewTask}
               onCreated={handleCreated}
               onCreateProject={(draft) => handleCreateProject(current.defaults, draft)}
+              onDirtyChange={setFormDirty}
             />
           ) : (
             <EditTaskForm
@@ -227,6 +270,7 @@ export function TaskModalHost() {
               onDeleting={(taskId) => {
                 deletingRef.current = taskId
               }}
+              onDirtyChange={setFormDirty}
             />
           )}
         </DialogContent>

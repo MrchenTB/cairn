@@ -3,7 +3,7 @@
  * scripts), so public/_headers must allow-list its exact sha256. Any edit to the script must
  * update the hash — this test recomputes it.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import headers from '../../public/_headers?raw'
 import indexHtml from '../../index.html?raw'
 
@@ -60,5 +60,47 @@ describe('Content-Security-Policy', () => {
     expect(headers).toMatch(/X-Content-Type-Options: nosniff/)
     expect(headers).toMatch(/Referrer-Policy: strict-origin-when-cross-origin/)
     expect(headers).toMatch(/Permissions-Policy: camera=\(\), microphone=\(\), geolocation=\(\)/)
+    expect(headers).toMatch(/Strict-Transport-Security: max-age=31536000/)
+  })
+})
+
+/** Every call of the global Function constructor while `run` executes. */
+async function functionConstructorCalls(run: () => Promise<void>): Promise<unknown[][]> {
+  const calls: unknown[][] = []
+  vi.stubGlobal(
+    'Function',
+    new Proxy(globalThis.Function, {
+      apply(target, thisArg, args) {
+        calls.push(args)
+        return Reflect.apply(target, thisArg, args)
+      },
+      construct(target, args) {
+        calls.push(args)
+        return Reflect.construct(target, args)
+      },
+    }),
+  )
+  await run()
+  return calls
+}
+
+describe('nothing evaluates strings (script-src has no unsafe-eval)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('zod never probes or uses new Function: a caught probe still reports a CSP violation', async () => {
+    const calls = await functionConstructorCalls(async () => {
+      const { parseBackupFile } = await import('@/domain/validation')
+      const result = parseBackupFile({
+        app: 'cairn',
+        formatVersion: 1,
+        exportedAt: '2026-11-03T08:00:00.000Z',
+        preferences: null,
+        data: { projects: [], phases: [], tasks: [], milestones: [], dependencies: [] },
+      })
+      expect(result.ok).toBe(true)
+    })
+    expect(calls).toEqual([])
   })
 })

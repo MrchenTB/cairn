@@ -41,6 +41,26 @@ describe('CSV encoding (RFC 4180)', () => {
     expect(csvField('=HYPERLINK("x","y")')).toBe(`"'=HYPERLINK(""x"",""y"")"`)
   })
 
+  it('defuses formulas hidden behind whitespace, line breaks or full-width signs', () => {
+    expect(csvField(' =1+1')).toBe("' =1+1")
+    expect(csvField('\u3000=1+1')).toBe("'\u3000=1+1")
+    expect(csvField('\n=1+1')).toBe(`"'\n=1+1"`)
+    expect(csvField('\t=1+1')).toBe(`"'\t=1+1"`)
+    expect(csvField('\r=1+1')).toBe(`"'\r=1+1"`)
+    expect(csvField('＝1+1')).toBe("'＝1+1")
+    expect(csvField('＋1')).toBe("'＋1")
+    expect(csvField('－1')).toBe("'－1")
+    expect(csvField('＠cmd')).toBe("'＠cmd")
+    // Plain text with these characters further in stays as it is.
+    expect(csvField('a=b')).toBe('a=b')
+    expect(csvField('email@example.com')).toBe('email@example.com')
+  })
+
+  it('quotes semicolons and tabs: spreadsheets in many locales split cells on them', () => {
+    expect(csvField('x;=1+1')).toBe('"x;=1+1"')
+    expect(csvField('x\t=1+1')).toBe('"x\t=1+1"')
+  })
+
   it('joins rows with CRLF', () => {
     expect(
       toCsv([
@@ -183,5 +203,50 @@ describe('backup files', () => {
       ok: false,
       error: { kind: 'unknown' },
     })
+  })
+})
+
+describe('CJK, astral characters and emoji', () => {
+  // 𠮷 (U+20BB7) and the emoji are surrogate pairs; ｆｕｌｌ is full-width; é is a combining pair.
+  const texts = ['𠮷野家 專案規劃', '😀'.repeat(200), '👨‍👩‍👧 ＦＵＬＬ', 'café', '中'.repeat(500)]
+
+  it('a JSON backup parses back to exactly the same text', () => {
+    const file: BackupFile = {
+      app: 'cairn',
+      formatVersion: 1,
+      exportedAt: '2026-11-02T00:00:00.000Z',
+      preferences: null,
+      data: {
+        projects: [makeProject({ id: 'p', name: texts[0], description: texts[2] })],
+        phases: [makePhase({ id: 'ph', projectId: 'p', name: texts[3] })],
+        tasks: texts.map((title, index) =>
+          makeTask({ id: `t${index}`, projectId: 'p', title, description: title }),
+        ),
+        milestones: [],
+        dependencies: [],
+      },
+    }
+    for (const text of [serializeBackup(file), BOM + serializeBackup(file)]) {
+      const parsed = parseBackupText(text)
+      expect(parsed.ok).toBe(true)
+      if (!parsed.ok) return
+      expect(parsed.value.data.projects[0].name).toBe(texts[0])
+      expect(parsed.value.data.phases[0].name).toBe(texts[3])
+      expect(parsed.value.data.tasks.map((task) => task.title)).toEqual(texts)
+      expect(parsed.value.data.tasks.map((task) => task.description)).toEqual(texts)
+    }
+  })
+
+  it('the CSV keeps every character and has no lone surrogate', () => {
+    const csv = buildTasksCsv({
+      projects: [makeProject({ id: 'p', name: texts[0] })],
+      phases: [],
+      tasks: texts.map((title, index) => makeTask({ id: `t${index}`, projectId: 'p', title })),
+    })
+    for (const text of texts) expect(csv).toContain(text)
+    expect(csv.startsWith(BOM)).toBe(true)
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(csv)).toBe(
+      false,
+    )
   })
 })

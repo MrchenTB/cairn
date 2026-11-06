@@ -4,7 +4,7 @@
  * live from the store, so what the dialog lists is exactly what "Apply" writes — in ONE atomic
  * applySchedule call. Cancel / Esc writes nothing.
  */
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, CalendarClock, TriangleAlert } from 'lucide-react'
 import { StatusIcon } from '@/components/task/StatusIcon'
 import { Button } from '@/components/ui/button'
@@ -17,12 +17,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { useToday, useWorkspaceData } from '@/data/hooks'
+import { useActions, useToday, useWorkspaceData } from '@/data/hooks'
 import { formatDateRange } from '@/domain/dates'
-import type { ScheduleShift } from '@/domain/scheduling'
+import { findConflicts, type ScheduleShift } from '@/domain/scheduling'
 import type { ISODate, Task, WorkspaceData } from '@/domain/types'
 import { cn } from '@/lib/utils'
-import { computeReschedulePlan, type ReschedulePlan } from './planner'
+import { computeReschedulePlan, projectDependencies, type ReschedulePlan } from './planner'
 import {
   useRescheduleStore,
   type ActiveReschedule,
@@ -68,6 +68,28 @@ function RescheduleDialogContent({ active }: { active: ActiveReschedule }) {
   const plan = frozen ?? livePlan
   const [error, setError] = useState<string | null>(null)
   const primaryRef = useRef<HTMLButtonElement>(null)
+  const { refresh } = useActions()
+
+  // D15: coming back to this tab re-reads the data at once (the store's 30 s throttle would let
+  // Apply overwrite another tab's edit with stale dates). Focus and visibilitychange usually fire
+  // together: one read serves both, and it is silent, so nothing flickers.
+  useEffect(() => {
+    if (busy) return
+    let inFlight = false
+    const reload = () => {
+      if (inFlight || document.visibilityState === 'hidden') return
+      inFlight = true
+      void refresh({ silent: true }).finally(() => {
+        inFlight = false
+      })
+    }
+    window.addEventListener('focus', reload)
+    document.addEventListener('visibilitychange', reload)
+    return () => {
+      window.removeEventListener('focus', reload)
+      document.removeEventListener('visibilitychange', reload)
+    }
+  }, [busy, refresh])
 
   const run = async (decision: RescheduleDecision) => {
     if (busy) return
@@ -96,6 +118,11 @@ function RescheduleDialogContent({ active }: { active: ActiveReschedule }) {
   const changedTask = plan.change ? data.tasks[plan.change.taskId] : undefined
   const count = plan.writes.length
   const nothingToDo = plan.error === null && plan.shifts.length === 0
+  // Auto-schedule skips a move past the end of the calendar, so a conflict can have no resolution.
+  const stuck =
+    kind === 'resolve' &&
+    nothingToDo &&
+    findConflicts(data.tasks, projectDependencies(data, active.request.projectId)).length > 0
 
   return (
     <DialogContent
@@ -113,8 +140,14 @@ function RescheduleDialogContent({ active }: { active: ActiveReschedule }) {
       }}
     >
       <DialogHeader>
-        <DialogTitle>{titleFor(kind, nothingToDo)}</DialogTitle>
-        <DialogDescription>{summaryFor(active, plan, data, changedTask, today)}</DialogDescription>
+        <DialogTitle>
+          {stuck ? "Can't resolve this automatically" : titleFor(kind, nothingToDo)}
+        </DialogTitle>
+        <DialogDescription>
+          {stuck
+            ? 'The tasks would have to move past the end of the supported calendar. Change their dates by hand.'
+            : summaryFor(active, plan, data, changedTask, today)}
+        </DialogDescription>
       </DialogHeader>
 
       <DialogBody className="pb-3">
@@ -147,7 +180,7 @@ function RescheduleDialogContent({ active }: { active: ActiveReschedule }) {
                   ))}
                 </ul>
               </section>
-            ) : (
+            ) : stuck ? null : (
               <p className="text-ui text-fg-secondary">
                 {kind === 'change'
                   ? 'No other tasks need to move anymore.'

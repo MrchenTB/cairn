@@ -27,6 +27,7 @@ export type SupabaseAuthClient = Pick<
   | 'signOut'
   | 'resetPasswordForEmail'
   | 'updateUser'
+  | 'refreshSession'
 >
 
 const AUTH_ERRORS: Record<string, readonly [AppErrorKind, string | null]> = {
@@ -66,6 +67,19 @@ const AUTH_ERRORS: Record<string, readonly [AppErrorKind, string | null]> = {
   request_timeout: ['network', NETWORK_ERROR_MESSAGE],
 }
 
+/** What a server failure says when its answer has nothing better than the HTTP status line. */
+const SERVER_FAILURE_MESSAGE = "The server couldn't complete the request. Try again."
+const HTTP_STATUS_LINE =
+  /^(http \d+|internal server error|not implemented|bad gateway|service unavailable|gateway time-?out)\.?$/i
+
+function serverFailureMessage(message: unknown): string {
+  const readable = readableServerMessage(message)
+  if (readable === null || !/^\p{L}/u.test(readable) || HTTP_STATUS_LINE.test(readable)) {
+    return SERVER_FAILURE_MESSAGE
+  }
+  return readable
+}
+
 /** Maps Supabase Auth errors (AuthError: name/status/code/message) to RepositoryErrors. */
 export function toAuthError(error: unknown): RepositoryError {
   if (error instanceof RepositoryError) return error
@@ -77,7 +91,11 @@ export function toAuthError(error: unknown): RepositoryError {
     message?: unknown
   }
   if (e.name === 'AuthRetryableFetchError' || e.status === 0) {
-    return new RepositoryError('network', NETWORK_ERROR_MESSAGE, error)
+    // Retryable either way, so never a refusal of the session. Only without any answer (status 0)
+    // is the connection the likely cause; a 5xx means the connection works and the server failed.
+    const answered = typeof e.status === 'number' && e.status > 0
+    const message = answered ? serverFailureMessage(e.message) : NETWORK_ERROR_MESSAGE
+    return new RepositoryError('network', message, error)
   }
   // No session to act on (signed out meanwhile, or a reset link opened too long ago).
   if (e.name === 'AuthSessionMissingError') {
@@ -176,6 +194,24 @@ export function createSupabaseAuthService(
     async updatePassword(newPassword) {
       const { error } = await auth.updateUser({ password: newPassword })
       if (error) throw toAuthError(error)
+    },
+    async revalidate() {
+      const { data, error } = await auth.refreshSession()
+      if (!error) return data.session ? toAuthUser(data.session.user) : null
+      const reason = toAuthError(error)
+      // Too many requests or a failing server say nothing about the session: it stays.
+      const status = (error as { status?: unknown }).status
+      if (
+        reason.kind === 'network' ||
+        status === 429 ||
+        (typeof status === 'number' && status >= 500)
+      ) {
+        throw reason
+      }
+      // Refused. supabase-js keeps a session whose access token looks valid by this device's clock,
+      // but the server has now rejected both tokens: it is over, so this device lets go of it too.
+      await auth.signOut({ scope: 'local' })
+      return null
     },
   }
 }

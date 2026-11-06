@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
  * The four Overview numbers in calm, text-first cells (number 20px/600 + 12px label in a neutral
  * card): Active projects, Open tasks, Due soon (today + next 7 days), Overdue — the overdue number
  * takes the danger tone only when there is something overdue. Values from `overviewMetrics()`.
+ * Labels wrap instead of truncating, so a narrow window never hides what a number means.
  */
 export function MetricStrip({ metrics }: { metrics: OverviewMetrics }) {
   const items = [
@@ -19,15 +20,16 @@ export function MetricStrip({ metrics }: { metrics: OverviewMetrics }) {
         <div
           key={item.key}
           data-metric={item.key}
-          className="flex min-w-0 flex-col-reverse gap-0.5 rounded-lg border border-default bg-surface px-4 py-3"
+          className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-default bg-surface px-4 py-3"
         >
-          <dt className="truncate text-meta text-fg-tertiary">
+          {/* Number above label visually; the markup stays term → value for assistive tech. */}
+          <dt className="order-2 text-meta text-fg-tertiary">
             {item.label}
-            {item.qualifier ? <span> · {item.qualifier}</span> : null}
+            {item.qualifier ? <span className="whitespace-nowrap"> · {item.qualifier}</span> : null}
           </dt>
           <dd
             className={cn(
-              'text-title font-semibold tabular-nums',
+              'order-1 text-title font-semibold tabular-nums',
               item.attention ? 'text-danger' : 'text-fg',
             )}
           >

@@ -27,6 +27,7 @@ import { NETWORK_ERROR_MESSAGE, RepositoryError } from './errors'
 import { createMemoryStorage, LocalRepository, type StorageLike } from './localRepository'
 import {
   AUTO_REFRESH_INTERVAL_MS,
+  createAuthStore,
   createWorkspaceStore,
   SYNC_ERROR_TOAST_ID,
   UI_PREFS_STORAGE_KEY,
@@ -77,7 +78,7 @@ async function setup(options: SetupOptions = {}) {
   const storage = options.storage ?? createMemoryStorage()
   const repo = options.repo ?? new LocalRepository({ storage, now: serverClock })
   if (options.rows) await seed(repo, options.rows)
-  const notifier = { error: vi.fn(), dismiss: vi.fn() }
+  const notifier = { error: vi.fn(), dismiss: vi.fn(), success: vi.fn() }
   let sequence = 0
   const store = createWorkspaceStore({
     mode: 'local',
@@ -910,6 +911,34 @@ describe('backup', () => {
     expect(h.notifier.error).not.toHaveBeenCalled()
   })
 
+  it('a hostile backup (__proto__ and constructor as keys and ids) pollutes nothing', async () => {
+    const h = await setup({ randomId: () => crypto.randomUUID() })
+    const polluted = '{"polluted":true}'
+    const hostile = JSON.stringify(backup())
+      .replaceAll('"id":"X"', '"id":"__proto__"')
+      .replaceAll('"projectId":"X"', '"projectId":"__proto__"')
+      .replaceAll('"id":"T1"', '"id":"constructor"')
+      .replaceAll('"parentTaskId":"T1"', '"parentTaskId":"constructor"')
+      .replaceAll('"predecessorId":"T1"', '"predecessorId":"constructor"')
+      .replaceAll('"name":"Xray"', `"__proto__":${polluted},"name":"Xray"`)
+      .replace('"app":', `"__proto__":${polluted},"constructor":{"prototype":${polluted}},"app":`)
+    const parsed = parseBackupFile(JSON.parse(hostile))
+    if (!parsed.ok) throw new Error(parsed.error.message)
+
+    expect(await h.actions.importBackup(parsed.value)).toMatchObject({
+      ok: true,
+      value: { projects: 2, tasks: 4, dependencies: 1 },
+    })
+    expect(({} as { polluted?: unknown }).polluted).toBeUndefined()
+    const { projects, tasks } = h.state().data
+    expect(Object.keys(projects)).not.toContain('__proto__')
+    expect(Object.keys(tasks)).not.toContain('constructor')
+    for (const project of Object.values(projects)) {
+      expect(Object.getPrototypeOf(project)).toBe(Object.prototype)
+      expect((project as { polluted?: unknown }).polluted).toBeUndefined()
+    }
+  })
+
   it('exportBackup produces a valid backup of the current workspace', async () => {
     const h = await setup({ rows: workspaceRows() })
     const file = h.actions.exportBackup()
@@ -1136,6 +1165,34 @@ describe('preferences across devices', () => {
   })
 })
 
+describe('preferences changed before the workspace loaded', () => {
+  it('the answer waits for a load that works: a failed first load loses nothing', async () => {
+    const h = await setup({ rows: workspaceRows(), load: false })
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(
+      new RepositoryError('network', NETWORK_ERROR_MESSAGE),
+    )
+    expect((await h.actions.load()).ok).toBe(false)
+    let answered: unknown = null
+    const pending = h.actions.updatePreferences({ weekStartsOn: 0 }).then((result) => {
+      answered = result
+    })
+    await settled()
+    // applied on screen at once; nothing is claimed as saved while the workspace is unknown
+    expect(h.state().preferences.weekStartsOn).toBe(0)
+    expect(answered).toBeNull()
+    expect(
+      (await new LocalRepository({ storage: h.storage }).loadWorkspace()).preferences,
+    ).toBeNull()
+
+    expect((await h.actions.load()).ok).toBe(true)
+    await pending
+    await idle(h)
+    expect(answered).toEqual(OK)
+    expect((await storedSnapshot(h)).preferences?.weekStartsOn).toBe(0)
+    expect(h.state().sync.lastError).toBeNull()
+  })
+})
+
 describe('loading', () => {
   it('a successful load clears the error of a failed one (but not a failed write)', async () => {
     const h = await setup({ rows: workspaceRows(), load: false })
@@ -1149,6 +1206,39 @@ describe('loading', () => {
     await h.actions.updateTask('a', { title: 'x' })
     await h.actions.refresh({ silent: true })
     expect(h.state().sync).toMatchObject({ lastError: { kind: 'network' }, canRetry: true })
+  })
+
+  it('a refresh the user asked for reports a failure without a loading state; the next one clears it', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const statuses: string[] = []
+    h.store.subscribe((state) => statuses.push(state.status))
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const result = await h.actions.refresh({ silent: true, reportFailure: true })
+    expect(result.ok).toBe(false)
+    expect(h.state().sync).toMatchObject({ lastError: { kind: 'network' }, canRetry: false })
+    expect(statuses).not.toContain('loading')
+
+    expect(await h.actions.refresh({ silent: true, reportFailure: true })).toEqual(OK)
+    expect(h.state().sync.lastError).toBeNull()
+  })
+
+  it('a reported refresh failure never replaces a failed write awaiting Retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'x' })
+    const writeError = h.state().sync.lastError
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(
+      new RepositoryError('unknown', 'The server is down.'),
+    )
+    await h.actions.refresh({ silent: true, reportFailure: true })
+    expect(h.state().sync).toMatchObject({ lastError: writeError, canRetry: true })
+  })
+
+  it('a background refresh failure stays quiet', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    expect((await h.actions.refresh({ silent: true })).ok).toBe(false)
+    expect(h.state().sync.lastError).toBeNull()
   })
 
   it('a write made while the workspace (re)loads is neither lost nor reverted', async () => {
@@ -1393,6 +1483,71 @@ describe('Retry never overwrites newer changes', () => {
     expect((await storedTask(h, 'a'))?.title).toBe('Newer')
   })
 
+  describe('a create typed again after it failed', () => {
+    const titled = (h: Harness, title: string) =>
+      Object.values(h.state().data.tasks).filter((task) => task.title === title)
+    const storedTitled = async (h: Harness, title: string) =>
+      (await storedSnapshot(h)).tasks.filter((task) => task.title === title)
+
+    it("replaces the failed one: the old toast's Retry goes away and never makes a second copy", async () => {
+      const h = await setup({ rows: workspaceRows() })
+      h.repo.failNextWrites(1)
+      expect((await h.actions.createTask({ projectId: 'p1', title: 'Again' })).ok).toBe(false)
+      const retry = lastToastAction(h)
+      expect(retry).toBeDefined()
+      expect((await h.actions.createTask({ projectId: 'p1', title: 'Again' })).ok).toBe(true)
+      expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
+      expect(h.state().sync.canRetry).toBe(false)
+      retry?.onClick()
+      await settled()
+      await idle(h)
+      expect(titled(h, 'Again')).toHaveLength(1)
+      expect(await storedTitled(h, 'Again')).toHaveLength(1)
+    })
+
+    it('replaces the failed one even while the new copy is still being saved', async () => {
+      const h = await setup({ rows: workspaceRows() })
+      h.repo.failNextWrites(1)
+      await h.actions.createTask({ projectId: 'p1', title: 'Again' })
+      const retry = lastToastAction(h)
+      h.repo.setLatency(20)
+      const second = h.actions.createTask({ projectId: 'p1', title: 'Again' })
+      retry?.onClick()
+      expect((await second).ok).toBe(true)
+      await settled()
+      await idle(h)
+      expect(await storedTitled(h, 'Again')).toHaveLength(1)
+    })
+
+    it('a different title, project, phase or parent is a different task: its Retry stays', async () => {
+      const h = await setup({ rows: workspaceRows() })
+      h.repo.failNextWrites(1)
+      await h.actions.createTask({ projectId: 'p1', title: 'Same words' })
+      const retry = lastToastAction(h)
+      await h.actions.createTask({ projectId: 'p1', title: 'Other words' })
+      await h.actions.createTask({ projectId: 'p2', title: 'Same words' })
+      await h.actions.createTask({ projectId: 'p1', phaseId: 'ph1', title: 'Same words' })
+      await h.actions.createTask({ projectId: 'p1', parentTaskId: 'a', title: 'Same words' })
+      retry?.onClick()
+      // the failed one, plus the three different tasks with the same words
+      await vi.waitFor(async () => expect(await storedTitled(h, 'Same words')).toHaveLength(4))
+      await idle(h)
+      expect(titled(h, 'Same words')).toHaveLength(4)
+    })
+
+    it('typed again while still failing: one Retry stores it once', async () => {
+      const h = await setup({ rows: workspaceRows() })
+      h.repo.failNextWrites(2)
+      await h.actions.createTask({ projectId: 'p1', title: 'Again' })
+      await h.actions.createTask({ projectId: 'p1', title: 'Again' })
+      expect(h.state().sync.canRetry).toBe(true)
+      expect(await h.actions.retryLastFailed()).toEqual(OK)
+      await idle(h)
+      expect(titled(h, 'Again')).toHaveLength(1)
+      expect(await storedTitled(h, 'Again')).toHaveLength(1)
+    })
+  })
+
   it('an unrelated change keeps the toast Retry of a failed one working', async () => {
     const h = await setup({ rows: workspaceRows() })
     h.repo.failNextWrites(1)
@@ -1440,6 +1595,44 @@ describe('Retry after several failures in a row', () => {
     await idle(h)
     expect(await storedTask(h, 'new-1')).toMatchObject({ title: 'Final' })
     expect(h.state().data.tasks['new-1']).toMatchObject({ title: 'Final' })
+  })
+
+  it('an edit made while its create was in flight is kept for Retry when only the create failed', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(5)
+    h.repo.failNextWrites(1) // the server never got the create, so the edit finds no such task
+    const created = h.actions.createTask({ projectId: 'p1', title: 'Draft' })
+    const edited = h.actions.updateTask('new-1', { priority: 'high' })
+    expect((await created).ok).toBe(false)
+    expect((await edited).ok).toBe(false)
+    // the failure on screen is the create's (not "Task not found") and it offers Retry
+    expect(h.state().sync.lastError?.kind).toBe('network')
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(lastToastAction(h)).toBeDefined()
+    expect(h.notifier.error.mock.calls.at(-1)?.[0]).toBe("Couldn't update task")
+    expect(h.notifier.error.mock.calls.at(-1)?.[1]).toMatchObject({
+      description: NETWORK_ERROR_MESSAGE,
+    })
+    // Retry creates the task and then applies the edit: nothing the user did is lost
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect(await storedTask(h, 'new-1')).toMatchObject({ title: 'Draft', priority: 'high' })
+    expect(h.state().data.tasks['new-1']).toMatchObject({ title: 'Draft', priority: 'high' })
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+  })
+
+  it('an edit of a task whose create failed for good (validation) is not offered a Retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(5)
+    vi.spyOn(h.repo, 'insertTask').mockRejectedValueOnce(
+      new RepositoryError('validation', 'The title is not allowed.'),
+    )
+    const created = h.actions.createTask({ projectId: 'p1', title: 'Draft' })
+    const edited = h.actions.updateTask('new-1', { priority: 'high' })
+    expect((await created).ok).toBe(false)
+    expect((await edited).ok).toBe(false)
+    expect(h.state().sync.canRetry).toBe(false)
+    expect(lastToastAction(h)).toBeUndefined()
   })
 
   it('stops at a change that fails again and continues from it next time', async () => {
@@ -1743,5 +1936,230 @@ describe('an import whose answer was lost (e.g. a long import that timed out)', 
     )
     expect(h.notifier.dismiss).toHaveBeenCalledWith(SYNC_ERROR_TOAST_ID)
     expect((await storedSnapshot(h)).projects).toHaveLength(1)
+  })
+})
+
+describe('a request the network delivered twice (the browser re-sent it after its connection died)', () => {
+  const deliveredTwice = async <T>(send: () => Promise<T>): Promise<T> => {
+    await send()
+    return send() // the second delivery is the one that answers: refused as a duplicate
+  }
+
+  it('a create refused as a duplicate of itself on its first attempt was stored', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const insert = h.repo.insertTask.bind(h.repo)
+    vi.spyOn(h.repo, 'insertTask').mockImplementationOnce((task) =>
+      deliveredTwice(() => insert(task)),
+    )
+    const result = await h.actions.createTask({ projectId: 'p1', title: 'Delivered twice' })
+    expect(result).toMatchObject({ ok: true, value: { title: 'Delivered twice' } })
+    await idle(h)
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    const stored = await storedSnapshot(h)
+    expect(stored.tasks.filter((t) => t.title === 'Delivered twice')).toHaveLength(1)
+  })
+
+  it('the same holds for a project, a phase and a milestone', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const insertProject = h.repo.insertProject.bind(h.repo)
+    vi.spyOn(h.repo, 'insertProject').mockImplementationOnce((row) =>
+      deliveredTwice(() => insertProject(row)),
+    )
+    const insertPhase = h.repo.insertPhase.bind(h.repo)
+    vi.spyOn(h.repo, 'insertPhase').mockImplementationOnce((row) =>
+      deliveredTwice(() => insertPhase(row)),
+    )
+    const insertMilestone = h.repo.insertMilestone.bind(h.repo)
+    vi.spyOn(h.repo, 'insertMilestone').mockImplementationOnce((row) =>
+      deliveredTwice(() => insertMilestone(row)),
+    )
+    expect((await h.actions.createProject({ name: 'Twice' })).ok).toBe(true)
+    expect((await h.actions.createPhase({ projectId: 'p1', name: 'Twice' })).ok).toBe(true)
+    expect(
+      (await h.actions.createMilestone({ projectId: 'p1', name: 'Twice', date: '2026-12-01' })).ok,
+    ).toBe(true)
+    await idle(h)
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    const stored = await storedSnapshot(h)
+    expect(stored.projects.filter((row) => row.name === 'Twice')).toHaveLength(1)
+    expect(stored.phases.filter((row) => row.name === 'Twice')).toHaveLength(1)
+    expect(stored.milestones.filter((row) => row.name === 'Twice')).toHaveLength(1)
+  })
+
+  it('an import refused as a duplicate of itself on its first attempt was stored, once', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const file = h.actions.exportBackup()
+    const importWorkspace = h.repo.importWorkspace.bind(h.repo)
+    vi.spyOn(h.repo, 'importWorkspace').mockImplementationOnce((copy) =>
+      deliveredTwice(() => importWorkspace(copy)),
+    )
+    const before = (await storedSnapshot(h)).projects.length
+    const result = await h.actions.importBackup(file)
+    expect(result).toMatchObject({ ok: true, value: { projects: before } })
+    await idle(h)
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    expect((await storedSnapshot(h)).projects).toHaveLength(before * 2)
+  })
+})
+
+describe('a change the server refused', () => {
+  it('stops counting as a sync problem once a refresh has shown the current data', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    vi.spyOn(h.repo, 'updateTask').mockRejectedValueOnce(
+      new RepositoryError('validation', 'The server refused it.'),
+    )
+    const result = await h.actions.updateTask('a', { title: 'Refused' })
+    expect(result.ok).toBe(false)
+    expect(h.notifier.error).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(h.state().sync.lastError).toBeNull())
+    expect(h.state().sync.canRetry).toBe(false)
+    expect(h.state().data.tasks.a.title).not.toBe('Refused')
+  })
+
+  it('a failure waiting for Retry keeps counting after that refresh', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    vi.spyOn(h.repo, 'updateTask').mockRejectedValueOnce(
+      new RepositoryError('network', NETWORK_ERROR_MESSAGE),
+    )
+    expect((await h.actions.updateTask('a', { title: 'Not saved' })).ok).toBe(false)
+    await settled()
+    await idle(h)
+    await settled()
+    expect(h.state().sync.lastError).toMatchObject({ kind: 'network' })
+    expect(h.state().sync.canRetry).toBe(true)
+  })
+})
+
+describe('review findings', () => {
+  const net = () => new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+  async function makeStore(mode: 'local' | 'supabase' = 'local') {
+    const repo = new LocalRepository({ storage: createMemoryStorage() })
+    await repo.insertProject(makeProject({ id: 'p1' }))
+    const store = createWorkspaceStore({
+      mode,
+      repository: repo,
+      notify: { error: vi.fn(), dismiss: vi.fn() },
+      storage: null,
+      randomId: () => crypto.randomUUID(),
+    })
+    return { repo, store, actions: store.getState().actions }
+  }
+
+  it('two different tasks with one title, failed in turn: Retry stores both', async () => {
+    const { repo, store, actions } = await makeStore()
+    await actions.load()
+    const insert = vi.spyOn(repo, 'insertTask').mockRejectedValueOnce(net())
+    await actions.createTask({ projectId: 'p1', title: 'Review', description: 'contract X' })
+    insert.mockRejectedValueOnce(net())
+    await actions.createTask({ projectId: 'p1', title: 'Review', description: 'budget Y' })
+    expect(store.getState().sync.canRetry).toBe(true)
+    await actions.retryLastFailed()
+    const stored = Object.values((await repo.loadWorkspace()).tasks).map((t) => t.description)
+    expect(stored.sort()).toEqual(['budget Y', 'contract X'])
+  })
+
+  it('submitting the same new project, phase or milestone again after failures: Retry stores one', async () => {
+    const { repo, actions } = await makeStore()
+    await actions.load()
+    const project = vi.spyOn(repo, 'insertProject')
+    const phase = vi.spyOn(repo, 'insertPhase')
+    const milestone = vi.spyOn(repo, 'insertMilestone')
+    for (const insert of [project, phase, milestone]) {
+      insert.mockRejectedValueOnce(net()).mockRejectedValueOnce(net())
+    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await actions.createProject({ name: 'Launch' })
+      await actions.createPhase({ projectId: 'p1', name: 'Design' })
+      await actions.createMilestone({ projectId: 'p1', name: 'Beta', date: '2026-12-01' })
+    }
+    await actions.retryLastFailed()
+    const stored = await repo.loadWorkspace()
+    expect(Object.values(stored.projects).filter((row) => row.name === 'Launch')).toHaveLength(1)
+    expect(Object.values(stored.phases)).toHaveLength(1)
+    expect(Object.values(stored.milestones)).toHaveLength(1)
+  })
+
+  it('a refused refresh re-checks the session while a failed write awaits Retry', async () => {
+    const { repo, store, actions } = await makeStore('supabase')
+    const user = { id: 'u1', email: 'a@example.com' }
+    const service = {
+      mode: 'supabase' as const,
+      getUser: vi.fn(async () => user),
+      onChange: () => () => undefined,
+      signIn: vi.fn(),
+      signUp: vi.fn(),
+      signOut: vi.fn(),
+      sendPasswordReset: vi.fn(),
+      updatePassword: vi.fn(),
+    }
+    void createAuthStore({ mode: 'supabase', auth: service, workspace: store })
+      .getState()
+      .actions.init()
+    await vi.waitFor(() => expect(store.getState().status).toBe('ready'))
+    vi.spyOn(repo, 'updateProject').mockRejectedValueOnce(net())
+    await actions.updateProject('p1', { name: 'Renamed' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    const checks = service.getUser.mock.calls.length
+    vi.spyOn(repo, 'loadWorkspace').mockRejectedValueOnce(new RepositoryError('auth', 'expired'))
+    await actions.refresh({ silent: true })
+    await vi.waitFor(() => expect(service.getUser.mock.calls.length).toBe(checks + 1))
+    // The failed write is still there; a good load shows it as the error again.
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(store.getState().sync.canRetry).toBe(true)
+    expect(store.getState().sync.lastError).toMatchObject({ kind: 'network' })
+  })
+})
+
+describe('Saved toast after Retry', () => {
+  it('shows one Saved toast for a single retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'X' })
+    expect(h.notifier.success).not.toHaveBeenCalled()
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    expect(h.notifier.success).toHaveBeenCalledOnce()
+    expect(h.notifier.success).toHaveBeenCalledWith('Saved')
+  })
+
+  it('shows exactly one for a batch of 3', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(3)
+    await h.actions.createTask({ projectId: 'p1', title: 'One' })
+    await h.actions.updateTask('b', { priority: 'high' })
+    await h.actions.updatePreferences({ weekStartsOn: 0 })
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    expect(h.notifier.success).toHaveBeenCalledOnce()
+  })
+
+  it('shows nothing when the retry fails again', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(2)
+    await h.actions.updateTask('a', { title: 'X' })
+    expect((await h.actions.retryLastFailed()).ok).toBe(false)
+    expect(h.notifier.success).not.toHaveBeenCalled()
+  })
+
+  it('shows nothing when everything was superseded or the batch is empty', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Old attempt' })
+    h.repo.setLatency(20)
+    const newer = h.actions.updateTask('a', { title: 'Newer' })
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await newer
+    expect(h.notifier.success).not.toHaveBeenCalled()
+  })
+
+  it('shows nothing when the session changed (sign-out) during the retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'X' })
+    h.repo.setLatency(20)
+    const retrying = h.actions.retryLastFailed()
+    h.actions.reset()
+    await retrying
+    expect(h.notifier.success).not.toHaveBeenCalled()
   })
 })

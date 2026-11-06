@@ -91,4 +91,50 @@ describe('confirm()', () => {
     await expect(result).resolves.toBe('keep')
     await waitForClosed()
   })
+
+  it('returns focus to what asked, but not when another dialog took focus meanwhile', async () => {
+    const { user } = renderUI(
+      <>
+        <button>Opener</button>
+        <ConfirmHost />
+      </>,
+    )
+    const opener = screen.getByRole('button', { name: 'Opener' })
+    opener.focus()
+    act(() => {
+      void confirm({ title: 'Sure?', confirmLabel: 'Yes' })
+    })
+    let dialog = await screen.findByRole('alertdialog', { name: 'Sure?' })
+    await user.click(within(dialog).getByRole('button', { name: 'Yes' }))
+    await waitForClosed()
+    await waitFor(() => expect(opener).toHaveFocus())
+
+    // Again, but a search-like dialog opens (and takes focus) while the prompt is closing.
+    opener.focus()
+    act(() => {
+      void confirm({ title: 'Sure again?', confirmLabel: 'Yes' })
+    })
+    dialog = await screen.findByRole('alertdialog', { name: 'Sure again?' })
+    const search = document.createElement('div')
+    search.setAttribute('role', 'dialog')
+    search.dataset.state = 'open'
+    const input = document.createElement('input')
+    search.append(input)
+    // ⌘K lands while the prompt is closing: the overlay mounts and takes focus in the instant the
+    // prompt unmounts, before the prompt's own focus return (a task later) runs.
+    const yes = within(dialog).getByRole('button', { name: 'Yes' })
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('[role="alertdialog"]')) return
+      observer.disconnect()
+      document.body.append(search)
+      input.focus()
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    await user.click(yes)
+    await waitForClosed()
+    // Radix runs the focus return a task after unmounting: give it time to (wrongly) act.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(input).toHaveFocus()
+    search.remove()
+  })
 })

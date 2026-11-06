@@ -129,6 +129,15 @@ const NON_TEXT_INPUTS = new Set([
   'submit',
 ])
 
+/**
+ * True when a keydown belongs to an input method (Chinese / Japanese / Korean composition), not to
+ * the page: `isComposing`, or keyCode 229, which is what Safari sends for the Enter / Esc that
+ * confirms a candidate AFTER compositionend (isComposing is already false then).
+ */
+export function isImeKeyEvent(event: { isComposing?: boolean; keyCode?: number }): boolean {
+  return event.isComposing === true || event.keyCode === 229
+}
+
 /** True for elements where single-key shortcuts would steal typing. */
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (typeof HTMLElement === 'undefined' || !(target instanceof HTMLElement)) return false

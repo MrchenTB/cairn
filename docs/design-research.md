@@ -21,27 +21,27 @@
 
 所有來源的存取日期皆為 **2026-11-02**。瀏覽器觀察使用 Playwright 的 Chromium 156（macOS），視窗 1440×900。
 
-| ID | 來源（URL） | 取得方式 | 貢獻 |
-|---|---|---|---|
-| S1 | Linear Now — *A calmer interface for a product in motion*（2026-03-12，Charlie Aufmann & Maxime Heckel）<br>https://linear.app/now/behind-the-latest-design-refresh | WebFetch，另以 Playwright 檢視文章內 5 張官方圖片 | 兩條設計原則；側邊欄調暗、tab bar、icon、邊框與暖灰色盤的變更；內部 color tool。圖片包含：header 分層藍圖、側邊欄前後對照（含標註）、tab bar 對照、邊框對照、Theme Editor 截圖（含 LCH 數值） |
-| S2 | Linear Changelog — UI refresh（2026-03-12）<br>https://linear.app/changelog/2026-03-12-ui-refresh | WebFetch＋Playwright（hero 圖） | 官方變更摘要；hero 圖展示新 icon 與按鈕樣式；修正「收合側邊欄 hover 時無法展開」的 bug |
-| S3 | Linear Now — *How we redesigned the Linear UI (part II)*（2024-03-28）<br>https://linear.app/now/how-we-redesigned-the-linear-ui | WebFetch | 主題生成改用 LCH；主題只需 base、accent、contrast 三個變數；標題用 Inter Display、其餘用 Inter |
-| S4 | Linear Now — *A design reset (part I)*（2024-03-27）<br>https://linear.app/now/a-design-reset | WebFetch | 改版的背景脈絡（沒有具體規格） |
-| S5 | Linear Brand Guidelines<br>https://linear.app/brand | Playwright（頁面需要 JS 才能渲染） | 品牌色 Mercury White `#F4F5F8`、Nordic Gray `#222326`；主品牌色是低飽和藍，多用於背景；素材受智財保護。**品牌色≠App UI 色盤，Cairn 不使用任何品牌素材** |
-| S6 | Linear 首頁<br>https://linear.app/ | Playwright：截圖、`getComputedStyle`、讀取所有 `:root`／`[data-theme]` CSS custom properties | 首頁用 HTML 繪製的 App 示意（側邊欄、issue 視圖、看板、roadmap）的實測數值；行銷站的 token（字型、字級、字重、圓角、速度、focus ring、陰影、z-index、明暗色票） |
-| S7 | Linear Docs：[Timeline](https://linear.app/docs/timeline)、[Project dependencies](https://linear.app/docs/project-dependencies)、[Project milestones](https://linear.app/docs/project-milestones)、[Display options](https://linear.app/docs/display-options)、[Filters](https://linear.app/docs/filters)、[Account preferences](https://linear.app/docs/account-preferences)、[Issues](https://linear.app/docs/creating-issues) | WebFetch；Playwright 擷取 Timeline 與建立 issue Modal 的截圖 | Timeline、依賴與里程碑的規則；Display 與 Filter 的行為；Modal 版面與草稿行為 |
-| S8 | Asana Help Center：[Gantt view](https://help.asana.com/s/article/gantt-view)、[Timeline](https://help.asana.com/s/article/timeline)、[Managing tasks and dependencies with timeline](https://help.asana.com/s/article/managing-tasks-and-dependencies-with-timeline)、[Different types of tasks](https://help.asana.com/s/article/different-types-of-tasks) | Playwright（Salesforce 頁面需要 JS；WebFetch 只抓得到導覽列） | Gantt 與 Timeline 互動、依賴的建立方式與衝突提示、三種日期位移模式、未排程任務、里程碑 |
-| S9 | Asana Inside Asana（`.md` 版）：[Draw dependencies between tasks](https://asana.com/inside-asana/asana-timeline-draw-dependencies-between-tasks.md)、[Milestones](https://asana.com/inside-asana/new-milestones-visualize-project-progress.md) | WebFetch | 依賴 connector 的操作；里程碑的定義（頁面未標示發布日期） |
-| S10 | Tailwind CSS — [Dark mode](https://tailwindcss.com/docs/dark-mode) | WebFetch | v4 用 class 切換 dark 的寫法：`@custom-variant dark (&:where(.dark, .dark *));` |
-| S11 | Fontsource：[`@fontsource-variable/inter`](https://cdn.jsdelivr.net/npm/@fontsource-variable/inter/index.css)（npm 5.3.0）、`@fontsource-variable/noto-sans-tc`（5.3.1）；專案內已安裝的 `lucide-react` 1.66.0、`cmdk` 1.1.1、`sonner` 2.0.8、`tailwindcss` 4.3.3 | `npm view`、jsDelivr、唯讀檢查 `node_modules` | 字型 family 名稱為 `'Inter Variable'`（weight 100–900、`font-display: swap`）；icon 名稱是否存在；sonner 的 CSS 變數 |
-| S12 | 本機驗證 | Playwright 以 canvas 量測 CJK 字重的墨量；自寫 WCAG 2.x 相對亮度計算 | §4.2 的對比數字、§4.5 的字重結論 |
+| ID  | 來源（URL）                                                                                                                                                                                                                                                                                                                                                                                                                      | 取得方式                                                                                     | 貢獻                                                                                                                                                                                          |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1  | Linear Now — _A calmer interface for a product in motion_（2026-03-12，Charlie Aufmann & Maxime Heckel）<br>https://linear.app/now/behind-the-latest-design-refresh                                                                                                                                                                                                                                                              | WebFetch，另以 Playwright 檢視文章內 5 張官方圖片                                            | 兩條設計原則；側邊欄調暗、tab bar、icon、邊框與暖灰色盤的變更；內部 color tool。圖片包含：header 分層藍圖、側邊欄前後對照（含標註）、tab bar 對照、邊框對照、Theme Editor 截圖（含 LCH 數值） |
+| S2  | Linear Changelog — UI refresh（2026-03-12）<br>https://linear.app/changelog/2026-03-12-ui-refresh                                                                                                                                                                                                                                                                                                                                | WebFetch＋Playwright（hero 圖）                                                              | 官方變更摘要；hero 圖展示新 icon 與按鈕樣式；修正「收合側邊欄 hover 時無法展開」的 bug                                                                                                        |
+| S3  | Linear Now — _How we redesigned the Linear UI (part II)_（2024-03-28）<br>https://linear.app/now/how-we-redesigned-the-linear-ui                                                                                                                                                                                                                                                                                                 | WebFetch                                                                                     | 主題生成改用 LCH；主題只需 base、accent、contrast 三個變數；標題用 Inter Display、其餘用 Inter                                                                                                |
+| S4  | Linear Now — _A design reset (part I)_（2024-03-27）<br>https://linear.app/now/a-design-reset                                                                                                                                                                                                                                                                                                                                    | WebFetch                                                                                     | 改版的背景脈絡（沒有具體規格）                                                                                                                                                                |
+| S5  | Linear Brand Guidelines<br>https://linear.app/brand                                                                                                                                                                                                                                                                                                                                                                              | Playwright（頁面需要 JS 才能渲染）                                                           | 品牌色 Mercury White `#F4F5F8`、Nordic Gray `#222326`；主品牌色是低飽和藍，多用於背景；素材受智財保護。**品牌色≠App UI 色盤，Cairn 不使用任何品牌素材**                                       |
+| S6  | Linear 首頁<br>https://linear.app/                                                                                                                                                                                                                                                                                                                                                                                               | Playwright：截圖、`getComputedStyle`、讀取所有 `:root`／`[data-theme]` CSS custom properties | 首頁用 HTML 繪製的 App 示意（側邊欄、issue 視圖、看板、roadmap）的實測數值；行銷站的 token（字型、字級、字重、圓角、速度、focus ring、陰影、z-index、明暗色票）                               |
+| S7  | Linear Docs：[Timeline](https://linear.app/docs/timeline)、[Project dependencies](https://linear.app/docs/project-dependencies)、[Project milestones](https://linear.app/docs/project-milestones)、[Display options](https://linear.app/docs/display-options)、[Filters](https://linear.app/docs/filters)、[Account preferences](https://linear.app/docs/account-preferences)、[Issues](https://linear.app/docs/creating-issues) | WebFetch；Playwright 擷取 Timeline 與建立 issue Modal 的截圖                                 | Timeline、依賴與里程碑的規則；Display 與 Filter 的行為；Modal 版面與草稿行為                                                                                                                  |
+| S8  | Asana Help Center：[Gantt view](https://help.asana.com/s/article/gantt-view)、[Timeline](https://help.asana.com/s/article/timeline)、[Managing tasks and dependencies with timeline](https://help.asana.com/s/article/managing-tasks-and-dependencies-with-timeline)、[Different types of tasks](https://help.asana.com/s/article/different-types-of-tasks)                                                                      | Playwright（Salesforce 頁面需要 JS；WebFetch 只抓得到導覽列）                                | Gantt 與 Timeline 互動、依賴的建立方式與衝突提示、三種日期位移模式、未排程任務、里程碑                                                                                                        |
+| S9  | Asana Inside Asana（`.md` 版）：[Draw dependencies between tasks](https://asana.com/inside-asana/asana-timeline-draw-dependencies-between-tasks.md)、[Milestones](https://asana.com/inside-asana/new-milestones-visualize-project-progress.md)                                                                                                                                                                                   | WebFetch                                                                                     | 依賴 connector 的操作；里程碑的定義（頁面未標示發布日期）                                                                                                                                     |
+| S10 | Tailwind CSS — [Dark mode](https://tailwindcss.com/docs/dark-mode)                                                                                                                                                                                                                                                                                                                                                               | WebFetch                                                                                     | v4 用 class 切換 dark 的寫法：`@custom-variant dark (&:where(.dark, .dark *));`                                                                                                               |
+| S11 | Fontsource：[`@fontsource-variable/inter`](https://cdn.jsdelivr.net/npm/@fontsource-variable/inter/index.css)（npm 5.3.0）、`@fontsource-variable/noto-sans-tc`（5.3.1）；專案內已安裝的 `lucide-react` 1.66.0、`cmdk` 1.1.1、`sonner` 2.0.8、`tailwindcss` 4.3.3                                                                                                                                                                | `npm view`、jsDelivr、唯讀檢查 `node_modules`                                                | 字型 family 名稱為 `'Inter Variable'`（weight 100–900、`font-display: swap`）；icon 名稱是否存在；sonner 的 CSS 變數                                                                          |
+| S12 | 本機驗證                                                                                                                                                                                                                                                                                                                                                                                                                         | Playwright 以 canvas 量測 CJK 字重的墨量；自寫 WCAG 2.x 相對亮度計算                         | §4.2 的對比數字、§4.5 的字重結論                                                                                                                                                              |
 
 ### 1.1 需要登入或無法觀察的部分（未捏造）
 
 - **Linear App 本體需要登入，沒有直接觀察。** 文中「App 內」的觀察都來自三種公開來源：S1／S2 的官方圖片、S6 首頁的 HTML 示意、S7 的文件截圖。S7 截圖的拍攝時間不明，可能早於 2026-03 refresh。
 - **Linear 的淺色主題未能觀察。** 首頁、changelog、docs 都固定為 `data-theme="dark"`；用 `prefers-color-scheme: light` 模擬後仍然是深色。只讀得到行銷站 CSS 裡的 `[data-theme="light"]` token（造訪的頁面都沒有套用），無法驗證 App 內淺色主題的實際配色。
 - Linear 的 Command menu（⌘K）外觀、設定頁（`linear.app/settings/...`）、清單列的實際高度：都需要登入，只有文件的文字描述。
-- **Asana App 需要登入。** Help 文章內的圖片與 GIF 位於 Salesforce 元件內，沒有擷取到，只採用文字內容。`help.asana.com/s/article/milestones` 回傳 404，改用 *Different types of tasks*。
+- **Asana App 需要登入。** Help 文章內的圖片與 GIF 位於 Salesforce 元件內，沒有擷取到，只採用文字內容。`help.asana.com/s/article/milestones` 回傳 404，改用 _Different types of tasks_。
 - 依 PRD 規定，本文不複製 Linear 的原始碼、Logo、圖示或插畫。§2 列出的 Linear 數值只作研究比較，Cairn 的 token 是另外推導的。
 
 ---
@@ -54,7 +54,7 @@
 
 - 【觀察】目標是保持高資訊密度，但不讓人覺得壓迫，體驗要熟悉且流暢。
 - 【觀察】原則一（意譯）：還沒贏得的注意力就不要去爭。與當下任務直接相關的元素保持顯著，導覽與定位用的元素退到後面。
-- 【觀察】原則二：*"Structure should be felt not seen."* 分隔線曾經無緣無故地越加越多，這次 refresh 把它們柔化，讓結構存在但不雜亂。
+- 【觀察】原則二：_"Structure should be felt not seen."_ 分隔線曾經無緣無故地越加越多，這次 refresh 把它們柔化，讓結構存在但不雜亂。
 - 【觀察】具體變更：
   - 側邊欄調暗了幾級。
   - 桌面版 tab bar 更緊湊、不再橫跨全寬、加了圓角，icon 與文字縮小，部分 tab 只顯示 icon。
@@ -69,10 +69,10 @@
 - 【觀察】[S1 藍圖] header 系統分四層：01 App（視窗）→ 02 Location bar（右側放 icon 動作）→ 03 View bar（視圖層級的動作，如複製連結、複製 ID、split button）→ 04 Content（圓角內嵌面板）。
 - 【觀察】[S6 實測] 首頁 App 示意的外框與面板：
 
-  | 部位 | 實測值 |
-  |---|---|
-  | 視窗框 | radius 12px、padding 8px、底色 `rgb(16,17,18)`、1px `rgba(255,255,255,.08)` 邊 |
-  | 側邊欄 | 直接放在視窗框底色上，沒有自己的面板 |
+  | 部位       | 實測值                                                                                      |
+  | ---------- | ------------------------------------------------------------------------------------------- |
+  | 視窗框     | radius 12px、padding 8px、底色 `rgb(16,17,18)`、1px `rgba(255,255,255,.08)` 邊              |
+  | 側邊欄     | 直接放在視窗框底色上，沒有自己的面板                                                        |
   | 主內容面板 | radius 8px、1px `rgba(255,255,255,.05)` 邊、背景只疊 1% 白、外圈 `0 0 0 2px rgba(0,0,0,.2)` |
 
 - 【觀察】[S6] Location bar：
@@ -81,13 +81,13 @@
   - 右側為 28×28 的圓形 icon button。
 - 【觀察】[S6] issue 視圖的文字層級：
 
-  | 元素 | 字級／字重 | 其他 |
-  |---|---|---|
-  | issue 標題 | 20px／590 | line-height 1.33、letter-spacing −0.24px |
-  | 區塊標題 | 16px／590 | |
-  | 屬性標籤 | 12px | `#8a8f98` |
-  | 屬性值 | 12px | `#d0d6e0`，列高 24px |
-  | 活動紀錄 | 12px | `#62666d` |
+  | 元素       | 字級／字重 | 其他                                     |
+  | ---------- | ---------- | ---------------------------------------- |
+  | issue 標題 | 20px／590  | line-height 1.33、letter-spacing −0.24px |
+  | 區塊標題   | 16px／590  |                                          |
+  | 屬性標籤   | 12px       | `#8a8f98`                                |
+  | 屬性值     | 12px       | `#d0d6e0`，列高 24px                     |
+  | 活動紀錄   | 12px       | `#62666d`                                |
 
 - 【推論】層級靠「亮度、字重、字級」三者分工，幾乎不用線條。
 
@@ -96,15 +96,16 @@
 - 【觀察】[S1 圖註] 側邊欄前後對照標註三點：icon 更小更精緻、非作用中項目的文字變淡、垂直留白增加。作用中的項目（Inbox）保持亮字並加上淡底 pill。
 - 【觀察】[S6] 側邊欄實測：
 
-  | 部位 | 實測值 |
-  |---|---|
-  | nav item | 高 28px、間距 2px（節距 30px）、radius 8px、padding 0 7px、13px／510、`#d0d6e0` |
-  | 選取項 | 底色 `rgba(255,255,255,.04)` |
-  | 分組標題（Workspace／Favorites） | 高 24px、12px／510、`#62666d`，附展開箭頭 |
-  | 寬度 | 總寬 232px（含 padding），項目寬 208px |
-  | icon | 13–16px |
+  | 部位                             | 實測值                                                                          |
+  | -------------------------------- | ------------------------------------------------------------------------------- |
+  | nav item                         | 高 28px、間距 2px（節距 30px）、radius 8px、padding 0 7px、13px／510、`#d0d6e0` |
+  | 選取項                           | 底色 `rgba(255,255,255,.04)`                                                    |
+  | 分組標題（Workspace／Favorites） | 高 24px、12px／510、`#62666d`，附展開箭頭                                       |
+  | 寬度                             | 總寬 232px（含 padding），項目寬 208px                                          |
+  | icon                             | 13–16px                                                                         |
 
   另外，示意中 nav 群組與屬性欄的 `opacity` 是 0.8。
+
 - 【推論】[S2] changelog 修正了「收合側邊欄 hover 時有時無法展開」，可見 Linear 的收合狀態支援 hover 時暫時展開。Cairn 依 PRD 採「icon＋Tooltip」，不做 hover 展開，以免誤觸。
 
 ### 2.4 Header、Tabs、篩選與 Display
@@ -140,6 +141,7 @@
   - 12%：timeline 長條。
 
   行銷站另外定義了 `--border-hairline: .5px`。
+
 - 【推論】分隔優先用留白與表面亮度差；線條只留給功能性的分界，例如 sticky 表頭、可拖曳的分隔線。
 
 ### 2.7 圖示
@@ -160,10 +162,10 @@
 - 【推論】Linear 的層次是在 base 上做 lightness 的小位移：hover 約 +1.5、elevated 約 +3、menu 約 +5、下沉層約 −2（LCH 單位）。Cairn 採用同一方法論，但用自己的數值，並改在 OKLCH 中推導。
 - 【觀察】[S6 CSS] 行銷站的色票（研究參考，Cairn 不沿用）：
 
-  | 主題 | 背景 | 文字 | 其他 |
-  |---|---|---|---|
-  | dark | `#08090a`／`#0f1011`／`#141516`／`#191a1b` | `#f7f8f8`／`#d0d6e0`／`#8a8f98`／`#62666d` | 邊框 `#23252a`／`#34343a`／`#3e3e44`；accent `#7170ff`（hover `#828fff`） |
-  | light | `#fff`／`#f9f8f9`／`#f4f2f4`／`#eeedef` | `#282a30`／`#3c4149`／`#6f6e77`／`#86848d` | |
+  | 主題  | 背景                                       | 文字                                       | 其他                                                                      |
+  | ----- | ------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------------- |
+  | dark  | `#08090a`／`#0f1011`／`#141516`／`#191a1b` | `#f7f8f8`／`#d0d6e0`／`#8a8f98`／`#62666d` | 邊框 `#23252a`／`#34343a`／`#3e3e44`；accent `#7170ff`（hover `#828fff`） |
+  | light | `#fff`／`#f9f8f9`／`#f4f2f4`／`#eeedef`    | `#282a30`／`#3c4149`／`#6f6e77`／`#86848d` |                                                                           |
 
 - 【觀察，自算】行銷站最弱的文字色未達 4.5:1：`#62666d` 在 `#08090a` 上是 **3.45:1**，`#86848d` 在白底上是 **3.68:1**。因此 Cairn 規定 tertiary 文字在每個實際使用的背景上都必須 ≥ 4.5:1。
 
@@ -220,7 +222,7 @@
   - Baseline 以斜線底紋長條表示原計畫，實心長條表示現況；每個專案只有一個 baseline。
 - 【觀察】[S8] **Gantt 依賴**：hover 任務長條會出現 handle，拖到另一個任務即建立，之後可以從下拉選單選類型；也可以多選後用「Chain dependencies」批次串接。新任務預設自動排程：日期連續、工期 1 天。
 - 【觀察】[S8] **Timeline**：
-  - 沒有日期的任務放在時間軸右側的 *Unscheduled tasks* 區，可以收合；拖到時間軸上的日期就完成排程。
+  - 沒有日期的任務放在時間軸右側的 _Unscheduled tasks_ 區，可以收合；拖到時間軸上的日期就完成排程。
   - 在時間軸上點日期可以直接新增任務；`Cmd/Ctrl` 多選後可以整批拖移。
   - 子任務只顯示第一層，點左側箭頭展開。
 - 【觀察】[S8] **依賴線與日期位移**：
@@ -249,18 +251,18 @@
 
 ### 4.1 從 PRD 起始色到 Cairn tokens
 
-| 角色 | PRD 起始 | Cairn token | 理由（OKLCH 為參考值） |
-|---|---|---|---|
-| Dark 主背景 | `#16171C` | `--bg-main` `#16171C`（保留） | `oklch(0.206 0.010 277)`；主文字在其上 14.79:1 |
-| Dark 側邊欄／App 底 | — | `--bg-app`／`--bg-sidebar` `#111216` | 比主面板暗 ΔL≈0.023，滿足「側邊欄比主工作區低調」 |
-| Dark 卡片／輸入框 | — | `--bg-surface` `#1E1F26` | 位於 main 與 elevated 之間（ΔL≈+0.035），比照 Linear 的小步階 |
-| Dark surface | `#22232B` | `--bg-elevated` `#22232B`（保留） | 改用於 popover、menu、modal |
-| Dark 文字 | `#E8E9F1` | `--fg-primary`（保留） | 在 main 上 14.79:1、在 elevated 上 12.92:1 |
-| Dark accent | `#9093E8` | `--accent`（保留） | 白字只有 2.79:1，所以按鈕文字改用深色 `--accent-fg` `#121318`（6.65:1）；accent 色的文字與連結改用較亮的 `--accent-text` `#A2A5F2`（≥ 6.00:1） |
-| Light 背景 | `#F8F8FA` | `--bg-muted` `#F8F8FA` | 用於看板欄、表頭、群組列；App 底與側邊欄改用稍深的 `#F2F2F5`，主面板 `#FFFFFF` |
-| Light surface | `#FFFFFF` | `--bg-main`／`--bg-surface`／`--bg-elevated` | 淺色主題靠邊框與陰影分層 |
-| Light 文字 | `#242631` | `--fg-primary`（保留） | 在白底上 15.04:1 |
-| Light accent | `#7177CE` | `--accent` `#686AC3` | 原值在白底上只有 4.01:1；色相與彩度不變，L 由 0.604 降到 0.565，白字提升到 4.73:1 |
+| 角色                | PRD 起始  | Cairn token                                  | 理由（OKLCH 為參考值）                                                                                                                         |
+| ------------------- | --------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dark 主背景         | `#16171C` | `--bg-main` `#16171C`（保留）                | `oklch(0.206 0.010 277)`；主文字在其上 14.79:1                                                                                                 |
+| Dark 側邊欄／App 底 | —         | `--bg-app`／`--bg-sidebar` `#111216`         | 比主面板暗 ΔL≈0.023，滿足「側邊欄比主工作區低調」                                                                                              |
+| Dark 卡片／輸入框   | —         | `--bg-surface` `#1E1F26`                     | 位於 main 與 elevated 之間（ΔL≈+0.035），比照 Linear 的小步階                                                                                  |
+| Dark surface        | `#22232B` | `--bg-elevated` `#22232B`（保留）            | 改用於 popover、menu、modal                                                                                                                    |
+| Dark 文字           | `#E8E9F1` | `--fg-primary`（保留）                       | 在 main 上 14.79:1、在 elevated 上 12.92:1                                                                                                     |
+| Dark accent         | `#9093E8` | `--accent`（保留）                           | 白字只有 2.79:1，所以按鈕文字改用深色 `--accent-fg` `#121318`（6.65:1）；accent 色的文字與連結改用較亮的 `--accent-text` `#A2A5F2`（≥ 6.00:1） |
+| Light 背景          | `#F8F8FA` | `--bg-muted` `#F8F8FA`                       | 用於看板欄、表頭、群組列；App 底與側邊欄改用稍深的 `#F2F2F5`，主面板 `#FFFFFF`                                                                 |
+| Light surface       | `#FFFFFF` | `--bg-main`／`--bg-surface`／`--bg-elevated` | 淺色主題靠邊框與陰影分層                                                                                                                       |
+| Light 文字          | `#242631` | `--fg-primary`（保留）                       | 在白底上 15.04:1                                                                                                                               |
+| Light accent        | `#7177CE` | `--accent` `#686AC3`                         | 原值在白底上只有 4.01:1；色相與彩度不變，L 由 0.604 降到 0.565，白字提升到 4.73:1                                                              |
 
 中性色全部落在 OKLCH hue 277–286、chroma ≤ 0.015，與 accent（hue 280–282）同色相，成為「帶一點藍紫的中性灰」。Cairn 刻意**不跟隨** Linear 2026 的暖灰路線，因為 PRD 指定以柔和藍紫為主調；不過借用了它「低飽和、層級只差一點點 lightness」的做法。
 
@@ -273,114 +275,114 @@
 
 #### Light theme
 
-| 文字 \ 背景 | sidebar／app<br>`#F2F2F5` | main<br>`#FFFFFF` | muted<br>`#F8F8FA` | surface<br>`#FFFFFF` | elevated<br>`#FFFFFF` | hover@main<br>`#F5F5F6` | hover@elevated<br>`#F5F5F6` | active@sidebar<br>`#E4E4E7` | selected@main<br>`#F0F0F9` |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `--fg-primary` `#242631` | 13.46 | 15.04 | 14.18 | 15.04 | 15.04 | 13.80 | 13.80 | 11.85 | 13.27 |
-| `--fg-secondary` `#50525E` | 6.94 | 7.75 | 7.31 | 7.75 | 7.75 | 7.11 | 7.11 | 6.11 | 6.84 |
-| `--fg-tertiary` `#63646F` | 5.25 | 5.86 | 5.53 | 5.86 | 5.86 | 5.38 | 5.38 | 4.62 | 5.17 |
-| `--fg-disabled` `#A6A7AE` | 2.15 | 2.40 | 2.26 | 2.40 | 2.40 | 2.20 | 2.20 | 1.89 | 2.12 |
-| `--accent-text` `#6162BD` | 4.71 | 5.26 | 4.96 | 5.26 | 5.26 | 4.83 | 4.83 | 4.15 | 4.65 |
+| 文字 \ 背景                | sidebar／app<br>`#F2F2F5` | main<br>`#FFFFFF` | muted<br>`#F8F8FA` | surface<br>`#FFFFFF` | elevated<br>`#FFFFFF` | hover@main<br>`#F5F5F6` | hover@elevated<br>`#F5F5F6` | active@sidebar<br>`#E4E4E7` | selected@main<br>`#F0F0F9` |
+| -------------------------- | ------------------------: | ----------------: | -----------------: | -------------------: | --------------------: | ----------------------: | --------------------------: | --------------------------: | -------------------------: |
+| `--fg-primary` `#242631`   |                     13.46 |             15.04 |              14.18 |                15.04 |                 15.04 |                   13.80 |                       13.80 |                       11.85 |                      13.27 |
+| `--fg-secondary` `#50525E` |                      6.94 |              7.75 |               7.31 |                 7.75 |                  7.75 |                    7.11 |                        7.11 |                        6.11 |                       6.84 |
+| `--fg-tertiary` `#63646F`  |                      5.25 |              5.86 |               5.53 |                 5.86 |                  5.86 |                    5.38 |                        5.38 |                        4.62 |                       5.17 |
+| `--fg-disabled` `#A6A7AE`  |                      2.15 |              2.40 |               2.26 |                 2.40 |                  2.40 |                    2.20 |                        2.20 |                        1.89 |                       2.12 |
+| `--accent-text` `#6162BD`  |                      4.71 |              5.26 |               4.96 |                 5.26 |                  5.26 |                    4.83 |                        4.83 |                        4.15 |                       4.65 |
 
 **前景放在實色上：**
 
-| 組合 | 對比 |
-|---|---:|
-| `--accent-fg` on `--accent` | 4.73 |
-| `--accent-fg` on `--accent-hover` | 5.49 |
-| `--danger-fg` on `--danger` | 5.45 |
+| 組合                                            |             對比 |
+| ----------------------------------------------- | ---------------: |
+| `--accent-fg` on `--accent`                     |             4.73 |
+| `--accent-fg` on `--accent-hover`               |             5.49 |
+| `--danger-fg` on `--danger`                     |             5.45 |
 | focus ring `#686AC3` vs main／sidebar／elevated | 4.73／4.23／4.73 |
 
 **非文字元素**（目標 ≥ 3:1；依序為 main／sidebar／elevated）：
 
-| Token | main | sidebar | elevated |
-|---|---:|---:|---:|
-| `--status-todo`、`--priority-low`、`--border-contrast`、`--gantt-milestone-past`（同為 `#868793`） | 3.56 | 3.19 | 3.56 |
-| `--status-in-progress` | 3.47 | 3.11 | 3.47 |
-| `--status-done` | 3.73 | 3.34 | 3.73 |
-| `--priority-medium` | 7.75 | 6.94 | 7.75 |
-| `--priority-high` | 3.86 | 3.45 | 3.86 |
-| `--priority-urgent`、`--gantt-conflict` | 5.45 | 4.88 | 5.45 |
-| `--gantt-dependency` | 3.61 | 3.23 | 3.61 |
-| `--gantt-today` | 4.73 | 4.23 | 4.73 |
-| `--gantt-milestone` | 10.92 | 9.78 | 10.92 |
+| Token                                                                                              |  main | sidebar | elevated |
+| -------------------------------------------------------------------------------------------------- | ----: | ------: | -------: |
+| `--status-todo`、`--priority-low`、`--border-contrast`、`--gantt-milestone-past`（同為 `#868793`） |  3.56 |    3.19 |     3.56 |
+| `--status-in-progress`                                                                             |  3.47 |    3.11 |     3.47 |
+| `--status-done`                                                                                    |  3.73 |    3.34 |     3.73 |
+| `--priority-medium`                                                                                |  7.75 |    6.94 |     7.75 |
+| `--priority-high`                                                                                  |  3.86 |    3.45 |     3.86 |
+| `--priority-urgent`、`--gantt-conflict`                                                            |  5.45 |    4.88 |     5.45 |
+| `--gantt-dependency`                                                                               |  3.61 |    3.23 |     3.61 |
+| `--gantt-today`                                                                                    |  4.73 |    4.23 |     4.73 |
+| `--gantt-milestone`                                                                                | 10.92 |    9.78 |    10.92 |
 
 **語意文字**（main／自身 subtle 背景）：
 
-| Token | main | subtle |
-|---|---:|---:|
-| `--danger` | 5.45 | 4.82 |
-| `--warning` | 5.33 | 4.79 |
-| `--success` | 5.30 | 4.74 |
-| `--info` | 5.32 | 4.79 |
+| Token       | main | subtle |
+| ----------- | ---: | -----: |
+| `--danger`  | 5.45 |   4.82 |
+| `--warning` | 5.33 |   4.79 |
+| `--success` | 5.30 |   4.74 |
+| `--info`    | 5.32 |   4.79 |
 
 **Gantt：**
 
-| 組合 | 對比 |
-|---|---:|
-| 長條文字 on 長條 | 12.61 |
-| 長條文字 on in-progress 長條 | 11.04 |
-| done 文字 on done 長條 | 5.24 |
+| 組合                                |         對比 |
+| ----------------------------------- | -----------: |
+| 長條文字 on 長條                    |        12.61 |
+| 長條文字 on in-progress 長條        |        11.04 |
+| done 文字 on done 長條              |         5.24 |
 | 長條邊框 vs 圖表背景（vs 週末遮罩） | 3.26（3.07） |
-| 里程碑 vs 長條 | 9.16 |
-| 衝突線 vs 長條 | 4.57 |
-| 依賴線 vs 週末遮罩 | 3.40 |
+| 里程碑 vs 長條                      |         9.16 |
+| 衝突線 vs 長條                      |         4.57 |
+| 依賴線 vs 週末遮罩                  |         3.40 |
 
 長條相關 token 合成後的實色：bar `#EAEAF7`、in-progress `#DBDBF1`、done `#F2F2F3`、border `#8688CF`、weekend `#F8F8F8`。
 
 #### Dark theme
 
-| 文字 \ 背景 | sidebar／app<br>`#111216` | main<br>`#16171C` | muted<br>`#1A1B21` | surface<br>`#1E1F26` | elevated<br>`#22232B` | hover@main<br>`#202126` | hover@elevated<br>`#2C2D35` | active@sidebar<br>`#222326` | selected@main<br>`#2A2B3D` |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `--fg-primary` `#E8E9F1` | 15.47 | 14.79 | 14.20 | 13.57 | 12.92 | 13.28 | 11.32 | 12.99 | 11.48 |
-| `--fg-secondary` `#B8BAC4` | 9.68 | 9.25 | 8.88 | 8.49 | 8.08 | 8.31 | 7.08 | 8.13 | 7.18 |
-| `--fg-tertiary` `#9697A2` | 6.46 | 6.17 | 5.93 | 5.66 | 5.39 | 5.54 | 4.72 | 5.42 | 4.79 |
-| `--fg-disabled` `#5C5D66` | 2.86 | 2.74 | 2.63 | 2.51 | 2.39 | 2.46 | 2.09 | 2.40 | 2.13 |
-| `--accent-text` `#A2A5F2` | 8.20 | 7.84 | 7.52 | 7.19 | 6.85 | 7.04 | 6.00 | 6.88 | 6.09 |
+| 文字 \ 背景                | sidebar／app<br>`#111216` | main<br>`#16171C` | muted<br>`#1A1B21` | surface<br>`#1E1F26` | elevated<br>`#22232B` | hover@main<br>`#202126` | hover@elevated<br>`#2C2D35` | active@sidebar<br>`#222326` | selected@main<br>`#2A2B3D` |
+| -------------------------- | ------------------------: | ----------------: | -----------------: | -------------------: | --------------------: | ----------------------: | --------------------------: | --------------------------: | -------------------------: |
+| `--fg-primary` `#E8E9F1`   |                     15.47 |             14.79 |              14.20 |                13.57 |                 12.92 |                   13.28 |                       11.32 |                       12.99 |                      11.48 |
+| `--fg-secondary` `#B8BAC4` |                      9.68 |              9.25 |               8.88 |                 8.49 |                  8.08 |                    8.31 |                        7.08 |                        8.13 |                       7.18 |
+| `--fg-tertiary` `#9697A2`  |                      6.46 |              6.17 |               5.93 |                 5.66 |                  5.39 |                    5.54 |                        4.72 |                        5.42 |                       4.79 |
+| `--fg-disabled` `#5C5D66`  |                      2.86 |              2.74 |               2.63 |                 2.51 |                  2.39 |                    2.46 |                        2.09 |                        2.40 |                       2.13 |
+| `--accent-text` `#A2A5F2`  |                      8.20 |              7.84 |               7.52 |                 7.19 |                  6.85 |                    7.04 |                        6.00 |                        6.88 |                       6.09 |
 
 **前景放在實色上：**
 
-| 組合 | 對比 |
-|---|---:|
-| `--accent-fg` on `--accent` | 6.65 |
-| `--accent-fg` on `--accent-hover` | 7.68 |
-| `--danger-fg` on `--danger` | 6.17 |
+| 組合                                            |             對比 |
+| ----------------------------------------------- | ---------------: |
+| `--accent-fg` on `--accent`                     |             6.65 |
+| `--accent-fg` on `--accent-hover`               |             7.68 |
+| `--danger-fg` on `--danger`                     |             6.17 |
 | focus ring `#A2A5F2` vs main／sidebar／elevated | 7.84／8.20／6.85 |
 
 **非文字元素**（目標 ≥ 3:1；依序為 main／sidebar／elevated）：
 
-| Token | main | sidebar | elevated |
-|---|---:|---:|---:|
-| `--status-todo`、`--priority-low`（同為 `#9697A2`） | 6.17 | 6.46 | 5.39 |
-| `--status-in-progress` | 9.47 | 9.91 | 8.27 |
-| `--status-done` | 8.43 | 8.81 | 7.36 |
-| `--priority-medium` | 9.25 | 9.68 | 8.08 |
-| `--priority-high` | 7.75 | 8.10 | 6.77 |
-| `--priority-urgent`、`--gantt-conflict` | 5.95 | 6.23 | 5.20 |
-| `--border-contrast`、`--gantt-milestone-past`（同為 `#6E6F7A`） | 3.59 | 3.76 | 3.14 |
-| `--gantt-dependency` | 3.80 | 3.98 | 3.32 |
-| `--gantt-today` | 7.84 | 8.20 | 6.85 |
-| `--gantt-milestone` | 12.50 | 13.07 | 10.92 |
+| Token                                                           |  main | sidebar | elevated |
+| --------------------------------------------------------------- | ----: | ------: | -------: |
+| `--status-todo`、`--priority-low`（同為 `#9697A2`）             |  6.17 |    6.46 |     5.39 |
+| `--status-in-progress`                                          |  9.47 |    9.91 |     8.27 |
+| `--status-done`                                                 |  8.43 |    8.81 |     7.36 |
+| `--priority-medium`                                             |  9.25 |    9.68 |     8.08 |
+| `--priority-high`                                               |  7.75 |    8.10 |     6.77 |
+| `--priority-urgent`、`--gantt-conflict`                         |  5.95 |    6.23 |     5.20 |
+| `--border-contrast`、`--gantt-milestone-past`（同為 `#6E6F7A`） |  3.59 |    3.76 |     3.14 |
+| `--gantt-dependency`                                            |  3.80 |    3.98 |     3.32 |
+| `--gantt-today`                                                 |  7.84 |    8.20 |     6.85 |
+| `--gantt-milestone`                                             | 12.50 |   13.07 |    10.92 |
 
 **語意文字**（main／自身 subtle 背景）：
 
-| Token | main | subtle |
-|---|---:|---:|
-| `--danger` | 5.95 | 4.94 |
-| `--warning` | 9.47 | 7.19 |
-| `--success` | 8.43 | 6.54 |
-| `--info` | 7.89 | 6.18 |
+| Token       | main | subtle |
+| ----------- | ---: | -----: |
+| `--danger`  | 5.95 |   4.94 |
+| `--warning` | 9.47 |   7.19 |
+| `--success` | 8.43 |   6.54 |
+| `--info`    | 7.89 |   6.18 |
 
 **Gantt：**
 
-| 組合 | 對比 |
-|---|---:|
-| 長條文字 on 長條 | 10.31 |
-| 長條文字 on in-progress 長條 | 8.11 |
-| done 文字 on done 長條 | 5.14 |
+| 組合                                |         對比 |
+| ----------------------------------- | -----------: |
+| 長條文字 on 長條                    |        10.31 |
+| 長條文字 on in-progress 長條        |         8.11 |
+| done 文字 on done 長條              |         5.14 |
 | 長條邊框 vs 圖表背景（vs 週末遮罩） | 3.79（3.60） |
-| 里程碑 vs 長條 | 8.71 |
-| 衝突線 vs 長條 | 4.15 |
-| 依賴線 vs 週末遮罩 | 3.61 |
+| 里程碑 vs 長條                      |         8.71 |
+| 衝突線 vs 長條                      |         4.15 |
+| 依賴線 vs 週末遮罩                  |         3.61 |
 
 長條相關 token 合成後的實色：bar `#313249`、in-progress `#3F4161`、done `#26272C`、border `#6B6EAB`、weekend `#1B1C21`。
 
@@ -408,30 +410,31 @@
   color-scheme: light;
 
   /* ---------- Typography ---------- */
-  --font-family-sans: "Inter Variable", "Inter", "PingFang TC", "Noto Sans TC",
-    "Microsoft JhengHei UI", "Microsoft JhengHei", system-ui, -apple-system,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-family-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
-    Menlo, Consolas, monospace;
+  --font-family-sans:
+    'Inter Variable', 'Inter', 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei UI',
+    'Microsoft JhengHei', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-family-mono:
+    ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
 
-  --font-size-micro: 11px;    /* Gantt 下層表頭、kbd、小計數 */
+  --font-size-micro: 11px; /* Gantt 下層表頭、kbd、小計數 */
   --line-height-micro: 16px;
-  --font-size-meta: 12px;     /* meta、chip、分組標題、Gantt 長條文字 */
+  --font-size-meta: 12px; /* meta、chip、分組標題、Gantt 長條文字 */
   --line-height-meta: 16px;
-  --font-size-ui: 13px;       /* 基準：列表、側邊欄、按鈕、輸入框 */
+  --font-size-ui: 13px; /* 基準：列表、側邊欄、按鈕、輸入框 */
   --line-height-ui: 20px;
-  --font-size-body: 14px;     /* 描述、Modal 欄位、空狀態說明 */
+  --font-size-body: 14px; /* 描述、Modal 欄位、空狀態說明 */
   --line-height-body: 22px;
-  --font-size-heading: 16px;  /* Modal／區塊標題、搜尋輸入 */
+  --font-size-heading: 16px; /* Modal／區塊標題、搜尋輸入 */
   --line-height-heading: 24px;
-  --font-size-title: 20px;    /* 頁面標題、Task Modal 任務名稱 */
+  --font-size-title: 20px; /* 頁面標題、Task Modal 任務名稱 */
   --line-height-title: 28px;
-  --font-size-display: 24px;  /* Overview 標題、首次使用空狀態 */
+  --font-size-display: 24px; /* Overview 標題、首次使用空狀態 */
   --line-height-display: 32px;
 
   --font-weight-regular: 400;
   --font-weight-medium: 500;
-  --font-weight-semibold: 600;   /* 不使用 501–599：中文會落到 Semibold 字面（§4.5） */
+  --font-weight-semibold: 600; /* 不使用 501–599：中文會落到 Semibold 字面（§4.5） */
   --letter-spacing-title: -0.01em; /* 只用於 20／24px 標題；其餘一律 0 */
 
   /* ---------- Spacing（4px grid＋2px 半階；與 Tailwind --spacing: 0.25rem 對齊） ---------- */
@@ -451,22 +454,22 @@
   --space-16: 64px;
 
   /* ---------- Radii（數值與 Tailwind v4 預設 rounded-sm/md/lg/xl 相同） ---------- */
-  --radius-sm: 4px;      /* Gantt 長條、kbd、小標記 */
-  --radius-md: 6px;      /* 按鈕、輸入框、選單項、側邊欄項、tab */
-  --radius-lg: 8px;      /* 卡片、popover、menu、toast、看板欄 */
-  --radius-xl: 12px;     /* 主面板、Modal、Command overlay */
+  --radius-sm: 4px; /* Gantt 長條、kbd、小標記 */
+  --radius-md: 6px; /* 按鈕、輸入框、選單項、側邊欄項、tab */
+  --radius-lg: 8px; /* 卡片、popover、menu、toast、看板欄 */
+  --radius-xl: 12px; /* 主面板、Modal、Command overlay */
   --radius-full: 9999px; /* pill chip、switch、進度條 */
 
   /* ---------- Layout & control heights ---------- */
   --sidebar-width: 240px;
   --sidebar-width-collapsed: 52px;
-  --shell-gap: 8px;            /* 主面板與視窗邊緣的距離 */
-  --topbar-height: 44px;       /* Location bar */
-  --viewbar-height: 40px;      /* View tabs＋視圖控制 */
+  --shell-gap: 8px; /* 主面板與視窗邊緣的距離 */
+  --topbar-height: 44px; /* Location bar */
+  --viewbar-height: 40px; /* View tabs＋視圖控制 */
   --content-max-width: 1200px; /* Overview／Settings 等閱讀型頁面 */
   --h-sidebar-item: 28px;
-  --h-row: 36px;               /* List、My Tasks、搜尋結果 */
-  --h-row-group: 32px;         /* 階段群組列、選單項 */
+  --h-row: 36px; /* List、My Tasks、搜尋結果 */
+  --h-row-group: 32px; /* 階段群組列、選單項 */
   --h-btn-sm: 24px;
   --h-btn-md: 28px;
   --h-btn-lg: 32px;
@@ -474,26 +477,26 @@
   --h-chip: 24px;
   --icon-sm: 14px;
   --icon-md: 16px;
-  --icon-stroke: 1.75;         /* lucide strokeWidth（16px）；14px 時用 1.5 */
+  --icon-stroke: 1.75; /* lucide strokeWidth（16px）；14px 時用 1.5 */
 
   /* ---------- Gantt geometry ---------- */
-  --gantt-pane-width: 300px;        /* 左側 sticky 任務欄，可拖曳 220–480px */
+  --gantt-pane-width: 300px; /* 左側 sticky 任務欄，可拖曳 220–480px */
   --gantt-header-tier-height: 24px; /* 兩層 → 表頭 48px */
   --gantt-row-height: 32px;
   --gantt-bar-height: 20px;
-  --gantt-summary-height: 6px;      /* 階段／父任務彙總條 */
-  --gantt-milestone-size: 12px;     /* 菱形外接寬 */
-  --gantt-handle-width: 8px;        /* 兩端 resize 熱區 */
-  --gantt-connector-size: 8px;      /* 依賴拖曳圓點 */
-  --gantt-day-width-day: 32px;      /* Day zoom */
-  --gantt-day-width-week: 14px;     /* Week zoom（98px／週） */
-  --gantt-day-width-month: 4px;     /* Month zoom（約 120px／月） */
+  --gantt-summary-height: 6px; /* 階段／父任務彙總條 */
+  --gantt-milestone-size: 12px; /* 菱形外接寬 */
+  --gantt-handle-width: 8px; /* 兩端 resize 熱區 */
+  --gantt-connector-size: 8px; /* 依賴拖曳圓點 */
+  --gantt-day-width-day: 36px; /* Day zoom (matches scale.ts) */
+  --gantt-day-width-week: 16px; /* Week zoom（112px／週） */
+  --gantt-day-width-month: 5px; /* Month zoom（約 150px／月） */
 
   /* ---------- Motion ---------- */
-  --duration-instant: 0ms;   /* hover 底色進場 */
-  --duration-fast: 120ms;    /* hover 退場、按壓、tooltip、選單關閉 */
-  --duration-base: 160ms;    /* popover／menu 開啟、tab 指示、列表重排 */
-  --duration-slow: 200ms;    /* Modal、側邊欄收合、toast */
+  --duration-instant: 0ms; /* hover 底色進場 */
+  --duration-fast: 120ms; /* hover 退場、按壓、tooltip、選單關閉 */
+  --duration-base: 160ms; /* popover／menu 開啟、tab 指示、列表重排 */
+  --duration-slow: 200ms; /* Modal、側邊欄收合、toast */
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --ease-move: cubic-bezier(0.65, 0, 0.35, 1);
@@ -510,16 +513,16 @@
 
   /* ======================= Color · Light ======================= */
   /* Backgrounds */
-  --bg-app: #F2F2F5;
-  --bg-sidebar: #F2F2F5;
-  --bg-main: #FFFFFF;
-  --bg-muted: #F8F8FA;          /* 看板欄、表頭、群組列 */
-  --bg-surface: #FFFFFF;        /* 卡片、輸入框 */
-  --bg-elevated: #FFFFFF;       /* popover、menu、modal、toast */
+  --bg-app: #f2f2f5;
+  --bg-sidebar: #f2f2f5;
+  --bg-main: #ffffff;
+  --bg-muted: #f8f8fa; /* 看板欄、表頭、群組列 */
+  --bg-surface: #ffffff; /* 卡片、輸入框 */
+  --bg-elevated: #ffffff; /* popover、menu、modal、toast */
   --bg-hover: rgba(36, 38, 49, 0.045);
-  --bg-active: rgba(36, 38, 49, 0.07);    /* 目前頁、作用中 tab、按下 */
-  --bg-selected: rgba(104, 106, 195, 0.10);
-  --bg-inverse: #242631;        /* tooltip */
+  --bg-active: rgba(36, 38, 49, 0.07); /* 目前頁、作用中 tab、按下 */
+  --bg-selected: rgba(104, 106, 195, 0.1);
+  --bg-inverse: #242631; /* tooltip */
   --bg-overlay: rgba(24, 25, 38, 0.28);
 
   /* Borders */
@@ -527,85 +530,85 @@
   --border-default: rgba(36, 38, 49, 0.11);
   --border-strong: rgba(36, 38, 49, 0.18);
   --border-input: rgba(36, 38, 49, 0.24);
-  --border-contrast: #868793;   /* ≥ 3:1：checkbox、radio、switch 外框 */
+  --border-contrast: #868793; /* ≥ 3:1：checkbox、radio、switch 外框 */
 
   /* Text */
   --fg-primary: #242631;
-  --fg-secondary: #50525E;
-  --fg-tertiary: #63646F;
-  --fg-disabled: #A6A7AE;
-  --fg-inverse: #FFFFFF;
+  --fg-secondary: #50525e;
+  --fg-tertiary: #63646f;
+  --fg-disabled: #a6a7ae;
+  --fg-inverse: #ffffff;
 
   /* Accent */
-  --accent: #686AC3;
-  --accent-hover: #5E5FBA;
-  --accent-active: #5757B2;
-  --accent-subtle: rgba(104, 106, 195, 0.10);
+  --accent: #686ac3;
+  --accent-hover: #5e5fba;
+  --accent-active: #5757b2;
+  --accent-subtle: rgba(104, 106, 195, 0.1);
   --accent-subtle-hover: rgba(104, 106, 195, 0.16);
-  --accent-fg: #FFFFFF;
-  --accent-text: #6162BD;       /* accent 色的文字、連結、icon */
+  --accent-fg: #ffffff;
+  --accent-text: #6162bd; /* accent 色的文字、連結、icon */
 
   /* Focus */
-  --focus-ring: #686AC3;
+  --focus-ring: #686ac3;
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
   /* Status */
   --status-todo: #868793;
-  --status-in-progress: #BF7B00;
-  --status-done: #2C965D;
+  --status-in-progress: #bf7b00;
+  --status-done: #2c965d;
 
   /* Priority（Low／Medium 刻意為中性色，形狀才是主要編碼） */
-  --priority-none: #A6A7AE;
+  --priority-none: #a6a7ae;
   --priority-low: #868793;
-  --priority-medium: #50525E;
-  --priority-high: #D06217;
-  --priority-urgent: #C72E2B;
+  --priority-medium: #50525e;
+  --priority-high: #d06217;
+  --priority-urgent: #c72e2b;
 
   /* Semantic */
-  --danger: #C72E2B;
-  --danger-hover: #BC2122;
+  --danger: #c72e2b;
+  --danger-hover: #bc2122;
   --danger-subtle: rgba(199, 46, 43, 0.08);
-  --danger-fg: #FFFFFF;
-  --warning: #9A5D00;
+  --danger-fg: #ffffff;
+  --warning: #9a5d00;
   --warning-subtle: rgba(154, 93, 0, 0.08);
-  --success: #157B48;
+  --success: #157b48;
   --success-subtle: rgba(21, 123, 72, 0.08);
-  --info: #1C70AA;
+  --info: #1c70aa;
   --info-subtle: rgba(28, 112, 170, 0.08);
 
   /* Gantt */
   --gantt-bg: var(--bg-main);
   --gantt-header-bg: var(--bg-main);
   --gantt-grid: rgba(36, 38, 49, 0.06);
-  --gantt-grid-strong: rgba(36, 38, 49, 0.11);   /* 週／月邊界 */
+  --gantt-grid-strong: rgba(36, 38, 49, 0.11); /* 週／月邊界 */
   --gantt-weekend: rgba(36, 38, 49, 0.032);
   --gantt-row-hover: rgba(36, 38, 49, 0.03);
   --gantt-row-selected: rgba(104, 106, 195, 0.08);
-  --gantt-bar-fill: rgba(104, 106, 195, 0.14);        /* To Do */
+  --gantt-bar-fill: rgba(104, 106, 195, 0.14); /* To Do */
   --gantt-bar-fill-active: rgba(104, 106, 195, 0.24); /* In Progress */
-  --gantt-bar-fill-done: rgba(36, 38, 49, 0.06);      /* Done */
-  --gantt-bar-border: rgba(104, 106, 195, 0.80);
+  --gantt-bar-fill-done: rgba(36, 38, 49, 0.06); /* Done */
+  --gantt-bar-border: rgba(104, 106, 195, 0.8);
   --gantt-bar-border-done: #868793;
   --gantt-bar-text: #242631;
-  --gantt-bar-text-done: #63646F;
-  --gantt-summary: #63646F;
-  --gantt-milestone: #3A3C49;
+  --gantt-bar-text-done: #63646f;
+  --gantt-summary: #63646f;
+  --gantt-milestone: #3a3c49;
   --gantt-milestone-past: #868793;
-  --gantt-due-marker: #50525E;
+  --gantt-due-marker: #50525e;
   --gantt-dependency: #858692;
-  --gantt-dependency-active: #6162BD;
-  --gantt-conflict: #C72E2B;
-  --gantt-today: #686AC3;
-  --gantt-today-label-bg: #686AC3;
-  --gantt-today-label-fg: #FFFFFF;
-  --gantt-drag-ghost: rgba(104, 106, 195, 0.10);
-  --gantt-drag-ghost-border: rgba(104, 106, 195, 0.60);
+  --gantt-dependency-active: #6162bd;
+  --gantt-conflict: #c72e2b;
+  --gantt-today: #686ac3;
+  --gantt-today-label-bg: #686ac3;
+  --gantt-today-label-fg: #ffffff;
+  --gantt-drag-ghost: rgba(104, 106, 195, 0.1);
+  --gantt-drag-ghost-border: rgba(104, 106, 195, 0.6);
 
   /* Shadows（邊框由元件自己加；陰影只負責浮起感） */
   --shadow-panel: 0 1px 2px rgba(23, 24, 40, 0.04), 0 0 1px rgba(23, 24, 40, 0.04);
   --shadow-popover: 0 8px 24px -6px rgba(23, 24, 40, 0.14), 0 2px 6px rgba(23, 24, 40, 0.06);
-  --shadow-modal: 0 24px 64px -16px rgba(23, 24, 40, 0.24), 0 8px 20px -6px rgba(23, 24, 40, 0.10);
+  --shadow-modal: 0 24px 64px -16px rgba(23, 24, 40, 0.24), 0 8px 20px -6px rgba(23, 24, 40, 0.1);
   --shadow-drag: 0 12px 28px -8px rgba(23, 24, 40, 0.22), 0 0 0 1px rgba(104, 106, 195, 0.35);
 
   /* Misc */
@@ -620,90 +623,90 @@
 
   --bg-app: #111216;
   --bg-sidebar: #111216;
-  --bg-main: #16171C;
-  --bg-muted: #1A1B21;
-  --bg-surface: #1E1F26;
-  --bg-elevated: #22232B;
+  --bg-main: #16171c;
+  --bg-muted: #1a1b21;
+  --bg-surface: #1e1f26;
+  --bg-elevated: #22232b;
   --bg-hover: rgba(255, 255, 255, 0.045);
   --bg-active: rgba(255, 255, 255, 0.07);
   --bg-selected: rgba(144, 147, 232, 0.16);
-  --bg-inverse: #E8E9F1;
+  --bg-inverse: #e8e9f1;
   --bg-overlay: rgba(5, 6, 9, 0.62);
 
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border-default: rgba(255, 255, 255, 0.09);
   --border-strong: rgba(255, 255, 255, 0.14);
   --border-input: rgba(255, 255, 255, 0.14);
-  --border-contrast: #6E6F7A;
+  --border-contrast: #6e6f7a;
 
-  --fg-primary: #E8E9F1;
-  --fg-secondary: #B8BAC4;
-  --fg-tertiary: #9697A2;
-  --fg-disabled: #5C5D66;
-  --fg-inverse: #16171C;
+  --fg-primary: #e8e9f1;
+  --fg-secondary: #b8bac4;
+  --fg-tertiary: #9697a2;
+  --fg-disabled: #5c5d66;
+  --fg-inverse: #16171c;
 
-  --accent: #9093E8;
-  --accent-hover: #9DA0EE;
-  --accent-active: #8789DE;
+  --accent: #9093e8;
+  --accent-hover: #9da0ee;
+  --accent-active: #8789de;
   --accent-subtle: rgba(144, 147, 232, 0.16);
   --accent-subtle-hover: rgba(144, 147, 232, 0.24);
-  --accent-fg: #121318;          /* 暗色 accent 上不可放白字（2.79:1） */
-  --accent-text: #A2A5F2;
+  --accent-fg: #121318; /* 暗色 accent 上不可放白字（2.79:1） */
+  --accent-text: #a2a5f2;
 
-  --focus-ring: #A2A5F2;
+  --focus-ring: #a2a5f2;
 
-  --status-todo: #9697A2;
-  --status-in-progress: #E9B452;
-  --status-done: #6AC48C;
+  --status-todo: #9697a2;
+  --status-in-progress: #e9b452;
+  --status-done: #6ac48c;
 
-  --priority-none: #5C5D66;
-  --priority-low: #9697A2;
-  --priority-medium: #B8BAC4;
-  --priority-high: #F1944F;
-  --priority-urgent: #F76560;
+  --priority-none: #5c5d66;
+  --priority-low: #9697a2;
+  --priority-medium: #b8bac4;
+  --priority-high: #f1944f;
+  --priority-urgent: #f76560;
 
-  --danger: #F76560;
-  --danger-hover: #FD736D;
+  --danger: #f76560;
+  --danger-hover: #fd736d;
   --danger-subtle: rgba(247, 101, 96, 0.14);
   --danger-fg: #121318;
-  --warning: #E9B452;
+  --warning: #e9b452;
   --warning-subtle: rgba(233, 180, 82, 0.14);
-  --success: #6AC48C;
+  --success: #6ac48c;
   --success-subtle: rgba(106, 196, 140, 0.14);
-  --info: #65B4E9;
+  --info: #65b4e9;
   --info-subtle: rgba(101, 180, 233, 0.14);
 
-  --gantt-bg: var(--bg-main);          /* 重新宣告，讓巢狀 .dark 範圍也正確 */
+  --gantt-bg: var(--bg-main); /* 重新宣告，讓巢狀 .dark 範圍也正確 */
   --gantt-header-bg: var(--bg-main);
   --gantt-grid: rgba(255, 255, 255, 0.045);
   --gantt-grid-strong: rgba(255, 255, 255, 0.09);
   --gantt-weekend: rgba(255, 255, 255, 0.022);
   --gantt-row-hover: rgba(255, 255, 255, 0.03);
-  --gantt-row-selected: rgba(144, 147, 232, 0.10);
+  --gantt-row-selected: rgba(144, 147, 232, 0.1);
   --gantt-bar-fill: rgba(144, 147, 232, 0.22);
   --gantt-bar-fill-active: rgba(144, 147, 232, 0.34);
   --gantt-bar-fill-done: rgba(255, 255, 255, 0.07);
-  --gantt-bar-border: rgba(144, 147, 232, 0.70);
-  --gantt-bar-border-done: #6E6F7A;
-  --gantt-bar-text: #E8E9F1;
-  --gantt-bar-text-done: #9697A2;
-  --gantt-summary: #9697A2;
-  --gantt-milestone: #D6D7E1;
-  --gantt-milestone-past: #6E6F7A;
-  --gantt-due-marker: #B8BAC4;
-  --gantt-dependency: #71737F;
-  --gantt-dependency-active: #A2A5F2;
-  --gantt-conflict: #F76560;
-  --gantt-today: #A2A5F2;
-  --gantt-today-label-bg: #9093E8;
+  --gantt-bar-border: rgba(144, 147, 232, 0.7);
+  --gantt-bar-border-done: #6e6f7a;
+  --gantt-bar-text: #e8e9f1;
+  --gantt-bar-text-done: #9697a2;
+  --gantt-summary: #9697a2;
+  --gantt-milestone: #d6d7e1;
+  --gantt-milestone-past: #6e6f7a;
+  --gantt-due-marker: #b8bac4;
+  --gantt-dependency: #71737f;
+  --gantt-dependency-active: #a2a5f2;
+  --gantt-conflict: #f76560;
+  --gantt-today: #a2a5f2;
+  --gantt-today-label-bg: #9093e8;
   --gantt-today-label-fg: #121318;
   --gantt-drag-ghost: rgba(144, 147, 232, 0.12);
-  --gantt-drag-ghost-border: rgba(144, 147, 232, 0.60);
+  --gantt-drag-ghost-border: rgba(144, 147, 232, 0.6);
 
-  --shadow-panel: 0 0 0 1px rgba(0, 0, 0, 0.30), 0 1px 3px rgba(0, 0, 0, 0.25);
-  --shadow-popover: 0 8px 24px -4px rgba(0, 0, 0, 0.50), 0 2px 6px rgba(0, 0, 0, 0.30);
+  --shadow-panel: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-popover: 0 8px 24px -4px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
   --shadow-modal: 0 24px 64px -12px rgba(0, 0, 0, 0.65), 0 8px 20px -4px rgba(0, 0, 0, 0.35);
-  --shadow-drag: 0 12px 28px -6px rgba(0, 0, 0, 0.60), 0 0 0 1px rgba(144, 147, 232, 0.40);
+  --shadow-drag: 0 12px 28px -6px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(144, 147, 232, 0.4);
 
   --selection-bg: rgba(144, 147, 232, 0.32);
   --scrollbar-thumb: rgba(255, 255, 255, 0.12);
@@ -852,14 +855,15 @@ body {
 - **字型堆疊：** `"Inter Variable"` 放第一位，負責拉丁字與數字。依 S11 確認，`@fontsource-variable/inter` 5.3.0 的 family 名稱是 `'Inter Variable'`（weight 100–900、`font-display: swap`），在 `main.tsx` import 一次即可。中文交給系統字：Mac 用 `PingFang TC`，Windows 用 `Microsoft JhengHei UI`／`Microsoft JhengHei`。`Noto Sans TC` 只在使用者已安裝時才會用到；若想讓 Windows 的呈現一致，可選擇自帶 `@fontsource-variable/noto-sans-tc`（5.3.1，以 unicode-range 分片載入）。預設不自帶，因為檔案大。
 - **只用 400／500／600 三個字重。** S12 實測（Chromium 156、macOS、`PingFang TC`、32px，以 400 的墨量為 1.00）：
 
-  | 字重 | 400 | 450 | 500 | 501–599（含 510、590） | 600–700 |
-  |---|---|---|---|---|---|
-  | 相對墨量 | 1.00 | 1.00 | 1.22 | **1.33** | 1.35 |
+  | 字重     | 400  | 450  | 500  | 501–599（含 510、590） | 600–700 |
+  | -------- | ---- | ---- | ---- | ---------------------- | ------- |
+  | 相對墨量 | 1.00 | 1.00 | 1.22 | **1.33**               | 1.35    |
 
   結論：501 到 599 之間的任何字重（Linear 用的 510、590）都會讓中文落到同一個較粗的字面，墨量比 500 多約 10%（+9.6%），只比 600 少約 1.3%。所以 Linear 的「medium 510」在中文上看起來幾乎就是粗體。方向與 CSS Fonts 的字重比對規則一致（要求大於 500 時，優先往較重的字面找）；至於 501–599 與 600 之間那點小差異的成因，沒有進一步驗證。
   - 400：內文、列表標題。
   - 500：側邊欄、按鈕、tab、欄位標籤、chip。
   - 600：頁面標題、Modal 標題、群組名稱、搜尋命中字。
+
 - **字距：** 中文內文一律 `letter-spacing: 0`，因為負字距會擠壓方塊字。只有 20／24px 的標題可以用 `--letter-spacing-title`（−0.01em）。
 - **最小字級 11px**，只用於 Gantt 下層表頭、kbd 與計數；中文句子至少 12px。
 - **語系：** `<html lang>` 應設為 `zh-Hant`（目前 `index.html` 是 `en`，由負責該檔的工作調整），讓瀏覽器選用正確的繁中字形。注意 UI 文案是英文並不影響這個設定；若決定 `lang="en"`，就要在輸入框與內容區塊上加 `lang="zh-Hant"`。
@@ -868,22 +872,22 @@ body {
 
 ### 4.6 Token 使用對照
 
-| 用途 | Token |
-|---|---|
-| 視窗底、側邊欄 | `--bg-app`／`--bg-sidebar` |
-| 主內容面板 | `--bg-main`＋1px `--border-subtle`＋`--shadow-panel`＋`--radius-xl` |
-| 看板欄底、表頭、群組列、kbd 底 | `--bg-muted` |
-| 卡片、輸入框 | `--bg-surface`＋`--border-default`（輸入框用 `--border-input`） |
-| Popover、menu、modal、command、toast | `--bg-elevated`＋`--border-default`＋對應陰影 |
-| 滑鼠 hover | `--bg-hover`（以疊加方式，可放在任何層上） |
-| 目前頁、作用中 tab、按下 | `--bg-active` |
-| 清單或 Gantt 的選取、拖曳放置區 | `--bg-selected`，另加 2px accent 指示，不只靠顏色 |
-| 標題與內文／次要文字與非作用中導覽／meta、日期、計數 | `--fg-primary`／`--fg-secondary`／`--fg-tertiary` |
-| 主按鈕 | `--accent`（hover：`--accent-hover`、按下：`--accent-active`）＋`--accent-fg` |
-| 連結、accent 色 icon | `--accent-text` |
-| 進度條 | 軌道 `--bg-active`、填充 `--accent`、高 4px、`--radius-full` |
-| 破壞性按鈕 | `--danger`＋`--danger-fg`；較輕的版本用 `--danger-subtle`＋`--danger` 文字 |
-| Tooltip | `--bg-inverse`＋`--fg-inverse`、12px、`--radius-md` |
+| 用途                                                 | Token                                                                         |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 視窗底、側邊欄                                       | `--bg-app`／`--bg-sidebar`                                                    |
+| 主內容面板                                           | `--bg-main`＋1px `--border-subtle`＋`--shadow-panel`＋`--radius-xl`           |
+| 看板欄底、表頭、群組列、kbd 底                       | `--bg-muted`                                                                  |
+| 卡片、輸入框                                         | `--bg-surface`＋`--border-default`（輸入框用 `--border-input`）               |
+| Popover、menu、modal、command、toast                 | `--bg-elevated`＋`--border-default`＋對應陰影                                 |
+| 滑鼠 hover                                           | `--bg-hover`（以疊加方式，可放在任何層上）                                    |
+| 目前頁、作用中 tab、按下                             | `--bg-active`                                                                 |
+| 清單或 Gantt 的選取、拖曳放置區                      | `--bg-selected`，另加 2px accent 指示，不只靠顏色                             |
+| 標題與內文／次要文字與非作用中導覽／meta、日期、計數 | `--fg-primary`／`--fg-secondary`／`--fg-tertiary`                             |
+| 主按鈕                                               | `--accent`（hover：`--accent-hover`、按下：`--accent-active`）＋`--accent-fg` |
+| 連結、accent 色 icon                                 | `--accent-text`                                                               |
+| 進度條                                               | 軌道 `--bg-active`、填充 `--accent`、高 4px、`--radius-full`                  |
+| 破壞性按鈕                                           | `--danger`＋`--danger-fg`；較輕的版本用 `--danger-subtle`＋`--danger` 文字    |
+| Tooltip                                              | `--bg-inverse`＋`--fg-inverse`、12px、`--radius-md`                           |
 
 ---
 
@@ -915,13 +919,13 @@ body {
 
 **項目樣式**
 
-| 部位 | 規格 |
-|---|---|
-| 項目 | 高 28px、`--radius-md`、padding 0 8px、icon 與文字間距 8px |
-| icon | 16px；非作用中 `--fg-tertiary`，作用中 `--fg-primary` |
-| 文字 | 13px／500；非作用中 `--fg-secondary`，作用中 `--fg-primary` |
-| 作用中底色 | `--bg-active` |
-| hover | `--bg-hover`，立刻出現、120ms 淡出 |
+| 部位               | 規格                                                                                |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| 項目               | 高 28px、`--radius-md`、padding 0 8px、icon 與文字間距 8px                          |
+| icon               | 16px；非作用中 `--fg-tertiary`，作用中 `--fg-primary`                               |
+| 文字               | 13px／500；非作用中 `--fg-secondary`，作用中 `--fg-primary`                         |
+| 作用中底色         | `--bg-active`                                                                       |
+| hover              | `--bg-hover`，立刻出現、120ms 淡出                                                  |
 | 計數（例如逾期數） | 靠右、12px tabular、`--fg-tertiary`；逾期數可用 `--danger` 文字，不要用紅色實心徽章 |
 
 **同步狀態**（呼應 `docs/decisions.md`）
@@ -1013,12 +1017,12 @@ body {
 
 **卡片**
 
-| 部位 | 規格 |
-|---|---|
-| 外觀 | `--bg-surface`、1px `--border-default`、`--radius-lg`、padding 10px 12px、行距 6px |
-| 標題 | 13px／500 `--fg-primary`，最多 2 行 |
+| 部位    | 規格                                                                                                    |
+| ------- | ------------------------------------------------------------------------------------------------------- |
+| 外觀    | `--bg-surface`、1px `--border-default`、`--radius-lg`、padding 10px 12px、行距 6px                      |
+| 標題    | 13px／500 `--fg-primary`，最多 2 行                                                                     |
 | meta 列 | 優先度 glyph、到期日（12px tabular，逾期用 `--danger`）、子任務進度「2/5」、階段名稱（`--fg-tertiary`） |
-| 不放 | 頭像（單人使用） |
+| 不放    | 頭像（單人使用）                                                                                        |
 
 **互動狀態**
 
@@ -1043,11 +1047,11 @@ body {
 
 **表頭兩層**（每層 `--gantt-header-tier-height` 24px）
 
-| Zoom | 每日寬 | 上層（12px／500 `--fg-secondary`） | 下層（11px tabular `--fg-tertiary`） | 格線 | 週末遮罩 |
-|---|---|---|---|---|---|
-| Day | 32px | `Nov 2026` | `2` 與窄週名 `M` | 每日一條 `--gantt-grid` | 顯示 |
-| Week | 14px | `Nov 2026` | 週起始日 `Nov 2` | 每週一條 `--gantt-grid-strong` | 顯示 |
-| Month | 4px | `2026` | `Nov` | 每月一條 `--gantt-grid-strong` | 隱藏 |
+| Zoom  | 每日寬 | 上層（12px／500 `--fg-secondary`） | 下層（11px tabular `--fg-tertiary`） | 格線                           | 週末遮罩 |
+| ----- | ------ | ---------------------------------- | ------------------------------------ | ------------------------------ | -------- |
+| Day   | 36px   | `Nov 2026`                         | `2` 與窄週名 `M`                     | 每日一條 `--gantt-grid`        | 顯示     |
+| Week  | 16px   | `Nov 2026`                         | 週起始日 `Nov 2`                     | 每週一條 `--gantt-grid-strong` | 顯示     |
+| Month | 5px    | `2026`                             | `Nov`                                | 每月一條 `--gantt-grid-strong` | 隱藏     |
 
 週起始日依 `user_preferences.week_starts_on` 決定。
 
@@ -1057,11 +1061,11 @@ body {
 - 長條內容：狀態 glyph（12px）加標題（12px／500 `--gantt-bar-text`）。長條寬度不足「文字＋24px」時，標題改放在長條右側，使用 `--fg-secondary`。
 - 依狀態上色：
 
-  | 狀態 | 填色 | 邊框 | 其他 |
-  |---|---|---|---|
-  | To Do | `--gantt-bar-fill` | `--gantt-bar-border` | |
-  | In Progress | `--gantt-bar-fill-active` | `--gantt-bar-border` | |
-  | Done | `--gantt-bar-fill-done` | `--gantt-bar-border-done` | 文字 `--gantt-bar-text-done`，加勾選 glyph |
+  | 狀態        | 填色                      | 邊框                      | 其他                                       |
+  | ----------- | ------------------------- | ------------------------- | ------------------------------------------ |
+  | To Do       | `--gantt-bar-fill`        | `--gantt-bar-border`      |                                            |
+  | In Progress | `--gantt-bar-fill-active` | `--gantt-bar-border`      |                                            |
+  | Done        | `--gantt-bar-fill-done`   | `--gantt-bar-border-done` | 文字 `--gantt-bar-text-done`，加勾選 glyph |
 
 - 逾期（未完成且 due < 今天）：長條右端加 2px `--danger` 端蓋，左欄日期用 `--danger`。
 - 選取：focus ring，外推 1px。
@@ -1096,11 +1100,11 @@ body {
 - **鍵盤替代**：Task Modal 的「Blocked by」與「Blocking」欄位（combobox）。
 - **線條**：從前置任務右端中心出發，正交折線、4px 圓角、1.5px，終點有 6px 箭頭進入後續任務左端。
 
-  | 狀態 | 樣式 |
-  |---|---|
-  | 正常 | `--gantt-dependency` 實線 |
-  | hover 或選取 | `--gantt-dependency-active`、2px，點擊可刪除或跳轉 |
-  | 衝突 | `--gantt-conflict`，虛線 `4 3`，繞成 S 形回到後續任務；後續長條左端加 2px `--danger` 與 ⚠ 標記，tooltip 例如 `Starts 3 days before "Write report" ends` |
+  | 狀態         | 樣式                                                                                                                                                    |
+  | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | 正常         | `--gantt-dependency` 實線                                                                                                                               |
+  | hover 或選取 | `--gantt-dependency-active`、2px，點擊可刪除或跳轉                                                                                                      |
+  | 衝突         | `--gantt-conflict`，虛線 `4 3`，繞成 S 形回到後續任務；後續長條左端加 2px `--danger` 與 ⚠ 標記，tooltip 例如 `Starts 3 days before "Write report" ends` |
 
 **衝突處理**（PRD §4.7）
 
@@ -1184,12 +1188,12 @@ body {
 - 不使用插畫、彩色圖片或大圖示。
 - 文案範例：
 
-  | 情境 | 標題 | 動作 |
-  |---|---|---|
-  | 第一次使用 | `No projects yet` | `Create your first project` |
-  | 空專案 | `No tasks yet` | `New task` |
-  | 篩選後沒有結果 | `No tasks match these filters` | `Clear filters` |
-  | Gantt 沒有已排程任務 | 保留格線，中央浮出 `Set dates or drag tasks from Unscheduled` | |
+  | 情境                 | 標題                                                          | 動作                        |
+  | -------------------- | ------------------------------------------------------------- | --------------------------- |
+  | 第一次使用           | `No projects yet`                                             | `Create your first project` |
+  | 空專案               | `No tasks yet`                                                | `New task`                  |
+  | 篩選後沒有結果       | `No tasks match these filters`                                | `Clear filters`             |
+  | Gantt 沒有已排程任務 | 保留格線，中央浮出 `Set dates or drag tasks from Unscheduled` |                             |
 
 - 專案進度在沒有任務時顯示 `No tasks`，不顯示 100%（PRD §5.2）。
 
@@ -1213,29 +1217,72 @@ Cairn 的狀態 glyph 以**圓角方形**為基礎，與 Linear 的圓形系統�
 
 ```html
 <!-- Status · To Do：空心圓角方形（color: var(--status-todo)） -->
-<svg viewBox="0 0 16 16" fill="none"><rect x="2.75" y="2.75" width="10.5" height="10.5" rx="3" stroke="currentColor" stroke-width="1.5"/></svg>
+<svg viewBox="0 0 16 16" fill="none">
+  <rect
+    x="2.75"
+    y="2.75"
+    width="10.5"
+    height="10.5"
+    rx="3"
+    stroke="currentColor"
+    stroke-width="1.5"
+  />
+</svg>
 
 <!-- Status · In Progress：外框＋下半部「水位」（color: var(--status-in-progress)） -->
-<svg viewBox="0 0 16 16" fill="none"><rect x="2.75" y="2.75" width="10.5" height="10.5" rx="3" stroke="currentColor" stroke-width="1.5"/><rect x="5" y="8" width="6" height="3" rx="1" fill="currentColor"/></svg>
+<svg viewBox="0 0 16 16" fill="none">
+  <rect
+    x="2.75"
+    y="2.75"
+    width="10.5"
+    height="10.5"
+    rx="3"
+    stroke="currentColor"
+    stroke-width="1.5"
+  />
+  <rect x="5" y="8" width="6" height="3" rx="1" fill="currentColor" />
+</svg>
 
 <!-- Status · Done：實心方形＋挖空勾（color: var(--status-done)；勾用 --fg-inverse） -->
-<svg viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="3.5" fill="currentColor"/><path d="M5.25 8.25 7.1 10.1 10.75 6.25" stroke="var(--fg-inverse)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<svg viewBox="0 0 16 16" fill="none">
+  <rect x="2" y="2" width="12" height="12" rx="3.5" fill="currentColor" />
+  <path
+    d="M5.25 8.25 7.1 10.1 10.75 6.25"
+    stroke="var(--fg-inverse)"
+    stroke-width="1.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
 
 <!-- Priority · Cairn stones：未達等級的石塊 opacity .28
      Low = 只有底石實心；Medium = 底＋中；High = 三塊全實心；Urgent = 三塊＋頂端 capstone 圓點
      None = 三塊皆 .28（或在列表中顯示 "—"） -->
 <svg viewBox="0 0 16 16" fill="currentColor">
-  <rect x="2"   y="11.5" width="12" height="2.5" rx="1.25"/>               <!-- 底石 -->
-  <rect x="3.5" y="8"    width="9"  height="2.5" rx="1.25" opacity=".28"/> <!-- 中石 -->
-  <rect x="5"   y="4.5"  width="6"  height="2.5" rx="1.25" opacity=".28"/> <!-- 頂石 -->
+  <rect x="2" y="11.5" width="12" height="2.5" rx="1.25" />
+  <!-- 底石 -->
+  <rect x="3.5" y="8" width="9" height="2.5" rx="1.25" opacity=".28" />
+  <!-- 中石 -->
+  <rect x="5" y="4.5" width="6" height="2.5" rx="1.25" opacity=".28" />
+  <!-- 頂石 -->
   <!-- Urgent 加上：<circle cx="8" cy="2.25" r="1.25"/> -->
 </svg>
 
 <!-- Milestone：菱形（未來：fill；已過：fill="none" stroke-width 1.5） -->
-<svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.5" transform="rotate(45 8 8)" fill="currentColor"/></svg>
+<svg viewBox="0 0 16 16">
+  <rect x="4" y="4" width="8" height="8" rx="1.5" transform="rotate(45 8 8)" fill="currentColor" />
+</svg>
 
 <!-- Phase（彙總括號） -->
-<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.75 5.5v5M13.25 5.5v5M2.75 8h10.5"/></svg>
+<svg
+  viewBox="0 0 16 16"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.5"
+  stroke-linecap="round"
+>
+  <path d="M2.75 5.5v5M13.25 5.5v5M2.75 8h10.5" />
+</svg>
 ```
 
 - 優先度的顏色：Low 與 Medium 用中性 token，High 與 Urgent 才上色。等級靠「實心石塊數」與 Urgent 的 capstone 編碼，即使是灰階也分得出來。
@@ -1276,22 +1323,22 @@ Cairn 的狀態 glyph 以**圓角方形**為基礎，與 Linear 的圓形系統�
 - 尺寸：預設 16px、`strokeWidth={1.75}`；在密集的 meta 位置用 14px、`1.5`。顏色繼承 `currentColor`，非作用中用 `--fg-tertiary`，不加彩色底框。
 - 建議對應（皆已確認存在於專案安裝的版本）：
 
-  | 用途 | Icon |
-  |---|---|
-  | Overview | `LayoutDashboard` |
-  | My Tasks | `ListTodo` |
-  | Projects | `FolderKanban` |
-  | Timeline／Gantt | `ChartGantt` |
-  | Settings | `Settings` |
-  | Search | `Search` |
-  | 主題 | `Sun`／`Moon`／`Monitor` |
-  | 側邊欄 | `PanelLeftClose`／`PanelLeftOpen` |
-  | 依賴 | `Workflow` |
-  | 拖曳 | `GripVertical` |
-  | 更多 | `Ellipsis` |
-  | 警示 | `TriangleAlert` |
-  | 同步 | `Cloud`／`CloudOff`／`RefreshCw` |
-  | 復原 | `Undo2` |
+  | 用途            | Icon                              |
+  | --------------- | --------------------------------- |
+  | Overview        | `LayoutDashboard`                 |
+  | My Tasks        | `ListTodo`                        |
+  | Projects        | `FolderKanban`                    |
+  | Timeline／Gantt | `ChartGantt`                      |
+  | Settings        | `Settings`                        |
+  | Search          | `Search`                          |
+  | 主題            | `Sun`／`Moon`／`Monitor`          |
+  | 側邊欄          | `PanelLeftClose`／`PanelLeftOpen` |
+  | 依賴            | `Workflow`                        |
+  | 拖曳            | `GripVertical`                    |
+  | 更多            | `Ellipsis`                        |
+  | 警示            | `TriangleAlert`                   |
+  | 同步            | `Cloud`／`CloudOff`／`RefreshCw`  |
+  | 復原            | `Undo2`                           |
 
 - 狀態、優先度、里程碑 glyph 用 §5.12 的自訂 SVG，不用 lucide 的圓形 icon 替代。
 

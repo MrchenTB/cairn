@@ -4,6 +4,7 @@ import { useUIStore } from '@/app/uiStore'
 import { useWorkspaceStore } from '@/data/store'
 import { notify } from '@/lib/notify'
 import {
+  must,
   openNewTask,
   renderHosts,
   resetTestWorld,
@@ -143,30 +144,6 @@ describe('Task Modal · create', { timeout: 20_000 }, () => {
     })
   })
 
-  it('creates a subtask under its parent, in the parent’s phase', async () => {
-    const { project, writingId, tasks } = await seedWorkspace()
-    const parent = tasks['Write literature review']
-    const createTask = vi.spyOn(useWorkspaceStore.getState().actions, 'createTask')
-    const { user } = renderHosts(`/projects/${project.id}/list`)
-    openNewTask({ projectId: project.id, parentTaskId: parent.id })
-    const modal = await findModal('New subtask')
-
-    expect(within(modal).getByText('Subtask of Write literature review')).toBeInTheDocument()
-    const phase = within(modal).getByRole('button', { name: 'Phase: Writing' })
-    expect(phase).toHaveAttribute('aria-disabled', 'true')
-    expect(phase).toHaveAccessibleDescription('Subtasks follow their parent’s phase')
-
-    await user.type(titleBox(), 'Check citations{Enter}')
-    await expectClosed()
-    expect(createTask).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: project.id, parentTaskId: parent.id }),
-    )
-    expect(storeTasks().find((task) => task.title === 'Check citations')).toMatchObject({
-      parentTaskId: parent.id,
-      phaseId: writingId,
-    })
-  })
-
   it('global New task asks for a project and remembers the last one used', async () => {
     const { project, other } = await seedWorkspace()
     const { user } = renderHosts('/overview')
@@ -265,6 +242,118 @@ describe('Task Modal · create', { timeout: 20_000 }, () => {
     await user.click(createButton())
     await expectClosed()
     expect(storeTasks().find((task) => task.title === 'This one fails')?.priority).toBe('urgent')
+  })
+
+  it('when Retry stores the task a failed create left behind, the form closes (no duplicate)', async () => {
+    const { project } = await seedWorkspace()
+    const success = vi.spyOn(notify, 'success')
+    const { user } = renderHosts(`/projects/${project.id}/list`)
+    openNewTask({ projectId: project.id })
+    await findModal()
+
+    testHooks().failNextWrites(1)
+    await user.type(titleBox(), 'Retried task')
+    await user.click(createButton())
+    await waitFor(() => expect(createButton()).toBeEnabled())
+    expect(storeTasks().some((task) => task.title === 'Retried task')).toBe(false)
+
+    // The toast's Retry (here the store action behind it) stores the task behind the open form.
+    must(await useWorkspaceStore.getState().actions.retryLastFailed())
+    await expectClosed()
+    expect(storeTasks().filter((task) => task.title === 'Retried task')).toHaveLength(1)
+    // The form confirms its task; the store's Retry adds its generic "Saved" (decision D13).
+    expect(success).toHaveBeenCalledTimes(2)
+    expect(success).toHaveBeenCalledWith('Saved')
+    expect(success).toHaveBeenCalledWith(
+      'Task created',
+      expect.objectContaining({ description: 'Retried task' }),
+    )
+  })
+
+  it('a form changed after a failure stays open when an older Retry lands', async () => {
+    const { project } = await seedWorkspace()
+    const { user } = renderHosts(`/projects/${project.id}/list`)
+    openNewTask({ projectId: project.id })
+    await findModal()
+
+    testHooks().failNextWrites(1)
+    await user.type(titleBox(), 'First try')
+    await user.click(createButton())
+    await waitFor(() => expect(createButton()).toBeEnabled())
+
+    // The user carries on with the form: it no longer stands for the failed attempt.
+    await user.type(titleBox(), ' (renamed)')
+    must(await useWorkspaceStore.getState().actions.retryLastFailed())
+    await waitFor(() => expect(storeTasks().some((task) => task.title === 'First try')).toBe(true))
+    expect(screen.getByRole('dialog', { name: 'New task' })).toBeInTheDocument()
+    expect(titleBox()).toHaveValue('First try (renamed)')
+  })
+
+  it('a "New task" request never replaces an edit form with unsaved changes without asking', async () => {
+    const { project, tasks } = await seedWorkspace()
+    const review = tasks['Write literature review']
+    const { user } = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
+    await findModal(/^Edit task: Write literature review$/)
+
+    await user.type(titleBox(), '!')
+    await user.type(screen.getByRole('textbox', { name: 'Add subtask' }), 'Not added yet')
+    openNewTask({ projectId: project.id })
+
+    // The form stays on screen while the prompt is up; Keep editing puts the request away.
+    const prompt = await screen.findByRole('alertdialog', { name: 'Discard changes?' })
+    expect(screen.queryByRole('dialog', { name: 'New task' })).not.toBeInTheDocument()
+    await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }))
+    await waitFor(() => expect(titleBox()).toHaveFocus())
+    expect(titleBox()).toHaveValue('Write literature review!')
+    expect(screen.getByRole('textbox', { name: 'Add subtask' })).toHaveValue('Not added yet')
+    expect(useUIStore.getState().newTask).toBeNull()
+
+    // Discard lets the Create form take over.
+    openNewTask({ projectId: project.id })
+    await user.click(
+      within(await screen.findByRole('alertdialog', { name: 'Discard changes?' })).getByRole(
+        'button',
+        { name: 'Discard' },
+      ),
+    )
+    await findModal()
+    expect(titleBox()).toHaveValue('')
+  })
+
+  it('a "New task" request keeps a typed create form unless the user agrees to discard it', async () => {
+    const { project, other } = await seedWorkspace()
+    const { user } = renderHosts(`/projects/${project.id}/list`)
+    openNewTask({ projectId: project.id })
+    await findModal()
+    await user.type(titleBox(), 'Half-typed')
+
+    openNewTask({ projectId: other.id })
+    const prompt = await screen.findByRole('alertdialog', { name: 'Discard changes?' })
+    await user.click(within(prompt).getByRole('button', { name: 'Keep editing' }))
+    await waitFor(() => expect(titleBox()).toHaveFocus())
+    expect(titleBox()).toHaveValue('Half-typed')
+    expect(screen.getByRole('button', { name: 'Project: Research' })).toBeInTheDocument()
+
+    openNewTask({ projectId: other.id })
+    await user.click(
+      within(await screen.findByRole('alertdialog', { name: 'Discard changes?' })).getByRole(
+        'button',
+        { name: 'Discard' },
+      ),
+    )
+    await waitFor(() => expect(titleBox()).toHaveValue(''))
+    expect(screen.getByRole('button', { name: 'Project: Community event' })).toBeInTheDocument()
+  })
+
+  it('a clean form is replaced by a "New task" request without asking', async () => {
+    const { project, tasks } = await seedWorkspace()
+    const review = tasks['Write literature review']
+    renderHosts(`/projects/${project.id}/list?task=${review.id}`)
+    await findModal(/^Edit task: Write literature review$/)
+
+    openNewTask({ projectId: project.id })
+    await findModal()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   it('asks before discarding a typed task; an untouched form closes right away', async () => {

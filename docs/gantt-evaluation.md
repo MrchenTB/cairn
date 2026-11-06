@@ -18,6 +18,7 @@
    - 未排程清單
 
    要補上這五項，需要 10 個以上的 intercept、DOM 或 CSS 介入點，其中幾個依賴未公開的內部狀態。另一方面，排程、驗證、衝突計算本來就必須自己寫，而且 domain 層已經完成大半。整合套件真正省下的只有渲染與互動層，而這一層正好與 Linear 風格的設計系統、我們的資料模型衝突最大。這些資料模型包括獨立的 Phase 與 Milestone、一層子任務、只有截止日的任務、未排程任務。
+
 3. **代價**：自建前期粗估多 **1–2 人日**的互動工程（不確定性較高，見 §6.3），包括拖曳、改長度、拖曳建立依賴、auto-scroll、多層表頭；互動品質與測試也要自己負責。這偏離了 PRD「優先整合套件」的預設，理由與退場條件見 §6。
 4. **Plan B**：`@svar-ui/react-gantt@2.8.2`（MIT，鎖定版本）搭配 §8 的缺口補足表。**Plan C**：`dhtmlx-gantt@10`，Community 版自 10.0.0（2026-06）起改為 MIT。
 5. **持續觀察**：Bryntum Gantt Community。它自 8.0.0-beta.1（2026-10-23 首發）起提供 MIT tier，並內含排程引擎；但目前仍是 beta，JS 為 538 KB gz。
@@ -27,23 +28,23 @@
 
 ## 1. 評估基準（PRD §4.7 拆解）
 
-| ID | 需求 | 出處與備註 |
-|---|---|---|
-| R1 | React 19 相容 | 專案使用 React 19.3 |
-| R2 | Day／Week／Month 刻度、Today 定位與指示 | §4.7、§4.8 |
-| R3 | 左側 sticky 任務樹：可選 Phase、一層子任務、可展開與收合，父層顯示彙總範圍 | §4.7、§5.1、D7 |
-| R4 | 拖曳中段平移、拖曳兩端改長度、以日曆日對齊 | §4.7 |
-| R5 | 里程碑為菱形單日節點，且是**獨立實體**（`milestones` 表） | §4.7、D6 |
-| R6 | 可見的 FS 依賴線，可在 bar 之間拖曳建立，也可刪除 | §4.7 |
-| R7 | 使用我們自己的驗證：不重複、不循環、同專案、不得父子互依 | §4.7、D10、`validateNewDependency` |
-| R8 | 依賴衝突要清楚標示 | §4.7 |
-| R9 | Manual 模式只提示；Auto 模式先預覽舊→新日期，確認後一次原子寫入 | §4.7、D10、`apply_task_schedule` |
-| R10 | Date-only 語意（`YYYY-MM-DD`、包含式、不受時區影響） | §5.3、D9 |
-| R11 | 只有截止日的任務以 marker 顯示 | §4.7 |
-| R12 | 兩個日期都沒有的任務列在左側「未排程」 | §4.7 |
-| R13 | 主題可客製成自有的 Linear 風格深淺模式，與 List／Board 一致 | §7 |
-| R14 | 約 1,000 列時效能可接受 | 本次評估假設 |
-| R15 | 授權為 MIT／Apache／BSD，不使用 GPL 或純商業授權，不依賴付費功能 | §0 第 7 點、§6 |
+| ID  | 需求                                                                       | 出處與備註                         |
+| --- | -------------------------------------------------------------------------- | ---------------------------------- |
+| R1  | React 19 相容                                                              | 專案使用 React 19.3                |
+| R2  | Day／Week／Month 刻度、Today 定位與指示                                    | §4.7、§4.8                         |
+| R3  | 左側 sticky 任務樹：可選 Phase、一層子任務、可展開與收合，父層顯示彙總範圍 | §4.7、§5.1、D7                     |
+| R4  | 拖曳中段平移、拖曳兩端改長度、以日曆日對齊                                 | §4.7                               |
+| R5  | 里程碑為菱形單日節點，且是**獨立實體**（`milestones` 表）                  | §4.7、D6                           |
+| R6  | 可見的 FS 依賴線，可在 bar 之間拖曳建立，也可刪除                          | §4.7                               |
+| R7  | 使用我們自己的驗證：不重複、不循環、同專案、不得父子互依                   | §4.7、D10、`validateNewDependency` |
+| R8  | 依賴衝突要清楚標示                                                         | §4.7                               |
+| R9  | Manual 模式只提示；Auto 模式先預覽舊→新日期，確認後一次原子寫入            | §4.7、D10、`apply_task_schedule`   |
+| R10 | Date-only 語意（`YYYY-MM-DD`、包含式、不受時區影響）                       | §5.3、D9                           |
+| R11 | 只有截止日的任務以 marker 顯示                                             | §4.7                               |
+| R12 | 兩個日期都沒有的任務列在左側「未排程」                                     | §4.7                               |
+| R13 | 主題可客製成自有的 Linear 風格深淺模式，與 List／Board 一致                | §7                                 |
+| R14 | 約 1,000 列時效能可接受                                                    | 本次評估假設                       |
+| R15 | 授權為 MIT／Apache／BSD，不使用 GPL 或純商業授權，不依賴付費功能           | §0 第 7 點、§6                     |
 
 ---
 
@@ -59,21 +60,21 @@
 
 ## 3. 候選總覽
 
-| 套件 | 授權 | 最新版（發佈日） | 週下載 | GitHub（★／最後 push／open issue+PR） | React 19 | JS min+gz（CSS gz） |
-|---|---|---|---|---|---|---|
-| `@svar-ui/react-gantt` | MIT（另有 PRO 商業版） | 2.8.2（2026-10-27） | 132,272 | svar-widgets/react-gantt：215★／2026-10-27／15（核心 svar-widgets/gantt：261★） | ✅ peer `>=18`，**【實測】**19.3.1 | 88.5 KB（all.css 22.2 KB） |
-| `dhtmlx-gantt`（Community） | MIT（10.0.0 起，之前為 GPL） | 10.0.3（2026-09-03） | 55,796 | DHTMLX/gantt：1,868★／2026-09-03／6 | 框架無關，需自寫 wrapper（官方 React wrapper 屬 PRO） | 174.6 KB（51.1 KB） |
-| `@bryntum/gantt-community` | MIT（Community tier） | 8.0.0-beta.1（2026-10-23 首發） | 279 | 未查 | wrapper 未宣告 peer，未實測 | 538.0 KB（54.0 KB） |
-| `frappe-gantt` | MIT | 1.2.2（2026-02-25） | 363,905 | frappe/gantt：6,157★／2026-06-18／81 | vanilla JS，無 React 依賴 | 13.0 KB（1.8 KB） |
-| `gantt-task-react` | MIT | 0.3.9（2022-07-10） | 67,222 | MaTeMaTuK/gantt-task-react：1,097★／**已封存**／157 | ❌ peer `react ^18`，**【實測】**ERESOLVE | 11.1 KB |
-| `@wamra/gantt-task-react`（fork） | MIT | 0.6.17（2024-11-30） | 2,666 | wamra/gantt-task-react：51★／2024-11-30／2 | peer `>=18`，但需要 `@mui/material ^6` | 46.7 KB（不含 MUI） |
-| `gantt-task-react-v`（fork） | MIT | 1.8.1（2026-04-10） | 254 | aguilanbon/gantt-task-react-v：3★／2026-04-16 | peer 16.8–19 | — |
-| `@visactor/vtable-gantt` | MIT | 1.26.8（2026-09-11） | 2,666 | VisActor/VTable：3,681★／2026-11-02／509 | 沒有 Gantt 的 React wrapper，需命令式使用 | 568.0 KB |
-| `react-calendar-timeline` | MIT | 0.30.0-beta.19（2026-07-24）；最後穩定版為 0.28.0（2022-05-30） | 199,187 | namespace-ee：2,162★／2026-07-24／14 | beta 版 peer 支援 18／19 | 55.0 KB（含 interactjs、dayjs） |
-| `vis-timeline` | Apache-2.0 或 MIT | 8.5.6（2026-10-26） | 338,239 | visjs/vis-timeline：2,577★／2026-11-01／302 | 命令式 | 158.9 KB（standalone，含 moment） |
-| `react-modern-gantt` | MIT | 0.9.0（2026-05-31） | 2,123 | 46★／2026-06-07／2 | peer 支援 17–19；但 peer `typescript` 只接受 4／5／6，與 TS 7 **【實測】**ERESOLVE | 264.1 KB（含 jspdf、html2canvas） |
-| `svelte-gantt` | MIT（依 GitHub） | 4.5.0（2025-02-10） | 2,801 | ANovokmet：623★／2025-05-03／39 | Svelte 4 元件 | — |
-| `@daypilot/daypilot-lite-react` | Apache-2.0 | 6.2.0（2026-10-22） | 16,373 | — | peer `>=18` | —（Lite 只有 Scheduler，沒有 Gantt） |
+| 套件                              | 授權                         | 最新版（發佈日）                                                | 週下載  | GitHub（★／最後 push／open issue+PR）                                           | React 19                                                                           | JS min+gz（CSS gz）                  |
+| --------------------------------- | ---------------------------- | --------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------ |
+| `@svar-ui/react-gantt`            | MIT（另有 PRO 商業版）       | 2.8.2（2026-10-27）                                             | 132,272 | svar-widgets/react-gantt：215★／2026-10-27／15（核心 svar-widgets/gantt：261★） | ✅ peer `>=18`，**【實測】**19.3.1                                                 | 88.5 KB（all.css 22.2 KB）           |
+| `dhtmlx-gantt`（Community）       | MIT（10.0.0 起，之前為 GPL） | 10.0.3（2026-09-03）                                            | 55,796  | DHTMLX/gantt：1,868★／2026-09-03／6                                             | 框架無關，需自寫 wrapper（官方 React wrapper 屬 PRO）                              | 174.6 KB（51.1 KB）                  |
+| `@bryntum/gantt-community`        | MIT（Community tier）        | 8.0.0-beta.1（2026-10-23 首發）                                 | 279     | 未查                                                                            | wrapper 未宣告 peer，未實測                                                        | 538.0 KB（54.0 KB）                  |
+| `frappe-gantt`                    | MIT                          | 1.2.2（2026-02-25）                                             | 363,905 | frappe/gantt：6,157★／2026-06-18／81                                            | vanilla JS，無 React 依賴                                                          | 13.0 KB（1.8 KB）                    |
+| `gantt-task-react`                | MIT                          | 0.3.9（2022-07-10）                                             | 67,222  | MaTeMaTuK/gantt-task-react：1,097★／**已封存**／157                             | ❌ peer `react ^18`，**【實測】**ERESOLVE                                          | 11.1 KB                              |
+| `@wamra/gantt-task-react`（fork） | MIT                          | 0.6.17（2024-11-30）                                            | 2,666   | wamra/gantt-task-react：51★／2024-11-30／2                                      | peer `>=18`，但需要 `@mui/material ^6`                                             | 46.7 KB（不含 MUI）                  |
+| `gantt-task-react-v`（fork）      | MIT                          | 1.8.1（2026-04-10）                                             | 254     | aguilanbon/gantt-task-react-v：3★／2026-04-16                                   | peer 16.8–19                                                                       | —                                    |
+| `@visactor/vtable-gantt`          | MIT                          | 1.26.8（2026-09-11）                                            | 2,666   | VisActor/VTable：3,681★／2026-11-02／509                                        | 沒有 Gantt 的 React wrapper，需命令式使用                                          | 568.0 KB                             |
+| `react-calendar-timeline`         | MIT                          | 0.30.0-beta.19（2026-07-24）；最後穩定版為 0.28.0（2022-05-30） | 199,187 | namespace-ee：2,162★／2026-07-24／14                                            | beta 版 peer 支援 18／19                                                           | 55.0 KB（含 interactjs、dayjs）      |
+| `vis-timeline`                    | Apache-2.0 或 MIT            | 8.5.6（2026-10-26）                                             | 338,239 | visjs/vis-timeline：2,577★／2026-11-01／302                                     | 命令式                                                                             | 158.9 KB（standalone，含 moment）    |
+| `react-modern-gantt`              | MIT                          | 0.9.0（2026-05-31）                                             | 2,123   | 46★／2026-06-07／2                                                              | peer 支援 17–19；但 peer `typescript` 只接受 4／5／6，與 TS 7 **【實測】**ERESOLVE | 264.1 KB（含 jspdf、html2canvas）    |
+| `svelte-gantt`                    | MIT（依 GitHub）             | 4.5.0（2025-02-10）                                             | 2,801   | ANovokmet：623★／2025-05-03／39                                                 | Svelte 4 元件                                                                      | —                                    |
+| `@daypilot/daypilot-lite-react`   | Apache-2.0                   | 6.2.0（2026-10-22）                                             | 16,373  | —                                                                               | peer `>=18`                                                                        | —（Lite 只有 Scheduler，沒有 Gantt） |
 
 ---
 
@@ -81,25 +82,25 @@
 
 圖例：✅ 原生支援；🟡 可以做到，但需要 adapter、workaround 或大量覆寫；❌ 不支援，或大部分要自己寫；🔒 屬於付費版（PRO／Business／Enterprise）。
 
-| 需求 | SVAR MIT | DHTMLX Community | frappe-gantt | gantt-task-react（＋fork） | VTable Gantt | Timeline 類（rct／vis） | **自建** |
-|---|---|---|---|---|---|---|---|
-| R1 React 19 | ✅【實測】 | 🟡 需自寫 wrapper | 🟡 需自寫 wrapper | ❌（原版）／🟡（fork 需 MUI） | 🟡 命令式 | ✅ rct beta／🟡 vis | ✅ |
-| R2 Day／Week／Month | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 需自訂 header | ✅ |
-| R2 Today 指示 | 🔒 vertical markers → 🟡 | 🔒 markers → 🟡 overlay | ✅ | ✅ | ✅ markLine | ✅ | ✅ |
-| R3 左側樹、Phase、一層子任務 | ✅ 樹，🟡 需映射 | ✅ 樹，🟡 需映射 | ❌ 沒有 grid | 🟡 只有 project 群組 | ✅ ListTable tree | 🟡 只有 groups | ✅ |
-| R4 拖曳、改長度、日對齊 | ✅【實測】（起拖門檻 20 px） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅（自寫） |
-| R5 里程碑菱形（獨立實體） | ✅ type，🟡 需映射 | ✅ type，🟡 需映射 | ❌ | ✅ | ✅ | 🟡 自繪 | ✅ |
-| R6 FS 線：顯示、拖曳建立、刪除 | ✅（也能建 SS／FF／SF，要擋） | ✅ | 🟡 只能顯示 | 🟡 只能顯示／✅ fork | ✅ | ❌ | ✅（自寫） |
-| R7 自訂驗證掛鉤 | ✅ `intercept('add-link')`【實測】 | ✅ `onBeforeLinkAdd`（`isCircularLink` 屬 PRO） | — | —／🟡 | 🟡 建立後才有事件【未驗證能否阻擋】 | — | ✅ 直接呼叫 `validateNewDependency` |
-| R8 衝突標示 | 🔒 → 🟡 以 data-id 套 CSS | ✅ `task_class`／`link_class` | 🟡 `custom_class` | ❌／🟡 | 🟡 `barStyle` 函式 | 🟡 | ✅ |
-| R9 Manual／Auto 預覽與確認 | 🔒 → 自寫 | 🔒 → 自寫 | ❌（`move_dependencies` 會直接推移） | ❌ | ❌ | ❌ | ✅（`computeAutoSchedule` 已存在） |
-| R10 Date-only | 🟡 Date 物件，end 為 exclusive【實測】 | 🟡 Date 物件，end 為 exclusive | 🟡 本地 Date，end 加 24h | 🟡 Date | 🟡 字串或 Date | 🟡 timestamp 或 moment | ✅ 全程使用 epoch day |
-| R11 只有截止日的 marker | 🔒 deadlines → 🟡 自訂 type | 🟡 `addTaskLayer` | ❌ | ❌ | 🟡 customLayout | 🟡 point item | ✅ |
-| R12 未排程清單 | 🔒（MIT 強制關閉）→ 🟡 放在樹外 | 🔒 → 🟡 放在樹外 | ❌ | ❌ | ❌ | ❌ | ✅ 同一棵樹內的群組 |
-| R13 Linear 風格主題 | 🟡 71 個 `--wx-gantt-*` 變數＋Willow／WillowDark | 🟡 180 個 `--dhx-gantt-*` 變數＋dark theme，DOM 較舊 | ✅ CSS 變數 | 🟡 以 props 設定顏色 | 🟡 canvas，樣式為 JS 物件 | 🟡 CSS | ✅ 直接使用 tokens |
-| R14 約 1,000 列 | ✅【實測】1,004 筆時 DOM 只有 18 個 bar | ✅ smart rendering | ❌ 整張 SVG | ❌／🟡 | ✅ canvas | 🟡 | ✅ 虛擬化（需 benchmark） |
-| R15 授權與付費依賴 | ✅ MIT（不得使用 PRO props） | ✅ MIT（10.0 起） | ✅ | ✅（但已封存） | ✅ | ✅ | ✅ |
-| Bundle（JS＋CSS，gz） | 88.5＋22.2 KB | 174.6＋51.1 KB | 13.0＋1.8 KB | 11.1 KB／46.7 KB＋MUI | 568 KB | 55 KB／159 KB | 估計 25–40 KB＋10.2 KB（TanStack） |
+| 需求                           | SVAR MIT                                         | DHTMLX Community                                     | frappe-gantt                         | gantt-task-react（＋fork）    | VTable Gantt                        | Timeline 類（rct／vis） | **自建**                            |
+| ------------------------------ | ------------------------------------------------ | ---------------------------------------------------- | ------------------------------------ | ----------------------------- | ----------------------------------- | ----------------------- | ----------------------------------- |
+| R1 React 19                    | ✅【實測】                                       | 🟡 需自寫 wrapper                                    | 🟡 需自寫 wrapper                    | ❌（原版）／🟡（fork 需 MUI） | 🟡 命令式                           | ✅ rct beta／🟡 vis     | ✅                                  |
+| R2 Day／Week／Month            | ✅                                               | ✅                                                   | ✅                                   | ✅                            | ✅                                  | 🟡 需自訂 header        | ✅                                  |
+| R2 Today 指示                  | 🔒 vertical markers → 🟡                         | 🔒 markers → 🟡 overlay                              | ✅                                   | ✅                            | ✅ markLine                         | ✅                      | ✅                                  |
+| R3 左側樹、Phase、一層子任務   | ✅ 樹，🟡 需映射                                 | ✅ 樹，🟡 需映射                                     | ❌ 沒有 grid                         | 🟡 只有 project 群組          | ✅ ListTable tree                   | 🟡 只有 groups          | ✅                                  |
+| R4 拖曳、改長度、日對齊        | ✅【實測】（起拖門檻 20 px）                     | ✅                                                   | ✅                                   | ✅                            | ✅                                  | ✅                      | ✅（自寫）                          |
+| R5 里程碑菱形（獨立實體）      | ✅ type，🟡 需映射                               | ✅ type，🟡 需映射                                   | ❌                                   | ✅                            | ✅                                  | 🟡 自繪                 | ✅                                  |
+| R6 FS 線：顯示、拖曳建立、刪除 | ✅（也能建 SS／FF／SF，要擋）                    | ✅                                                   | 🟡 只能顯示                          | 🟡 只能顯示／✅ fork          | ✅                                  | ❌                      | ✅（自寫）                          |
+| R7 自訂驗證掛鉤                | ✅ `intercept('add-link')`【實測】               | ✅ `onBeforeLinkAdd`（`isCircularLink` 屬 PRO）      | —                                    | —／🟡                         | 🟡 建立後才有事件【未驗證能否阻擋】 | —                       | ✅ 直接呼叫 `validateNewDependency` |
+| R8 衝突標示                    | 🔒 → 🟡 以 data-id 套 CSS                        | ✅ `task_class`／`link_class`                        | 🟡 `custom_class`                    | ❌／🟡                        | 🟡 `barStyle` 函式                  | 🟡                      | ✅                                  |
+| R9 Manual／Auto 預覽與確認     | 🔒 → 自寫                                        | 🔒 → 自寫                                            | ❌（`move_dependencies` 會直接推移） | ❌                            | ❌                                  | ❌                      | ✅（`computeAutoSchedule` 已存在）  |
+| R10 Date-only                  | 🟡 Date 物件，end 為 exclusive【實測】           | 🟡 Date 物件，end 為 exclusive                       | 🟡 本地 Date，end 加 24h             | 🟡 Date                       | 🟡 字串或 Date                      | 🟡 timestamp 或 moment  | ✅ 全程使用 epoch day               |
+| R11 只有截止日的 marker        | 🔒 deadlines → 🟡 自訂 type                      | 🟡 `addTaskLayer`                                    | ❌                                   | ❌                            | 🟡 customLayout                     | 🟡 point item           | ✅                                  |
+| R12 未排程清單                 | 🔒（MIT 強制關閉）→ 🟡 放在樹外                  | 🔒 → 🟡 放在樹外                                     | ❌                                   | ❌                            | ❌                                  | ❌                      | ✅ 同一棵樹內的群組                 |
+| R13 Linear 風格主題            | 🟡 71 個 `--wx-gantt-*` 變數＋Willow／WillowDark | 🟡 180 個 `--dhx-gantt-*` 變數＋dark theme，DOM 較舊 | ✅ CSS 變數                          | 🟡 以 props 設定顏色          | 🟡 canvas，樣式為 JS 物件           | 🟡 CSS                  | ✅ 直接使用 tokens                  |
+| R14 約 1,000 列                | ✅【實測】1,004 筆時 DOM 只有 18 個 bar          | ✅ smart rendering                                   | ❌ 整張 SVG                          | ❌／🟡                        | ✅ canvas                           | 🟡                      | ✅ 虛擬化（需 benchmark）           |
+| R15 授權與付費依賴             | ✅ MIT（不得使用 PRO props）                     | ✅ MIT（10.0 起）                                    | ✅                                   | ✅（但已封存）                | ✅                                  | ✅                      | ✅                                  |
+| Bundle（JS＋CSS，gz）          | 88.5＋22.2 KB                                    | 174.6＋51.1 KB                                       | 13.0＋1.8 KB                         | 11.1 KB／46.7 KB＋MUI         | 568 KB                              | 55 KB／159 KB           | 估計 25–40 KB＋10.2 KB（TanStack）  |
 
 Bryntum Community（beta）未列入矩陣，因為大部分項目都沒有實測，見 §5.3。
 
@@ -110,20 +111,24 @@ Bryntum Community（beta）未列入矩陣，因為大部分項目都沒有實�
 ### 5.1 SVAR React Gantt（`@svar-ui/react-gantt` 2.8.2，MIT）— 最佳 Plan B
 
 **背景**
+
 - 開發商為 XB Software，與 DHTMLX 同一家公司。舊套件 `wx-react-gantt`（1.x）採 GPLv3；npm 上的 `@svar-ui/react-gantt` 最早版本是 2.3.1（2025-10-22），之後約每月發版，到 2.8.2 共 17 版。
 - 依賴 `date-fns@3.6.0` 與十幾個 `@svar-ui/*` 子套件。
 - PRO 授權從 US$749 起（Developer 方案：1 位開發者、1 個專案）【官方】。
 
 **MIT 與 PRO 的分界【官方 pricing 表】**
+
 - MIT 版包含：summary tasks 與 milestones、依賴的顯示與編輯、子任務階層、拖曳與改長度、縮放、淺色與深色主題、以 CSS 變數設定樣式、大資料量效能、用來攔截操作的 API。
 - **只有 PRO 才有**：unscheduled tasks、auto-scheduling、critical path、constraints、deadlines、工作日曆、**vertical markers**、undo／redo、PDF／PNG／Excel 匯出、baselines、split tasks。
 
 **【原始碼】PRO 功能在 MIT build 中是硬性關閉**
+
 - `DataStore.init()` 會強制設定 `unscheduledTasks=false`、`markers=[]`、`undo=false`、`schedule={}`、`criticalPath=null`、`baselines=false`、`deadlines=false` 等值。
 - `getLinkValidator()` 直接回傳 `() => null`，也就是 MIT 版沒有任何連線驗證。
 - `.d.ts` 仍然列出這些 PRO props，所以在型別上看起來可以用，但在 MIT 版完全不會生效。
 
 **【實測】結果**（Playwright＋React 19.3.1，1,004 筆任務、200 條依賴）
+
 - 渲染沒有錯誤，也沒有 console warning。
 - DOM 只有 18 個 `.wx-bar`、20 個 grid row，**有虛擬化**。
 - 傳入 `markers`、`unscheduledTasks`、`undo`、`schedule.auto`、`criticalPath` 後，state 全部被重設為停用，畫面上沒有 `.wx-marker`。
@@ -136,6 +141,7 @@ Bryntum Community（beta）未列入矩陣，因為大部分項目都沒有實�
 - 拖曳子任務時，summary 父列也會觸發 `update-task`（衍生事件），adapter 必須過濾掉。
 
 **其他細節【原始碼】**
+
 - 連線類型由起點與終點連到 bar 的哪一端決定，可能是 `e2s`、`s2s`、`e2e`、`s2e`。內建只會擋自連，以及「同 source、同 target、同 type」的重複連線。
 - 內建快捷鍵：Backspace 與 Ctrl+D 會刪除任務，Ctrl+C／X／V 會複製或剪貼任務，Ctrl+Z／Y 是 undo（在 MIT 版沒有作用）。這些都必須 intercept，改走我們自己的確認流程。
 - 內部 class 帶雜湊（例如 `wx-GKbcLEGA`），只能覆寫穩定的 class 與 CSS 變數。
@@ -148,9 +154,11 @@ Bryntum Community（beta）未列入矩陣，因為大部分項目都沒有實�
 ### 5.2 DHTMLX Gantt Community（`dhtmlx-gantt` 10.0.3，MIT）— Plan C
 
 **授權**
-- 套件內的 `whatsnew.md` 記載 10.0.0（2026-06-11）的免費版：*"now distributed under the MIT license (replacing the former GPL distribution)"*。
+
+- 套件內的 `whatsnew.md` 記載 10.0.0（2026-06-11）的免費版：_"now distributed under the MIT license (replacing the former GPL distribution)"_。
 
 **Community 與 PRO 的分界【官方：npm README 的對照表】**
+
 - Community 包含：
   - grid、樹、inline 編輯
   - 可縮放的單層或雙層刻度
@@ -167,11 +175,13 @@ Bryntum Community（beta）未列入矩陣，因為大部分項目都沒有實�
   - 工作日曆、grouping、多選
 
 **擴充掛鉤比 SVAR 豐富【原始碼】**
+
 - bundle 內有 `onBeforeLinkAdd`、`isLinkAllowed`、`templates.task_class`、`link_class`、`timeline_cell_class`、`addTaskLayer`、`getGanttInstance`、`round_dnd_dates`。
 - 沒有 `isCircularLink`，循環檢查要自己做。
 - 匯出會呼叫 `export.dhtmlx.com` 線上服務，資料會送到第三方，不建議使用。
 
 **缺點**
+
 - 官方 `ReactGantt` wrapper 屬 PRO，所以 Community 版必須在 `useEffect` 裡命令式操作全域 `gantt`，或使用 `Gantt.getGanttInstance()`。
 - JS 加 CSS 約 226 KB gz。
 - 主題是 `data-gantt-theme`（含 dark）加上 180 個 CSS 變數，但 DOM 結構較舊。
@@ -239,16 +249,16 @@ Bryntum Community（beta）未列入矩陣，因為大部分項目都沒有實�
 
 ### 5.9 2025–2026 年的新套件
 
-| 套件 | 授權 | 首發 → 最新 | 週下載 | ★ | 觀察 |
-|---|---|---|---|---|---|
-| `@pyraxi/gantt` | MIT | 2026-06 → 1.7.6（2026-10-19） | 75 | 0 | **建在 SVAR MIT 之上，加上自有 CPM engine**，佐證「SVAR MIT 本身沒有排程」 |
-| `@jaeungkim/gantt-chart` | MIT | 2025-03 → 1.7.0（2026-10-27） | 690 | 20 | 單人維護 |
-| `@bimetal/gantt-react-components` | Apache-2.0 | 2026-07 → 0.42.0（2026-10-30） | 221 | — | 0.x，單人維護，npm 沒有 repo 欄位 |
-| `gantt-lib` | MIT | 2026-02 → 0.146.0（2026-10-05） | 220 | 3 | 8 個月發了 196 版，單人維護 |
-| `mantine-gantt` | MIT | 2026-02 → 0.7.0（2026-10-21） | 4,895 | 4 | 綁定 Mantine 9 |
-| `@umriss-ui/schedule` | MIT | 2026-09 → 0.53.0（2026-11-01） | 1,928 | — | 綁定 `@umriss-ui/core` |
-| `@art-tools/react-gantt`、`@haro/react-gantt`、`@sokkay/react-gantt`、`freegantt`、`@xpyjs/gantt-react` | MIT | 2025–2026 | 5–268 | 0–351 | 都是 0.x 或單人維護 |
-| Kibo UI Gantt（shadcn registry，`shadcnblocks/kibo`） | MIT | repo 最後 push 2026-05-04 | — | 3,978（整個 kibo repo） | 複製式元件，約 1,470 行。只有 daily／monthly／quarterly，**沒有依賴線、milestone、虛擬化**。只適合當視覺參考 |
+| 套件                                                                                                    | 授權       | 首發 → 最新                     | 週下載 | ★                       | 觀察                                                                                                         |
+| ------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------- | ------ | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `@pyraxi/gantt`                                                                                         | MIT        | 2026-06 → 1.7.6（2026-10-19）   | 75     | 0                       | **建在 SVAR MIT 之上，加上自有 CPM engine**，佐證「SVAR MIT 本身沒有排程」                                   |
+| `@jaeungkim/gantt-chart`                                                                                | MIT        | 2025-03 → 1.7.0（2026-10-27）   | 690    | 20                      | 單人維護                                                                                                     |
+| `@bimetal/gantt-react-components`                                                                       | Apache-2.0 | 2026-07 → 0.42.0（2026-10-30）  | 221    | —                       | 0.x，單人維護，npm 沒有 repo 欄位                                                                            |
+| `gantt-lib`                                                                                             | MIT        | 2026-02 → 0.146.0（2026-10-05） | 220    | 3                       | 8 個月發了 196 版，單人維護                                                                                  |
+| `mantine-gantt`                                                                                         | MIT        | 2026-02 → 0.7.0（2026-10-21）   | 4,895  | 4                       | 綁定 Mantine 9                                                                                               |
+| `@umriss-ui/schedule`                                                                                   | MIT        | 2026-09 → 0.53.0（2026-11-01）  | 1,928  | —                       | 綁定 `@umriss-ui/core`                                                                                       |
+| `@art-tools/react-gantt`、`@haro/react-gantt`、`@sokkay/react-gantt`、`freegantt`、`@xpyjs/gantt-react` | MIT        | 2025–2026                       | 5–268  | 0–351                   | 都是 0.x 或單人維護                                                                                          |
+| Kibo UI Gantt（shadcn registry，`shadcnblocks/kibo`）                                                   | MIT        | repo 最後 push 2026-05-04       | —      | 3,978（整個 kibo repo） | 複製式元件，約 1,470 行。只有 daily／monthly／quarterly，**沒有依賴線、milestone、虛擬化**。只適合當視覺參考 |
 
 **結論**：新套件都沒有足夠的維護者或使用量，不適合當作最重要功能的基礎。
 
@@ -285,17 +295,17 @@ Bryntum Community（beta）未列入矩陣，因為大部分項目都沒有實�
 
 僅供相對比較；domain 排程邏輯兩案共用，不計入。
 
-| 工作項目 | 自建（人日） | SVAR Plan B（人日） |
-|---|---|---|
-| Auto 預覽 Dialog、`apply_task_schedule`、樂觀更新與回滾接線 | 1–1.5 | 1–1.5 |
-| 版面、虛擬化、刻度與表頭 | 1.5–2 | 0.5（設定） |
-| bar、marker、milestone、rollup、未排程群組 | 1–1.5 | 1.5–2（自訂 type、樹外清單、today overlay） |
-| 拖曳、改長度、auto-scroll | 1.5–2.5 | 0.5–1（adapter、雙向同步與 intercept） |
-| 建立與刪除依賴、線段路由 | 1.5–2.5 | 0.5（另加「只允許 FS」） |
-| 深淺主題與 List 一致 | 0.5 | 1.5–2.5（覆寫） |
-| 中和內建 hotkey、editor、menu；版本升級稽核 | 0 | 0.5–1 |
-| 測試（unit＋E2E） | 1.5–2 | 1.5 |
-| **合計** | **約 8.5–12.5** | **約 7.5–10.5** |
+| 工作項目                                                    | 自建（人日）    | SVAR Plan B（人日）                         |
+| ----------------------------------------------------------- | --------------- | ------------------------------------------- |
+| Auto 預覽 Dialog、`apply_task_schedule`、樂觀更新與回滾接線 | 1–1.5           | 1–1.5                                       |
+| 版面、虛擬化、刻度與表頭                                    | 1.5–2           | 0.5（設定）                                 |
+| bar、marker、milestone、rollup、未排程群組                  | 1–1.5           | 1.5–2（自訂 type、樹外清單、today overlay） |
+| 拖曳、改長度、auto-scroll                                   | 1.5–2.5         | 0.5–1（adapter、雙向同步與 intercept）      |
+| 建立與刪除依賴、線段路由                                    | 1.5–2.5         | 0.5（另加「只允許 FS」）                    |
+| 深淺主題與 List 一致                                        | 0.5             | 1.5–2.5（覆寫）                             |
+| 中和內建 hotkey、editor、menu；版本升級稽核                 | 0               | 0.5–1                                       |
+| 測試（unit＋E2E）                                           | 1.5–2           | 1.5                                         |
+| **合計**                                                    | **約 8.5–12.5** | **約 7.5–10.5**                             |
 
 前期自建約多 1–2 人日，而且互動層的不確定性較高，所以設了 §6.4 的退場條件。換來的是規格完全吻合、沒有 PRO 陷阱、單一狀態來源、與設計系統一致，以及後續功能擴充（例如把未排程任務拖到時間軸上）的成本較低。
 
@@ -373,11 +383,11 @@ workspace store (zustand) ──selectors(memo)──► rows / spans / conflict
 
 UI 文字依 architecture §3 使用英文。週起始日依 `preferences.weekStartsOn`，透過 `startOfWeek()` 計算。
 
-| Scale | px/day | 單位寬 | 上層 tier | 下層 tier | 背景 | 預設前後留白 | 拖曳最小單位 |
-|---|---|---|---|---|---|---|---|
-| Day | 36 | 1 天 = 36 px | 月 `Nov 2026` | 日 `2` 加星期縮寫 `M` | 每日細線、週界較深、週末底色、今日欄淡色 | 14 天 | 1 天 |
-| Week | 16 | 1 週 = 112 px | 月 `Nov 2026` | 週 `Nov 2–8`（或 `W45`） | 週界線、月界較深、週末淡底色 | 6 週 | 1 天 |
-| Month | 5 | 1 月 ≈ 140–155 px | 年 `2026`（可選季 `Q4`） | 月 `Nov` | 月界線、季／年界較深、不畫週末 | 3 個月 | 1 天（精細調整建議用鍵盤或 Modal） |
+| Scale | px/day | 單位寬            | 上層 tier                | 下層 tier                | 背景                                     | 預設前後留白 | 拖曳最小單位                       |
+| ----- | ------ | ----------------- | ------------------------ | ------------------------ | ---------------------------------------- | ------------ | ---------------------------------- |
+| Day   | 36     | 1 天 = 36 px      | 月 `Nov 2026`            | 日 `2` 加星期縮寫 `M`    | 每日細線、週界較深、週末底色、今日欄淡色 | 14 天        | 1 天                               |
+| Week  | 16     | 1 週 = 112 px     | 月 `Nov 2026`            | 週 `Nov 2–8`（或 `W45`） | 週界線、月界較深、週末淡底色             | 6 週         | 1 天                               |
+| Month | 5      | 1 月 ≈ 140–155 px | 年 `2026`（可選季 `Q4`） | 月 `Nov`                 | 月界線、季／年界較深、不畫週末           | 3 個月       | 1 天（精細調整建議用鍵盤或 Modal） |
 
 - 表頭儲存格由 `model/scale.ts` 依可視範圍（前後各多一個 viewport）產生：`{ key, x, width, label }[]`。只渲染可見的部分。
 - 每日線與週末底色用 CSS `repeating-linear-gradient`，以 `background-position-x` 對齊 `originDay` 的星期，不需要每天一個 DOM 節點。月界不規則，在可視範圍內各用一條 1 px 的絕對定位線。
@@ -407,28 +417,31 @@ UI 文字依 architecture §3 使用英文。週起始日依 `preferences.weekSt
 
 **Z 軸由下到上**：lane 背景、週末與今日、**依賴線 SVG**、bars、markers、連接點與把手、拖曳 ghost 與建立中的連線、sticky 左欄、sticky 表頭、corner。
 
-| 列或 span | 呈現 | 互動 |
-|---|---|---|
+| 列或 span                     | 呈現                                                                                                                                                   | 互動                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
 | `taskSpan().kind === 'range'` | `TaskBar`：圓角條。狀態用形狀與 icon 區分（To Do 中性、In Progress 左側 accent 條、Done 加勾號並降低不透明度），不只靠顏色。寬度夠時標籤在內，否則在右 | 拖曳中段、兩端改長度、連接點拖曳建立依賴、點擊開啟 Task Modal |
-| `'due_only'` | `DueMarker`：截止日上的細刻線加小旗，標籤 `Due Nov 5`，形狀與里程碑菱形明顯不同 | 拖曳移動截止日，不能改長度（P1 可加「設定開始日」把手） |
-| `'start_only'` | `StartMarker`：開始日刻線，右側漸淡表示沒有結束日 | 拖曳移動開始日 |
-| `'unscheduled'` | 放在左樹底部的「Unscheduled (n)」群組，沒有 bar。有子任務帶日期的父任務不算未排程 | P1：從左欄拖到時間軸即可排程，`start = due = 放下的那一天` |
-| Phase 列 | `RollupBar`：細條加兩端括號，範圍為 `rollupRange(phase 內任務, 里程碑)`，唯讀 | V1 不可拖。P1 可做「整組平移」並沿用預覽 Dialog |
-| 父任務 | 有自己的日期就顯示 `TaskBar`；收合時下方多一條子任務 rollup 細線 | 與一般任務相同；子任務不會跟著移動（V1） |
-| 里程碑列 | `MilestoneDiamond`：12 px 旋轉方塊，以日期為中心。依 `hierarchy.ts` 放在所屬群組內並按日期排序 | 拖曳改日期；不能建立依賴（D6） |
+| `'due_only'`                  | `DueMarker`：截止日上的細刻線加小旗，標籤 `Due Nov 5`，形狀與里程碑菱形明顯不同                                                                        | 拖曳移動截止日，不能改長度（P1 可加「設定開始日」把手）       |
+| `'start_only'`                | `StartMarker`：開始日刻線，右側漸淡表示沒有結束日                                                                                                      | 拖曳移動開始日                                                |
+| `'unscheduled'`               | 放在左樹底部的「Unscheduled (n)」群組，沒有 bar。有子任務帶日期的父任務不算未排程                                                                      | P1：從左欄拖到時間軸即可排程，`start = due = 放下的那一天`    |
+| Phase 列                      | `RollupBar`：細條加兩端括號，範圍為 `rollupRange(phase 內任務, 里程碑)`，唯讀                                                                          | V1 不可拖。P1 可做「整組平移」並沿用預覽 Dialog               |
+| 父任務                        | 有自己的日期就顯示 `TaskBar`；收合時下方多一條子任務 rollup 細線                                                                                       | 與一般任務相同；子任務不會跟著移動（V1）                      |
+| 里程碑列                      | `MilestoneDiamond`：12 px 旋轉方塊，以日期為中心。依 `hierarchy.ts` 放在所屬群組內並按日期排序                                                         | 拖曳改日期；不能建立依賴（D6）                                |
 
 ### 7.7 依賴線（SVG）
 
 **路由（FS）**
+
 - 起點 `(xEnd(P) + 2, yMid(P))`，終點 `(xStart(S) - 2, yMid(S))`，間距 `g = 8px`。
 - 有足夠空間（`tx - sx ≥ 2g`）時：`M sx,sy H sx+g V ty H tx`，終點加箭頭。
 - 回折或衝突時：`M sx,sy H sx+g V sy±rowH/2 H tx-g V ty H tx`。
 
 **剔除**
+
 - 只畫兩端都在目前展開列中，而且 bounding box 與可視範圍（含 margin）相交的線。座標完全由「列索引 × 列高」計算，**不讀 DOM**，所以端點列即使被虛擬化卸載也不影響。
 - 端點被收合時隱藏該線。是否要在列上顯示「n 條隱藏連線」，見 §9。
 
 **互動與樣式**
+
 - 每條線另有一條透明 10 px 的 `stroke` 作為點擊區。
 - 點擊選取後線條改為 accent 色，並在中點顯示「×」；Delete 或 Backspace 也可以刪除。刪除後顯示「Dependency removed · Undo」toast，不必跳確認框。
 - 衝突的線改為 danger 色加虛線，successor 加紅框與警示 icon（不只靠顏色）。衝突來源為 `findConflicts()` 的 `dependencyId` 與 `successorId`。
@@ -464,11 +477,13 @@ dragging ─Esc / pointercancel / lostpointercapture─► 還原 → idle
 ### 7.10 Manual／Auto 流程與原子寫入
 
 **Manual（預設）**
+
 - commit 只寫入使用者這一次的變更，接著重新計算 `findConflicts`。
 - 有新衝突時顯示 toast「Creates 2 dependency conflicts · Review」。
 - toolbar 的衝突 chip 會列出所有衝突，點擊可捲動到該任務。chip 上也提供「Fix with Auto…」，對選定的衝突執行預覽。
 
 **Auto**
+
 - 呼叫 `shifts = computeAutoSchedule(tasks, deps, [change])`。它只往後推移後續任務、保留工期，不會移動使用者剛編輯的任務（D10）。
 - `shifts.length === 0` 時直接套用。
 - 否則開啟 `RescheduleDialog`：
@@ -478,6 +493,7 @@ dragging ─Esc / pointercancel / lostpointercapture─► 還原 → idle
   - 取消時 ghost 回到原位，不寫入任何資料。
 
 **寫入**
+
 - `store.applySchedule([change, ...shifts])` 先做樂觀更新並保留 inverse patches（D5）。
 - 接著呼叫 RPC `apply_task_schedule(p_changes)`，全部成功或全部失敗。本機模式由 LocalRepository 以相同語意模擬。
 - 失敗時以 inverse patches 回滾，顯示含 Retry 的 toast，不會虛報成功（PRD §5.4、§9.2）。
@@ -555,20 +571,20 @@ dragging ─Esc / pointercancel / lostpointercapture─► 還原 → idle
 
 如果觸發 §6.4，就鎖定 `@svar-ui/react-gantt@2.8.2`，並依下表補足。
 
-| PRD 需求 | SVAR MIT 現況 | 補足方式 | 風險 |
-|---|---|---|---|
-| Today 指示 | vertical markers 屬 PRO，MIT 版強制清空【實測】 | 用 `highlightTime(date, unit)` 回傳今日欄的 class（官方表列為 MIT 功能）。Week／Month 另外疊一條 overlay 線，位置需由 `api.getState()` 的內部 `_scales` 或 DOM 量測算出 | 依賴未公開狀態，升級時容易壞 |
-| 衝突標示 | 違規標示屬 PRO | 依 `findConflicts` 動態產生 `<style>`，對 `.wx-bar[data-id="t:…"]` 與 `[data-link-id="…"] .wx-line-draw` 套樣式 | 依賴 DOM 屬性 |
-| Auto 預覽與確認 | auto-scheduling 屬 PRO | intercept `update-task`（非 `inProgress` 的那一次）並回傳 false，改走 `computeAutoSchedule` 與 `RescheduleDialog`；確認後先寫 store 與 RPC，再對每個任務執行 `api.exec('update-task')` | 兩份狀態要同步 |
-| 只有截止日的 marker | deadlines 屬 PRO | 在 `taskTypes` 註冊自訂 type `due`，bar 會帶 `wx-task due` class，再用 CSS 畫成 marker；intercept 寬度變更 | 屬 hack |
-| 未排程清單 | unscheduled 屬 PRO，MIT 強制為 false【實測】 | 在 Gantt 外另列「Unscheduled」清單 | 與左樹分離，UX 打折 |
-| 只允許 FS | UI 可以建立 `e2s`、`s2s`、`e2e`、`s2e` | intercept `add-link`：只放行 `e2s`，並通過 `validateNewDependency`【實測可擋】 | — |
-| Phase、Milestone、一層子任務 | 只有單一任務樹 | ID 加前綴 `p:`、`t:`、`m:`；Phase 對應 summary，Milestone 對應 milestone；intercept `add-task`、`move-task`、`indent-task`、`copy-task`、`paste-task`；過濾 summary 的衍生 `update-task`【實測】 | 介入點多 |
-| 刪除與編輯 | 內建 Backspace／Ctrl+D 刪除、Ctrl+C／V 複製貼上、內建 Editor | intercept `delete-task` 與 `show-editor`，改走 `confirm()` 與 Task Modal（`?task=`） | 每次升級都要重新稽核 |
-| Date-only | Date 物件，end 為 exclusive【實測】 | `start = toLocalDate(start)`，`end = toLocalDate(addDays(due, 1))`；寫回時用 `fromLocalDate`，due 為 end 減 1 天 | DST 時區要測 |
-| 主題 | Willow／WillowDark 加 CSS 變數 | 把 tokens 對應到 `--wx-*`，只覆寫穩定 class（`wx-bar`、`wx-task`、`wx-line`） | 內部 class 帶雜湊 |
-| 拖曳精度 | 起拖門檻寫死 20 px【實測】 | 接受這個限制，以鍵盤或 Modal 微調 | Week 刻度拖 1 天只有 20–24 px 空間；Month 刻度最少 4 天 |
-| 版本 | — | 鎖定確切版本；升級前跑完整 E2E | — |
+| PRD 需求                     | SVAR MIT 現況                                                | 補足方式                                                                                                                                                                                         | 風險                                                    |
+| ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Today 指示                   | vertical markers 屬 PRO，MIT 版強制清空【實測】              | 用 `highlightTime(date, unit)` 回傳今日欄的 class（官方表列為 MIT 功能）。Week／Month 另外疊一條 overlay 線，位置需由 `api.getState()` 的內部 `_scales` 或 DOM 量測算出                          | 依賴未公開狀態，升級時容易壞                            |
+| 衝突標示                     | 違規標示屬 PRO                                               | 依 `findConflicts` 動態產生 `<style>`，對 `.wx-bar[data-id="t:…"]` 與 `[data-link-id="…"] .wx-line-draw` 套樣式                                                                                  | 依賴 DOM 屬性                                           |
+| Auto 預覽與確認              | auto-scheduling 屬 PRO                                       | intercept `update-task`（非 `inProgress` 的那一次）並回傳 false，改走 `computeAutoSchedule` 與 `RescheduleDialog`；確認後先寫 store 與 RPC，再對每個任務執行 `api.exec('update-task')`           | 兩份狀態要同步                                          |
+| 只有截止日的 marker          | deadlines 屬 PRO                                             | 在 `taskTypes` 註冊自訂 type `due`，bar 會帶 `wx-task due` class，再用 CSS 畫成 marker；intercept 寬度變更                                                                                       | 屬 hack                                                 |
+| 未排程清單                   | unscheduled 屬 PRO，MIT 強制為 false【實測】                 | 在 Gantt 外另列「Unscheduled」清單                                                                                                                                                               | 與左樹分離，UX 打折                                     |
+| 只允許 FS                    | UI 可以建立 `e2s`、`s2s`、`e2e`、`s2e`                       | intercept `add-link`：只放行 `e2s`，並通過 `validateNewDependency`【實測可擋】                                                                                                                   | —                                                       |
+| Phase、Milestone、一層子任務 | 只有單一任務樹                                               | ID 加前綴 `p:`、`t:`、`m:`；Phase 對應 summary，Milestone 對應 milestone；intercept `add-task`、`move-task`、`indent-task`、`copy-task`、`paste-task`；過濾 summary 的衍生 `update-task`【實測】 | 介入點多                                                |
+| 刪除與編輯                   | 內建 Backspace／Ctrl+D 刪除、Ctrl+C／V 複製貼上、內建 Editor | intercept `delete-task` 與 `show-editor`，改走 `confirm()` 與 Task Modal（`?task=`）                                                                                                             | 每次升級都要重新稽核                                    |
+| Date-only                    | Date 物件，end 為 exclusive【實測】                          | `start = toLocalDate(start)`，`end = toLocalDate(addDays(due, 1))`；寫回時用 `fromLocalDate`，due 為 end 減 1 天                                                                                 | DST 時區要測                                            |
+| 主題                         | Willow／WillowDark 加 CSS 變數                               | 把 tokens 對應到 `--wx-*`，只覆寫穩定 class（`wx-bar`、`wx-task`、`wx-line`）                                                                                                                    | 內部 class 帶雜湊                                       |
+| 拖曳精度                     | 起拖門檻寫死 20 px【實測】                                   | 接受這個限制，以鍵盤或 Modal 微調                                                                                                                                                                | Week 刻度拖 1 天只有 20–24 px 空間；Month 刻度最少 4 天 |
+| 版本                         | —                                                            | 鎖定確切版本；升級前跑完整 E2E                                                                                                                                                                   | —                                                       |
 
 ---
 

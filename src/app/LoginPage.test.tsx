@@ -104,7 +104,12 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: 'Forgot password?' }))
     expect(actions.sendPasswordReset).toHaveBeenCalledWith('me@example.com')
     expect(await screen.findByRole('heading', { name: 'Check your email' })).toHaveFocus()
-    expect(screen.getByText(/If an account exists for me@example.com/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /If an account exists for me@example.com, you.ll receive a link to reset your password\./,
+    )
+    // The address stays in one piece (its own unbreakable-until-necessary span), so a hyphen in it
+    // never splits it across two lines.
+    expect(screen.getByText('me@example.com', { selector: 'span' })).toHaveClass('inline-block')
   })
 
   it('names the current form in the heading and the document title; switching starts at Email', async () => {

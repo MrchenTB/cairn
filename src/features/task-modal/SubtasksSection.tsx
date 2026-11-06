@@ -7,12 +7,14 @@ import { StatusMenu } from '@/components/task/StatusMenu'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { hoverFade, insetFocus } from '@/components/ui/styles'
+import { isRetryable } from '@/data/errors'
 import { useActions, useSubtasks } from '@/data/hooks'
 import { computeProgress } from '@/domain/progress'
 import type { Task } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { FieldError, SectionHeading } from './fields'
 import { isComposing } from './keys'
+import { currentTasks, useRetryFulfilment } from './retryFulfilment'
 
 export interface SubtasksSectionProps {
   parent: Task
@@ -48,9 +50,16 @@ export function SubtasksSection({
     onDraftChange(hasDraft)
   }, [hasDraft, onDraftChange])
 
+  // A failed add gives its text back (below) while the toast offers Retry: if that Retry stores
+  // the subtask, the line is cleared instead of inviting a second, duplicate add.
+  const retryFulfilment = useRetryFulfilment(subtasks, currentTasks, (subtask) => {
+    setDraft((current) => (current.trim() === subtask.title ? '' : current))
+  })
+
   const add = async () => {
     const title = draft.trim()
     if (!title) return
+    retryFulfilment.disarm()
     setDraft('')
     setError(null)
     setAdding((count) => count + 1)
@@ -61,6 +70,7 @@ export function SubtasksSection({
       // reported by the store's toast; validation problems are shown here.
       setDraft((current) => (current === '' ? title : current))
       if (result.error.kind === 'validation') setError(result.error.message)
+      else if (isRetryable(result.error)) retryFulfilment.arm((subtask) => subtask.title === title)
     }
   }
 
@@ -131,6 +141,7 @@ export function SubtasksSection({
           value={draft}
           onChange={(event) => {
             setDraft(event.target.value)
+            retryFulfilment.disarm()
             if (error) setError(null)
           }}
           onKeyDown={(event) => {

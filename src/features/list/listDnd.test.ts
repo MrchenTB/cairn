@@ -131,12 +131,14 @@ describe('resolveTopLevelDrop', () => {
   })
 
   it('appends to a group dropped on directly (collapsed or empty, no preview)', () => {
-    expect(resolveTopLevelDrop({ taskId: 'a', initial, current: initial, overId: DESIGN })).toEqual({
-      taskId: 'a',
-      afterId: 'e',
-      beforeId: null,
-      phaseId: 'design',
-    })
+    expect(resolveTopLevelDrop({ taskId: 'a', initial, current: initial, overId: DESIGN })).toEqual(
+      {
+        taskId: 'a',
+        afterId: 'e',
+        beforeId: null,
+        phaseId: 'design',
+      },
+    )
     // An empty group has no neighbours to place by: no hints (the caller keeps the task's place).
     expect(resolveTopLevelDrop({ taskId: 'a', initial, current: initial, overId: BUILD })).toEqual({
       taskId: 'a',
@@ -157,12 +159,16 @@ describe('resolveTopLevelDrop', () => {
 
 describe('resolveSubtaskDrop', () => {
   it('reorders among siblings only', () => {
-    expect(resolveSubtaskDrop({ taskId: 's1', siblings: ['s1', 's2', 's3'], overId: 's2' })).toEqual({
+    expect(
+      resolveSubtaskDrop({ taskId: 's1', siblings: ['s1', 's2', 's3'], overId: 's2' }),
+    ).toEqual({
       taskId: 's1',
       afterId: 's2',
       beforeId: 's3',
     })
-    expect(resolveSubtaskDrop({ taskId: 's3', siblings: ['s1', 's2', 's3'], overId: 's1' })).toEqual({
+    expect(
+      resolveSubtaskDrop({ taskId: 's3', siblings: ['s1', 's2', 's3'], overId: 's1' }),
+    ).toEqual({
       taskId: 's3',
       afterId: null,
       beforeId: 's1',
@@ -199,7 +205,11 @@ describe('mayPreviewSwitch (no bouncing between groups)', () => {
 
 describe('menu moves', () => {
   it('stepMove swaps with the neighbour and stops at the edges', () => {
-    expect(stepMove(['a', 'b', 'c'], 'b', -1)).toEqual({ taskId: 'b', afterId: null, beforeId: 'a' })
+    expect(stepMove(['a', 'b', 'c'], 'b', -1)).toEqual({
+      taskId: 'b',
+      afterId: null,
+      beforeId: 'a',
+    })
     expect(stepMove(['a', 'b', 'c'], 'b', 1)).toEqual({ taskId: 'b', afterId: 'c', beforeId: null })
     expect(stepMove(['a', 'b', 'c'], 'a', -1)).toBeNull()
     expect(stepMove(['a', 'b', 'c'], 'c', 1)).toBeNull()

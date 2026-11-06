@@ -15,7 +15,8 @@ import { StatusMenu } from '@/components/task/StatusMenu'
 import { Button } from '@/components/ui/button'
 import { DialogTitle } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useActions, usePhases, useProject, useProjects, useTask } from '@/data/hooks'
+import { useActions, usePhases, useProject, useProjectTasks, useProjects } from '@/data/hooks'
+import { isRetryable } from '@/data/errors'
 import type { Project, Task } from '@/domain/types'
 import { draftFor, getLastProjectId, setLastProjectId } from './createSupport'
 import { confirmDiscard } from './discard'
@@ -24,8 +25,6 @@ import {
   DateArrow,
   DescriptionField,
   FieldError,
-  LockedChip,
-  PhaseGlyph,
   PhasePicker,
   TitleField,
 } from './fields'
@@ -39,7 +38,8 @@ import {
 } from './formModel'
 import { ModalBody, ModalFooter, ModalHeader } from './modalParts'
 import type { ModalControls } from './modalControls'
-import { ProjectCrumb, ProjectPicker } from './ProjectPicker'
+import { ProjectPicker } from './ProjectPicker'
+import { currentTasks, useRetryFulfilment } from './retryFulfilment'
 import { useUnloadPrompt } from './useUnloadPrompt'
 
 export interface CreateTaskFormProps {
@@ -51,6 +51,8 @@ export interface CreateTaskFormProps {
   onCreated: (task: Task) => void
   /** No project exists yet: close this modal and create one (the draft comes back after). */
   onCreateProject: (draft: TaskFormValues) => void
+  /** Whether the form holds unsaved work (so the host asks before replacing it). */
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 /** Global "New task" default: the last project used on this device, or the only project. */
@@ -67,10 +69,10 @@ export function CreateTaskForm({
   onClose,
   onCreated,
   onCreateProject,
+  onDirtyChange,
 }: CreateTaskFormProps) {
   const activeProjects = useProjects()
-  const parent = useTask(defaults.parentTaskId)
-  const preset = useProject(parent ? parent.projectId : defaults.projectId)
+  const preset = useProject(defaults.projectId)
   const { createTask } = useActions()
 
   // An explicitly requested project is offered even when it is archived.
@@ -83,12 +85,8 @@ export function CreateTaskForm({
   )
 
   const [initial] = useState(() => ({
-    values: initialCreateValues(defaults, parent),
-    projectId: parent
-      ? parent.projectId
-      : defaults.projectId
-        ? (preset?.id ?? null)
-        : defaultProjectId(activeProjects),
+    values: initialCreateValues(defaults),
+    projectId: defaults.projectId ? (preset?.id ?? null) : defaultProjectId(activeProjects),
   }))
   const [values, setValues] = useState<TaskFormValues>(() => draftFor(defaults) ?? initial.values)
   const [projectId, setProjectId] = useState<string | null>(initial.projectId)
@@ -103,10 +101,14 @@ export function CreateTaskForm({
   const projectError = project ? null : 'Choose a project for this task.'
   const dirty = isCreateDirty(values, initial.values) || projectId !== initial.projectId
   const canCreate = !hasErrors(errors) && project !== null && !saving
-  const noProjects = options.length === 0 && !parent
+  const noProjects = options.length === 0
 
   // A typed task is not lost to an accidental reload or closed tab.
   useUnloadPrompt(dirty && !saving)
+  useEffect(() => {
+    onDirtyChange?.(dirty && !saving)
+    return () => onDirtyChange?.(false)
+  }, [dirty, saving, onDirtyChange])
 
   const titleRef = useRef<HTMLTextAreaElement>(null)
   const savingRef = useRef(false)
@@ -115,6 +117,19 @@ export function CreateTaskForm({
     latest.current = { values, projectId, dirty }
   })
   const mountedRef = useRef(true)
+  /** The task exists (created here, or by the toast's Retry): never create it a second time. */
+  const doneRef = useRef(false)
+
+  // A failed create leaves this form open (nothing is lost) while the toast offers Retry. If that
+  // Retry stores the task, this form is done: it closes instead of inviting a duplicate.
+  const projectTasks = useProjectTasks(project?.id)
+  const retryFulfilment = useRetryFulfilment(projectTasks, currentTasks, (task) => {
+    if (doneRef.current) return
+    doneRef.current = true
+    setLastProjectId(task.projectId)
+    if (mountedRef.current) onClose()
+    onCreated(task)
+  })
 
   useEffect(() => {
     mountedRef.current = true
@@ -127,6 +142,7 @@ export function CreateTaskForm({
   const setField = <K extends keyof TaskFormValues>(key: K, value: TaskFormValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
     setFormError(null)
+    retryFulfilment.disarm()
   }
 
   const requestClose = useCallback(async () => {
@@ -139,6 +155,7 @@ export function CreateTaskForm({
     const controls: ModalControls = {
       requestClose: () => void requestClose(),
       submit: () => submitRef.current(),
+      focus: () => titleRef.current?.focus({ preventScroll: true }),
     }
     controlsRef.current = controls
     return () => {
@@ -147,7 +164,7 @@ export function CreateTaskForm({
   }, [controlsRef, requestClose])
 
   const create = async () => {
-    if (savingRef.current) return
+    if (savingRef.current || doneRef.current) return
     const current = latest.current
     setShowErrors(true)
     const currentErrors = validateTaskForm(current.values)
@@ -156,21 +173,25 @@ export function CreateTaskForm({
     savingRef.current = true
     setSaving(true)
     setFormError(null)
-    const result = await createTask(
-      buildNewTaskInput(current.values, {
-        projectId: current.projectId,
-        parentTaskId: defaults.parentTaskId ?? null,
-        placement: defaults.placement,
-      }),
-    )
+    retryFulfilment.disarm()
+    const input = buildNewTaskInput(current.values, {
+      projectId: current.projectId,
+      placement: defaults.placement,
+    })
+    const result = await createTask(input)
     savingRef.current = false
     setSaving(false)
     if (!result.ok) {
       // Remote failures were toasted (with Retry) and rolled back by the store; the form keeps
-      // everything so the user can try again. Validation problems are explained here.
+      // everything so the user can try again (or use the toast's Retry: see retryFulfilment).
+      // Validation problems are explained here.
       if (result.error.kind === 'validation') setFormError(result.error.message)
+      else if (isRetryable(result.error)) {
+        retryFulfilment.arm((task) => task.title === input.title && task.parentTaskId === null)
+      }
       return
     }
+    doneRef.current = true
     setLastProjectId(current.projectId)
     // Closed meanwhile (perhaps a new "New task" is open now): leave the modal alone, still
     // confirm the task was created.
@@ -183,6 +204,7 @@ export function CreateTaskForm({
 
   const changeProject = (nextId: string) => {
     if (nextId === projectId) return
+    retryFulfilment.disarm()
     setProjectId(nextId)
     // Phases belong to one project.
     setValues((current) => ({ ...current, phaseId: null }))
@@ -190,7 +212,6 @@ export function CreateTaskForm({
   }
 
   const showTitleError = showErrors || titleTouched
-  const isSubtask = Boolean(defaults.parentTaskId)
   // Says why "Create" is unavailable before the user runs into the error (then the error says it).
   const footerNote =
     !noProjects && !project && !showErrors
@@ -198,22 +219,12 @@ export function CreateTaskForm({
       : project?.status === 'archived'
         ? 'This project is archived.'
         : null
-  const currentPhase = phases.find((phase) => phase.id === values.phaseId) ?? null
   const showPhase = project !== null && (phases.length > 0 || values.phaseId !== null)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ModalHeader onClose={() => void requestClose()}>
-        {parent && preset ? (
-          <>
-            <ProjectCrumb project={preset} reason="Subtasks stay in their parent’s project" />
-            <CrumbSeparator />
-            <span className="min-w-0 truncate px-1.5 text-ui text-fg-secondary">
-              Subtask of {parent.title}
-            </span>
-            <CrumbSeparator />
-          </>
-        ) : !noProjects ? (
+        {!noProjects ? (
           <>
             <ProjectPicker
               projects={options}
@@ -224,16 +235,14 @@ export function CreateTaskForm({
             <CrumbSeparator />
           </>
         ) : null}
-        <DialogTitle className="shrink-0 px-1.5 text-ui font-medium text-fg">
-          {isSubtask ? 'New subtask' : 'New task'}
-        </DialogTitle>
+        <DialogTitle className="shrink-0 px-1.5 text-ui font-medium text-fg">New task</DialogTitle>
       </ModalHeader>
 
       <ModalBody>
         <TitleField
           ref={titleRef}
           value={values.title}
-          placeholder={isSubtask ? 'Subtask name' : 'Task name'}
+          placeholder="Task name"
           onChange={(title) => {
             setField('title', title)
             setTitleTouched(true)
@@ -297,21 +306,11 @@ export function CreateTaskForm({
               onChange={(dueDate) => setField('dueDate', dueDate)}
             />
             {showPhase ? (
-              isSubtask ? (
-                <LockedChip
-                  label={`Phase: ${currentPhase?.name ?? 'No phase'}`}
-                  reason="Subtasks follow their parent’s phase"
-                  icon={<PhaseGlyph className="text-fg-tertiary" />}
-                >
-                  {currentPhase?.name ?? 'No phase'}
-                </LockedChip>
-              ) : (
-                <PhasePicker
-                  phases={phases}
-                  value={values.phaseId}
-                  onChange={(phaseId) => setField('phaseId', phaseId)}
-                />
-              )
+              <PhasePicker
+                phases={phases}
+                value={values.phaseId}
+                onChange={(phaseId) => setField('phaseId', phaseId)}
+              />
             ) : null}
           </div>
         )}
@@ -332,7 +331,7 @@ export function CreateTaskForm({
             loading={saving}
             onClick={() => void create()}
           >
-            {isSubtask ? 'Create subtask' : 'Create task'}
+            Create task
           </Button>
         </Tooltip>
       </ModalFooter>

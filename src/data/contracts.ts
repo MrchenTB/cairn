@@ -140,6 +140,12 @@ export interface AuthService {
   sendPasswordReset(email: string): Promise<void>
   /** Sets a new password for the signed-in user (e.g. after a password-reset link). */
   updatePassword(newPassword: string): Promise<void>
+  /**
+   * The server rejected the current session: asks it for a new one. Resolves with the user while
+   * the session lives on, null once it is over (refused; this device is signed out). Rejects when
+   * the server cannot be reached. Services without it just have their session re-read.
+   */
+  revalidate?(): Promise<AuthUser | null>
 }
 
 export interface AuthState {
@@ -179,7 +185,8 @@ export interface SyncState {
   /**
    * Most recent failed write/load that has not been followed by a successful write (a failed
    * write that a later refresh shows the server applied after all — its answer was lost — no
-   * longer counts).
+   * longer counts, and neither does a write the server refused once a refresh has shown the
+   * current data).
    */
   lastError: AppError | null
   /** epoch ms of the last successful write */
@@ -209,7 +216,7 @@ export interface WorkspaceActions {
   /** Initial load after sign-in (status: loading → ready | error). */
   load(): Promise<Result>
   /** Re-fetch everything; skipped while writes are pending. silent = no loading state. */
-  refresh(options?: { silent?: boolean }): Promise<Result>
+  refresh(options?: { silent?: boolean; reportFailure?: boolean }): Promise<Result>
   /** Clears all data (sign-out). */
   reset(): void
 

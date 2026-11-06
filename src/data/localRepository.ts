@@ -21,6 +21,7 @@ import {
   validateDescription,
   validateName,
 } from '@/domain/validation'
+import { stronglyConnectedComponents } from '@/domain/graph'
 import { validateNewDependency } from '@/domain/scheduling'
 import {
   DEPENDENCY_TYPES,
@@ -542,7 +543,12 @@ function checkMilestone(db: LocalDb, row: Milestone): void {
 }
 
 /** tg_task_dependencies_rules + constraints (same project, no self/parent edge, unique, acyclic). */
-function insertDependencyRow(db: LocalDb, input: Dependency, now: Timestamp): Dependency {
+function insertDependencyRow(
+  db: LocalDb,
+  input: Dependency,
+  now: Timestamp,
+  edges: readonly Dependency[] = Object.values(db.dependencies),
+): Dependency {
   assertNewId(db.dependencies, input.id)
   if (input.predecessorId === input.successorId) invalid("A task can't depend on itself.")
   checkProjectRef(db, input.projectId)
@@ -554,12 +560,7 @@ function insertDependencyRow(db: LocalDb, input: Dependency, now: Timestamp): De
     invalid('Dependencies can only link tasks in the same project.')
   }
   checkEnum(input.type ?? 'FS', DEPENDENCY_TYPES, 'dependency type')
-  const verdict = validateNewDependency(
-    db.tasks,
-    Object.values(db.dependencies),
-    input.predecessorId,
-    input.successorId,
-  )
+  const verdict = validateNewDependency(db.tasks, edges, input.predecessorId, input.successorId)
   if (!verdict.ok) fail(verdict.reason === 'duplicate' ? 'conflict' : 'validation', verdict.message)
   const row: Dependency = {
     id: input.id,
@@ -571,6 +572,33 @@ function insertDependencyRow(db: LocalDb, input: Dependency, now: Timestamp): De
   }
   db.dependencies[row.id] = row
   return row
+}
+
+/** What insertDependencyRow leaves out of an import: duplicate links and cycles among its rows. */
+function checkImportedLinks(rows: readonly Dependency[]): void {
+  const nodes = new Map<string, number>()
+  const successors: number[][] = []
+  const nodeOf = (id: string) => {
+    let node = nodes.get(id)
+    if (node === undefined) {
+      node = nodes.size
+      nodes.set(id, node)
+      successors.push([])
+    }
+    return node
+  }
+  const pairs = new Set<string>()
+  for (const { predecessorId, successorId } of rows) {
+    const pair = JSON.stringify([predecessorId, successorId])
+    if (pairs.has(pair)) fail('conflict', 'This dependency already exists.')
+    pairs.add(pair)
+    const from = nodeOf(predecessorId)
+    successors[from].push(nodeOf(successorId))
+  }
+  const component = stronglyConnectedComponents(successors)
+  if (new Set(component).size < component.length) {
+    invalid('This would create a circular dependency.')
+  }
 }
 
 function checkPreferences(value: Preferences): Preferences {
@@ -903,7 +931,10 @@ export class LocalRepository implements Repository {
       for (const row of data.tasks) if (row.parentTaskId === null) insertTaskRow(db, row, now, true)
       for (const row of data.tasks) if (row.parentTaskId !== null) insertTaskRow(db, row, now, true)
       for (const row of data.milestones) insertMilestoneRow(db, row, now)
-      for (const row of data.dependencies) insertDependencyRow(db, row, now)
+      // One check of the whole graph: checking each new edge against the others takes minutes on a
+      // large backup, and its rows can only link each other (their tasks are all new).
+      for (const row of data.dependencies) insertDependencyRow(db, row, now, [])
+      checkImportedLinks(data.dependencies)
       return {
         projects: data.projects.length,
         phases: data.phases.length,

@@ -49,6 +49,13 @@ const rowNames = (list: HTMLElement) =>
   Array.from(list.querySelectorAll('[data-row-open]')).map((button) =>
     (button.textContent ?? '').replace(/\s+/g, ' ').trim(),
   )
+/**
+ * The row of "Send consent forms" (a subtask of "Recruit participants"): its text, and its name
+ * as assistive tech hears it. Whitespace around the sr-only parts differs between engines
+ * (jsdom trims it, Chrome adds a space), so the name is matched modulo whitespace.
+ */
+const SUBTASK_ROW = 'Subtask of Recruit participants›: Send consent forms'
+const SUBTASK_NAME = /^Subtask of\s*Recruit participants\s*:\s*Send consent forms$/
 const rowOf = (title: string) => {
   const button = screen.getByRole('button', { name: new RegExp(`${title}$`) })
   return button.closest('li') as HTMLElement
@@ -60,15 +67,64 @@ const archived = makeProject({ id: 'p-old', name: 'Old', sortOrder: 'a2', status
 
 function standardTasks(): Task[] {
   return [
-    makeTask({ id: 't-venue', projectId: community.id, title: 'Confirm venue', dueDate: testToday(-2), priority: 'urgent' }),
-    makeTask({ id: 't-room', projectId: research.id, title: 'Book a room', dueDate: testToday(), priority: 'medium', sortOrder: 'a1' }),
-    makeTask({ id: 't-recruit', projectId: research.id, title: 'Recruit participants', sortOrder: 'a2' }),
-    makeTask({ id: 't-consent', projectId: research.id, parentTaskId: 't-recruit', title: 'Send consent forms', dueDate: testToday() }),
-    makeTask({ id: 't-speakers', projectId: community.id, title: 'Speaker shortlist', dueDate: testToday(3), status: 'in_progress' }),
-    makeTask({ id: 't-report', projectId: research.id, title: 'Write report', dueDate: testToday(20), sortOrder: 'a3' }),
+    makeTask({
+      id: 't-venue',
+      projectId: community.id,
+      title: 'Confirm venue',
+      dueDate: testToday(-2),
+      priority: 'urgent',
+    }),
+    makeTask({
+      id: 't-room',
+      projectId: research.id,
+      title: 'Book a room',
+      dueDate: testToday(),
+      priority: 'medium',
+      sortOrder: 'a1',
+    }),
+    makeTask({
+      id: 't-recruit',
+      projectId: research.id,
+      title: 'Recruit participants',
+      sortOrder: 'a2',
+    }),
+    makeTask({
+      id: 't-consent',
+      projectId: research.id,
+      parentTaskId: 't-recruit',
+      title: 'Send consent forms',
+      dueDate: testToday(),
+    }),
+    makeTask({
+      id: 't-speakers',
+      projectId: community.id,
+      title: 'Speaker shortlist',
+      dueDate: testToday(3),
+      status: 'in_progress',
+    }),
+    makeTask({
+      id: 't-report',
+      projectId: research.id,
+      title: 'Write report',
+      dueDate: testToday(20),
+      sortOrder: 'a3',
+    }),
     makeTask({ id: 't-ideas', projectId: research.id, title: 'Brainstorm', sortOrder: 'a4' }),
-    makeTask({ id: 't-guide', projectId: research.id, title: 'Draft guide', status: 'done', dueDate: testToday(-5), completedAt: '2026-11-01T00:00:00.000Z', sortOrder: 'a5' }),
-    makeTask({ id: 't-archived', projectId: archived.id, title: 'Archived task', dueDate: testToday(-1) }),
+    makeTask({
+      id: 't-guide',
+      projectId: research.id,
+      title: 'Draft guide',
+      status: 'done',
+      dueDate: testToday(-5),
+      completedAt: '2026-11-01T00:00:00.000Z',
+      sortOrder: 'a5',
+    }),
+    makeTask({
+      id: 't-archived',
+      projectId: archived.id,
+      title: 'Archived task',
+      dueDate: testToday(-1),
+    }),
   ]
 }
 
@@ -96,23 +152,43 @@ describe('MyTasksPage', () => {
       'Today2, 2 tasks',
       'Upcoming1, 1 task',
       'Overdue1, 1 task',
-      'All7, 7 open tasks',
+      'All Tasks7, 7 open tasks',
     ])
-    expect(within(tabs).getByRole('link', { name: /^Today/ })).toHaveAttribute('aria-current', 'page')
-    expect(within(tabs).getByRole('link', { name: /^Overdue/ })).toHaveAttribute('href', '/my-tasks/overdue')
+    expect(within(tabs).getByRole('link', { name: /^Today/ })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(within(tabs).getByRole('link', { name: /^Overdue/ })).toHaveAttribute(
+      'href',
+      '/my-tasks/overdue',
+    )
 
     const list = screen.getByRole('list', { name: 'Today tasks' })
     // Priority breaks the due-date tie; a subtask carries its parent as a prefix.
-    expect(rowNames(list)).toEqual(['Book a room', 'Subtask of Recruit participants › : Send consent forms'])
-    expect(
-      screen.getByRole('button', { name: 'Subtask of Recruit participants : Send consent forms' }),
-    ).toBeInTheDocument()
+    expect(rowNames(list)).toEqual(['Book a room', SUBTASK_ROW])
+    // The decorative "›" is aria-hidden: assistive tech hears "Subtask of …: title".
+    expect(screen.getByRole('button', { name: SUBTASK_NAME })).toBeInTheDocument()
     // Project link, priority glyph and the due label in the bucket language.
     const room = rowOf('Book a room')
-    expect(within(room).getByRole('link', { name: 'Research' })).toHaveAttribute('href', '/projects/p-research')
+    expect(within(room).getByRole('link', { name: 'Research' })).toHaveAttribute(
+      'href',
+      '/projects/p-research',
+    )
     expect(within(room).getByRole('img', { name: 'Priority: Medium' })).toBeInTheDocument()
-    expect(within(room).getByText('Today')).toHaveAttribute('data-bucket', 'today')
+    expect(within(room).getByText('Today').closest('[data-bucket]')).toHaveAttribute(
+      'data-bucket',
+      'today',
+    )
     expect(screen.queryByText('Archived task')).not.toBeInTheDocument()
+  })
+
+  it('treats an unknown tab as Today', async () => {
+    await seedStandard()
+    renderMyTasks('/my-tasks/bogus')
+    expect(rowNames(screen.getByRole('list', { name: 'Today tasks' }))).toEqual([
+      'Book a room',
+      SUBTASK_ROW,
+    ])
   })
 
   it('switches tabs through the URL (Upcoming, Overdue)', async () => {
@@ -124,14 +200,17 @@ describe('MyTasksPage', () => {
     expect(location()).toBe('/my-tasks/overdue')
     const overdue = screen.getByRole('list', { name: 'Overdue tasks' })
     expect(rowNames(overdue)).toEqual(['Confirm venue'])
-    expect(within(overdue).getByText(/Oct|Nov|Dec|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep/).closest('[data-bucket]')).toHaveAttribute(
-      'data-bucket',
-      'overdue',
-    )
+    expect(
+      within(overdue)
+        .getByText(/Oct|Nov|Dec|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep/)
+        .closest('[data-bucket]'),
+    ).toHaveAttribute('data-bucket', 'overdue')
 
     await user.click(within(tabs).getByRole('link', { name: /^Upcoming/ }))
     expect(location()).toBe('/my-tasks/upcoming')
-    expect(rowNames(screen.getByRole('list', { name: 'Upcoming tasks' }))).toEqual(['Speaker shortlist'])
+    expect(rowNames(screen.getByRole('list', { name: 'Upcoming tasks' }))).toEqual([
+      'Speaker shortlist',
+    ])
   })
 
   it('groups All by due date and shows completed tasks on request', async () => {
@@ -168,7 +247,9 @@ describe('MyTasksPage', () => {
 
     const tabs = screen.getByRole('navigation', { name: 'My Tasks' })
     await user.click(within(tabs).getByRole('link', { name: /^Upcoming/ }))
-    expect(screen.getByRole('heading', { name: 'Nothing due in the next 7 days' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Nothing due in the next 7 days' }),
+    ).toBeInTheDocument()
     await user.click(within(tabs).getByRole('link', { name: /^Overdue/ }))
     expect(screen.getByRole('heading', { name: 'No overdue tasks' })).toBeInTheDocument()
     await user.click(within(tabs).getByRole('link', { name: /^All/ }))
@@ -206,18 +287,19 @@ describe('MyTasksPage', () => {
     await user.click(await screen.findByRole('menuitemradio', { name: /Done/ }))
     expect(storeTask('t-room')?.status).toBe('done')
     // Done tasks leave Today at once (every view reads the same store).
-    expect(rowNames(screen.getByRole('list', { name: 'Today tasks' }))).toEqual([
-      'Subtask of Recruit participants › : Send consent forms',
-    ])
-    expect(within(screen.getByRole('navigation', { name: 'My Tasks' })).getByRole('link', { name: /^Today/ })).toHaveAccessibleName(
-      'Today, 1 task',
-    )
+    expect(rowNames(screen.getByRole('list', { name: 'Today tasks' }))).toEqual([SUBTASK_ROW])
+    expect(
+      within(screen.getByRole('navigation', { name: 'My Tasks' })).getByRole('link', {
+        name: /^Today/,
+      }),
+    ).toHaveAccessibleName('Today, 1 task')
     await waitFor(() => expect(success).toHaveBeenCalledTimes(1))
     const [message, options] = success.mock.calls[0]
     expect(message).toBe('Marked as done')
     expect(options?.description).toBe('Book a room')
 
-    await act(async () => (options?.action as NotifyAction).onClick())
+    const undo = options?.action as NotifyAction
+    await act(async () => undo.onClick())
     await waitFor(() => expect(storeTask('t-room')?.status).toBe('todo'))
     expect(rowNames(screen.getByRole('list', { name: 'Today tasks' }))).toContain('Book a room')
   })
@@ -229,7 +311,9 @@ describe('MyTasksPage', () => {
     await user.click(within(rowOf('Book a room')).getByRole('button', { name: 'Status: To Do' }))
     await user.click(await screen.findByRole('menuitemradio', { name: /In Progress/ }))
     await waitFor(() => expect(storeTask('t-room')?.status).toBe('in_progress'))
-    expect(within(rowOf('Book a room')).getByRole('button', { name: 'Status: In Progress' })).toBeInTheDocument()
+    expect(
+      within(rowOf('Book a room')).getByRole('button', { name: 'Status: In Progress' }),
+    ).toBeInTheDocument()
     expect(success).not.toHaveBeenCalled()
   })
 
@@ -274,10 +358,32 @@ describe('MyTasksPage', () => {
 
     act(() => useUIStore.setState({ newTask: null }))
     await user.click(
-      within(screen.getByRole('navigation', { name: 'My Tasks' })).getByRole('link', { name: /^Upcoming/ }),
+      within(screen.getByRole('navigation', { name: 'My Tasks' })).getByRole('link', {
+        name: /^Upcoming/,
+      }),
     )
     await user.click(screen.getByRole('button', { name: 'New task' }))
     expect(useUIStore.getState().newTask).toEqual({})
+  })
+
+  it('shows a quiet loading state until the workspace is ready', () => {
+    useWorkspaceStore.setState({ status: 'loading' })
+    renderMyTasks('/my-tasks/today')
+    expect(screen.getByText('Loading your tasks…').closest('[aria-busy="true"]')).not.toBeNull()
+    expect(screen.queryByRole('heading', { name: 'My Tasks' })).not.toBeInTheDocument()
+  })
+
+  it('shows a load error with Retry that reloads the workspace', async () => {
+    useWorkspaceStore.setState({
+      status: 'error',
+      loadError: { kind: 'network', message: 'The server did not answer.' },
+    })
+    const { user } = renderMyTasks('/my-tasks/today')
+    expect(screen.getByRole('heading', { name: 'Couldn’t load your tasks' })).toBeInTheDocument()
+    expect(screen.getByText(/The server did not answer/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    // Local mode reloads (an empty workspace here): the page is back, with its empty state.
+    expect(await screen.findByRole('heading', { name: 'Nothing due today' })).toBeInTheDocument()
   })
 
   it('explains the definitions', async () => {

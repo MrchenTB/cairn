@@ -95,7 +95,7 @@ function CardContent({
         {/* pr-5 keeps the title clear of the ⋯ button (also in the overlay, so sizes match). */}
         <p
           aria-hidden
-          className="line-clamp-2 min-w-0 flex-1 pr-5 text-ui font-medium break-words text-fg"
+          className="line-clamp-2 min-w-0 flex-1 [text-wrap:balance] pr-5 text-ui font-medium break-words text-fg"
         >
           {task.title}
         </p>
@@ -130,6 +130,7 @@ function CardContent({
 }
 
 interface CardMenuProps {
+  taskId: string
   title: string
   priority: TaskPriority
   canMoveUp: boolean
@@ -144,6 +145,7 @@ interface CardMenuProps {
  * (WCAG 2.5.7). The status — the card's column — has its own menu on the card.
  */
 function CardMenu({
+  taskId,
   title,
   priority,
   canMoveUp,
@@ -162,6 +164,8 @@ function CardMenu({
             variant="ghost"
             size="icon-sm"
             aria-label={`More actions for ${title}`}
+            // A status change re-mounts the card in another column: focus can find its way back.
+            data-focus-key={`board-card-menu:${taskId}`}
             className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
           >
             <Ellipsis />
@@ -281,6 +285,7 @@ const SortableCardBody = memo(function SortableCardBody({
       }
       actions={
         <CardMenu
+          taskId={task.id}
           title={task.title}
           priority={task.priority}
           canMoveUp={!isFirst}
@@ -386,6 +391,9 @@ export const SortableBoardCard = memo(function SortableBoardCard({
         onKeyDown={onKeyDown}
         onClick={() => onOpen(task.id)}
         data-card-activator={task.id}
+        // The modal that opened from this card returns focus here — also when the card moved to
+        // another column (and was re-mounted) while the modal was open.
+        data-focus-key={`board-card:${task.id}`}
         aria-label={task.title}
         aria-describedby={[description ? descriptionId : null, attributes['aria-describedby']]
           .filter(Boolean)
@@ -419,6 +427,11 @@ export const SortableBoardCard = memo(function SortableBoardCard({
 
 export interface BoardCardOverlayProps {
   task: Task
+  /**
+   * The status the card gets if dropped now — the column it is over. Defaults to the task's own
+   * status. Drives the glyph and the due label tone (an overdue card turns neutral over Done).
+   */
+  previewStatus?: TaskStatus
   phase: Phase | null
   subtasksDone: number
   subtasksTotal: number
@@ -426,14 +439,19 @@ export interface BoardCardOverlayProps {
 }
 
 /** The card as it follows the pointer: lifted (drag shadow, 1.02 scale), never rotated. */
-export function BoardCardOverlay(props: BoardCardOverlayProps) {
+export function BoardCardOverlay({ task, previewStatus, ...props }: BoardCardOverlayProps) {
+  const status = previewStatus ?? task.status
   return (
-    <div className={cn(cardSurface, 'scale-[1.02] cursor-grabbing bg-elevated shadow-drag')}>
+    <div
+      data-board-drag-overlay=""
+      className={cn(cardSurface, 'scale-[1.02] cursor-grabbing bg-elevated shadow-drag')}
+    >
       <CardContent
         {...props}
+        task={status === task.status ? task : { ...task, status }}
         status={
           <span className="flex size-6 items-center justify-center">
-            <StatusIcon status={props.task.status} decorative />
+            <StatusIcon status={status} decorative />
           </span>
         }
       />

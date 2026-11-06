@@ -4,6 +4,9 @@
  * timestamp in sessionStorage stops a reload loop when a chunk is genuinely broken: the error
  * then surfaces and the route error boundary offers "Reload". When sessionStorage is
  * unavailable the guard cannot work, so we never auto-reload (a loop is worse than a button).
+ * Offline there is no new build to pick up (the chunk just cannot be fetched) and a reload would
+ * replace the app with the browser's offline page: the error surfaces instead and its boundary
+ * says the page needs a connection.
  */
 
 export const PRELOAD_RELOAD_KEY = 'cairn:preload-reload-at'
@@ -18,6 +21,8 @@ export interface PreloadRecoveryOptions {
   storage?: () => StorageLike | null
   reload?: () => void
   now?: () => number
+  /** Whether the browser has a connection (default: `navigator.onLine`). */
+  isOnline?: () => boolean
 }
 
 /** Listens for `vite:preloadError` and reloads at most once per window. Returns an uninstaller. */
@@ -26,8 +31,10 @@ export function installPreloadRecovery(options: PreloadRecoveryOptions = {}): ()
   const getStorage = options.storage ?? (() => window.sessionStorage)
   const reload = options.reload ?? (() => window.location.reload())
   const now = options.now ?? Date.now
+  const isOnline = options.isOnline ?? (() => typeof navigator === 'undefined' || navigator.onLine)
 
   const onPreloadError = (event: Event) => {
+    if (!isOnline()) return // offline: not a stale deploy, and a reload would lose the app
     try {
       const storage = getStorage()
       if (!storage) return

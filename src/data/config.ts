@@ -2,13 +2,17 @@
  * Runtime configuration read from Vite env variables (`import.meta.env`, inlined at build time).
  *
  * Only PUBLIC values may reach the browser: the Supabase project URL and its publishable key
- * (`sb_publishable_…`, or the legacy anon JWT). A secret / service-role key is refused here even
- * if someone puts it in a VITE_ variable — but by then it is already in the bundle, so never do it.
+ * (`sb_publishable_…`, or the legacy anon JWT). `vite build` refuses a secret / service-role key
+ * in any VITE_ variable (see vite.config.ts); it is refused here too, for the dev server. Read
+ * variables one by one: reading `import.meta.env` as a value inlines every VITE_ variable.
  *
  * Mode selection (docs/architecture.md §6): Supabase mode when the URL and a key are set, unless
  * `VITE_DATA_MODE=local`; otherwise local mode (this browser's localStorage, no login).
  */
 import type { DataMode } from './contracts'
+import { isSecretSupabaseKey } from './secretKeys'
+
+export { findSecretEnvVars, isSecretSupabaseKey } from './secretKeys'
 
 /** The env variables this app reads. Values are untrusted until validated. */
 export interface EnvSource {
@@ -54,27 +58,6 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  const parts = token.split('.')
-  if (parts.length !== 3) return null
-  try {
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-    const json = atob(base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '='))
-    const payload: unknown = JSON.parse(json)
-    return typeof payload === 'object' && payload !== null
-      ? (payload as Record<string, unknown>)
-      : null
-  } catch {
-    return null
-  }
-}
-
-/** True for keys that bypass RLS and must never be shipped to a browser. */
-export function isSecretSupabaseKey(key: string): boolean {
-  if (key.startsWith('sb_secret_')) return true
-  return decodeJwtPayload(key)?.role === 'service_role'
-}
-
 /** Pure mode resolution (exported for tests). */
 export function resolveConfig(env: EnvSource): AppConfig {
   const viteMode = envString(env.MODE) ?? 'production'
@@ -102,7 +85,14 @@ export function resolveConfig(env: EnvSource): AppConfig {
 }
 
 /** Configuration of this build (computed once at startup). */
-export const appConfig: AppConfig = resolveConfig(import.meta.env)
+export const appConfig: AppConfig = resolveConfig({
+  VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
+  VITE_SUPABASE_PUBLISHABLE_KEY: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+  VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
+  VITE_DATA_MODE: import.meta.env.VITE_DATA_MODE,
+  MODE: import.meta.env.MODE,
+  DEV: import.meta.env.DEV,
+})
 
 if (appConfig.localReason === 'invalid_url') {
   console.error('[cairn] VITE_SUPABASE_URL is not a valid http(s) URL — running in local mode.')

@@ -12,6 +12,7 @@ function Probe() {
     <div>
       <output aria-label="task">{taskId ?? 'none'}</output>
       <button onClick={() => openTask('t-42')}>open</button>
+      <button onClick={() => openTask('t-43')}>open other</button>
       <button onClick={closeTask}>close</button>
     </div>
   )
@@ -30,7 +31,7 @@ describe('task modal URL state', () => {
     expect(withTaskParam('?task=t1', null)).toBe('')
   })
 
-  it('opens with a PUSH and closes with a REPLACE, preserving path, params and hash', () => {
+  it('opens with a PUSH and closes by stepping back, preserving path, params and hash', async () => {
     const router = setup('/projects/p1/list?group=phase#top')
     expect(screen.getByLabelText('task')).toHaveTextContent('none')
 
@@ -41,11 +42,63 @@ describe('task modal URL state', () => {
     expect(router.state.location.hash).toBe('#top')
     expect(screen.getByLabelText('task')).toHaveTextContent('t-42')
 
-    act(() => screen.getByText('close').click())
-    expect(router.state.historyAction).toBe('REPLACE')
+    await act(async () => {
+      screen.getByText('close').click()
+    })
+    expect(router.state.historyAction).toBe('POP')
     expect(router.state.location.search).toBe('?group=phase')
     expect(router.state.location.hash).toBe('#top')
     expect(screen.getByLabelText('task')).toHaveTextContent('none')
+    // Nothing is left to go back over: the entry before the page is the page's own.
+    expect(router.state.location.state).toBeNull()
+  })
+
+  it('closes a task opened from inside another task in one step', async () => {
+    const router = setup('/projects/p1/list')
+    act(() => screen.getByText('open').click())
+    act(() => screen.getByText('open other').click())
+    expect(router.state.location.search).toBe('?task=t-43')
+    await act(async () => {
+      screen.getByText('close').click()
+    })
+    expect(router.state.location.pathname).toBe('/projects/p1/list')
+    expect(router.state.location.search).toBe('')
+  })
+
+  it('steps back only once when close is called twice before the step completes', async () => {
+    const router = setup('/overview')
+    act(() => screen.getByText('open').click())
+    await act(async () => {
+      screen.getByText('close').click()
+      screen.getByText('close').click()
+    })
+    expect(router.state.location.pathname).toBe('/overview')
+    expect(router.state.location.search).toBe('')
+    // A second step back would have left the router's first entry behind.
+    expect(router.state.historyAction).toBe('POP')
+  })
+
+  it('a task reopened with browser Forward can still be closed', async () => {
+    const router = setup('/overview')
+    act(() => screen.getByText('open').click())
+    await act(async () => {
+      screen.getByText('close').click()
+    })
+    await act(async () => {
+      await router.navigate(1)
+    })
+    expect(screen.getByLabelText('task')).toHaveTextContent('t-42')
+    await act(async () => {
+      screen.getByText('close').click()
+    })
+    expect(screen.getByLabelText('task')).toHaveTextContent('none')
+  })
+
+  it('replaces the entry of a task that was not opened from the page (deep link)', () => {
+    const router = setup('/overview?task=abc')
+    act(() => screen.getByText('close').click())
+    expect(router.state.historyAction).toBe('REPLACE')
+    expect(router.state.location.search).toBe('')
   })
 
   it('reads a deep-linked task id', () => {

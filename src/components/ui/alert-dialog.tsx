@@ -23,11 +23,11 @@ export function AlertDialogContent({
   const focusReturn = useFocusReturn(onCloseAutoFocus)
   return (
     <AlertDialogPrimitive.Portal>
-      <AlertDialogPrimitive.Overlay className={overlayClass} />
+      <AlertDialogPrimitive.Overlay className={cn(overlayClass, 'z-(--z-confirm)')} />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          'fixed top-1/2 left-1/2 z-(--z-modal) flex w-[calc(100vw-2rem)] max-w-[420px] -translate-x-1/2 -translate-y-1/2 flex-col',
+          'fixed top-1/2 left-1/2 z-(--z-confirm) flex w-[calc(100vw-2rem)] max-w-[420px] -translate-x-1/2 -translate-y-1/2 flex-col',
           'rounded-xl border border-default bg-elevated text-fg shadow-modal outline-none',
           dialogMotion,
           className,

@@ -16,6 +16,7 @@ import { getWorkspaceActions, useWorkspaceStore } from '@/data/store'
 import { addDays, todayInTimeZone } from '@/domain/dates'
 import type { ScheduleMode, Task } from '@/domain/types'
 import { ViewBarSlotProvider } from '@/features/projects/viewBar'
+import { notify } from '@/lib/notify'
 import { GanttView } from './GanttView'
 import { RescheduleDialogHost } from './RescheduleDialog'
 
@@ -276,6 +277,49 @@ describe('GanttView', () => {
     fireEvent.pointerMove(scroller, { pointerId: 6, clientX: 400, clientY: 110 })
     fireEvent.pointerUp(scroller, { pointerId: 6, clientX: 400, clientY: 110 })
     expect(Object.keys(useWorkspaceStore.getState().data.dependencies)).toHaveLength(before)
+    Reflect.deleteProperty(document, 'elementFromPoint')
+  })
+
+  it('dropping a link on its own bar adds nothing and says a task cannot depend on itself', async () => {
+    const s = await seed()
+    renderGantt(s.project.id)
+    const scroller = chart()
+    const own = barOf(s.visual.id)
+    // The pointer is over the bar's body (not over its dots) when it is released.
+    Object.defineProperty(document, 'elementFromPoint', {
+      value: vi.fn(() => own as Element),
+      configurable: true,
+    })
+    const warning = vi.spyOn(notify, 'warning')
+    const before = Object.keys(useWorkspaceStore.getState().data.dependencies).length
+    const out = own.querySelector('[data-handle="link-out"]') as HTMLElement
+    fireEvent.pointerDown(out, { button: 0, pointerId: 7, clientX: 600, clientY: 120 })
+    fireEvent.pointerMove(scroller, { pointerId: 7, clientX: 560, clientY: 120 })
+    fireEvent.pointerUp(scroller, { pointerId: 7, clientX: 560, clientY: 120 })
+    await waitFor(() =>
+      expect(warning).toHaveBeenCalledWith("Can't add this dependency", {
+        description: "A task can't depend on itself.",
+      }),
+    )
+    expect(Object.keys(useWorkspaceStore.getState().data.dependencies)).toHaveLength(before)
+    Reflect.deleteProperty(document, 'elementFromPoint')
+  })
+
+  it("releasing a link on the source's own dot (a click) says nothing", async () => {
+    const s = await seed()
+    renderGantt(s.project.id)
+    const scroller = chart()
+    const own = barOf(s.visual.id)
+    const out = own.querySelector('[data-handle="link-out"]') as HTMLElement
+    Object.defineProperty(document, 'elementFromPoint', {
+      value: vi.fn(() => out as Element),
+      configurable: true,
+    })
+    const warning = vi.spyOn(notify, 'warning')
+    fireEvent.pointerDown(out, { button: 0, pointerId: 8, clientX: 600, clientY: 120 })
+    fireEvent.pointerUp(scroller, { pointerId: 8, clientX: 600, clientY: 120 })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(warning).not.toHaveBeenCalled()
     Reflect.deleteProperty(document, 'elementFromPoint')
   })
 

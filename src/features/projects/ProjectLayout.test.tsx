@@ -78,9 +78,23 @@ async function seedResearch(status: 'active' | 'archived' = 'active') {
   )
   const phase = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
   const parent = must(await a.createTask({ projectId: project.id, title: 'Recruit' }))
-  must(await a.createTask({ projectId: project.id, title: 'Email', parentTaskId: parent.id, status: 'done' }))
+  must(
+    await a.createTask({
+      projectId: project.id,
+      title: 'Email',
+      parentTaskId: parent.id,
+      status: 'done',
+    }),
+  )
   must(await a.createTask({ projectId: project.id, title: 'Forum', parentTaskId: parent.id }))
-  must(await a.createTask({ projectId: project.id, title: 'Guide', phaseId: phase.id, status: 'done' }))
+  must(
+    await a.createTask({
+      projectId: project.id,
+      title: 'Guide',
+      phaseId: phase.id,
+      status: 'done',
+    }),
+  )
   must(await a.createMilestone({ projectId: project.id, name: 'Kick-off', date: '2026-10-20' }))
   return { project, phase }
 }
@@ -111,12 +125,16 @@ describe('ProjectLayout — header and view bar', () => {
     const { router, user } = renderLayout(`/projects/${project.id}/list`)
 
     await user.keyboard('2')
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/projects/${project.id}/board`))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/projects/${project.id}/board`),
+    )
     expect(await screen.findByText('Board body')).toBeInTheDocument()
     expect(getProjectView(project.id)).toBe('board')
 
     await user.keyboard('3')
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/projects/${project.id}/gantt`))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/projects/${project.id}/gantt`),
+    )
     await user.click(screen.getByRole('link', { name: 'List' }))
     await waitFor(() => expect(router.state.location.pathname).toBe(`/projects/${project.id}/list`))
     expect(getProjectView(project.id)).toBe('list')
@@ -167,6 +185,30 @@ describe('ProjectLayout — menu', () => {
       ).toEqual(['Discovery', 'Report']),
     )
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('adds a failed phase once: a Retry from outside the dialog finishes it', async () => {
+    const { project } = await seedResearch()
+    const { user } = renderLayout(`/projects/${project.id}/list`)
+    await user.click(screen.getByRole('button', { name: 'Project actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Add phase…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New phase' })
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Report')
+    window.__cairnTest?.failNextWrites(1)
+    await user.keyboard('{Enter}')
+    await within(dialog).findByText('Couldn’t add the phase')
+    const names = () =>
+      Object.values(useWorkspaceStore.getState().data.phases)
+        .filter((phase) => phase.projectId === project.id)
+        .map((phase) => phase.name)
+    expect(names()).toEqual(['Discovery'])
+
+    // The sidebar's / the toast's Retry sends the failed phase while the dialog is still open.
+    await act(async () => {
+      await getWorkspaceActions().retryLastFailed()
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(names()).toEqual(['Discovery', 'Report'])
   })
 
   it('confirms a delete with exactly what goes with it, then leaves the project', async () => {

@@ -105,22 +105,25 @@ export function BoardView() {
   const filteredEmpty = filter !== ALL_PHASES && visible === 0 && model.totalTasks > 0
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       {phases.length > 0 ? (
         <ViewBarActions>
           <PhaseFilter value={filter} phases={phases} onChange={setFilter} />
         </ViewBarActions>
       ) : null}
       {filteredEmpty ? (
-        <div className="flex shrink-0 items-center gap-2 px-6 pt-2 text-ui text-fg-secondary">
-          <p role="status">
-            {filter === NO_PHASE
-              ? 'Every task in this project has a phase.'
-              : `No tasks in “${phase?.name ?? 'this phase'}” yet.`}
-          </p>
-          <Button variant="link" size="xs" onClick={() => setFilter(ALL_PHASES)}>
-            Show all phases
-          </Button>
+        // Overlaid (not in flow) so the columns do not jump when a filter empties the board.
+        <div className="pointer-events-none absolute inset-x-0 top-[40%] z-10 flex justify-center">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-default bg-main px-3 py-1.5 text-ui text-fg-secondary">
+            <p role="status">
+              {filter === NO_PHASE
+                ? 'Every task in this project has a phase.'
+                : `No tasks in “${phase?.name ?? 'this phase'}” yet.`}
+            </p>
+            <Button variant="link" size="xs" onClick={() => setFilter(ALL_PHASES)}>
+              Show all phases
+            </Button>
+          </div>
         </div>
       ) : null}
       <Board

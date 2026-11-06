@@ -20,6 +20,8 @@ describe('safeReturnPath', () => {
       '//evil.example',
       '/\\evil.example',
       '/\\/evil.example',
+      '/.//evil.example',
+      '/x/..//evil.example',
       '/login',
       '/login?next=/x',
       '/login/',

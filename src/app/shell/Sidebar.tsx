@@ -131,7 +131,8 @@ function MyTasksBadge({ overdue, total }: { overdue: number; total: number }) {
     <span
       className={cn(
         'shrink-0 text-meta tabular-nums',
-        overdue > 0 ? 'text-danger' : 'text-fg-tertiary',
+        // The stronger danger tone: plain --danger is 4.3:1 on the tinted active row (light theme).
+        overdue > 0 ? 'text-danger-hover' : 'text-fg-tertiary',
       )}
     >
       <span aria-hidden>{total}</span>
@@ -190,7 +191,9 @@ function RecentProjects({ items }: { items: Project[] }) {
       </div>
       {/* py-1 leaves room for the outset focus ring inside the scroll container. */}
       <div className="-mx-2 -mt-0.5 flex min-h-0 flex-col gap-0.5 overflow-y-auto px-2 py-1">
-        {status !== 'ready' ? (
+        {status === 'error' ? (
+          <p className="px-2.5 py-1 text-meta text-fg-tertiary">Couldn’t load projects</p>
+        ) : status !== 'ready' ? (
           [0, 1, 2].map((index) => (
             <div key={index} className="flex h-7 items-center gap-2 px-2.5">
               <Skeleton className="size-2 rounded-full" />

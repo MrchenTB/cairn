@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useWorkspaceStore } from '@/data/store'
 import { notify } from '@/lib/notify'
 import {
+  must,
   renderHosts,
   resetTestWorld,
   seedWorkspace,
@@ -216,10 +217,31 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     expect(within(subtaskModal).getByText('Subtask of Write literature review')).toBeInTheDocument()
     // One level only: a subtask has no Subtasks section, and its phase follows the parent.
     expect(screen.queryByRole('region', { name: 'Subtasks' })).not.toBeInTheDocument()
+    // The limit is stated where someone would look for "Add subtask" (PRD §5.1), not just implied.
+    expect(subtaskModal).toHaveTextContent(
+      'A subtask can’t have subtasks of its own (one level only).',
+    )
     expect(within(subtaskModal).getByRole('button', { name: 'Phase: Writing' })).toHaveAttribute(
       'aria-disabled',
       'true',
     )
+  })
+
+  it('a failed "Add subtask" gives its text back; Retry storing it clears the line (no duplicate)', async () => {
+    const { project, tasks } = await seedWorkspace()
+    const review = tasks['Write literature review']
+    const { user } = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
+    await findModal('Write literature review')
+    const add = screen.getByRole('textbox', { name: 'Add subtask' })
+
+    testHooks().failNextWrites(1)
+    await user.type(add, 'Check citations{Enter}')
+    await waitFor(() => expect(add).toHaveValue('Check citations'))
+    expect(storeTasks().some((task) => task.title === 'Check citations')).toBe(false)
+
+    must(await useWorkspaceStore.getState().actions.retryLastFailed())
+    await waitFor(() => expect(add).toHaveValue(''))
+    expect(storeTasks().filter((task) => task.title === 'Check citations')).toHaveLength(1)
   })
 
   it('⌘↵ in "Add subtask" adds the typed subtask; Save never drops an unsent line', async () => {
@@ -314,6 +336,43 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     expect(
       screen.getByRole('button', { name: 'Remove “Collect sources” from Blocked by' }),
     ).toHaveFocus()
+  })
+
+  describe('undated-link hint', () => {
+    const hint = /This task has no dates, so its links aren't drawn on the chart/
+
+    it('shows for an undated task that has a link', async () => {
+      const { project, tasks } = await seedWorkspace()
+      const book = tasks['Book a room']
+      expect(
+        (
+          await useWorkspaceStore
+            .getState()
+            .actions.addDependency(book.id, tasks['Submit draft'].id)
+        ).ok,
+      ).toBe(true)
+      renderHosts(`/projects/${project.id}/list?task=${book.id}`)
+      await findModal('Book a room')
+      expect(screen.getByText(hint)).toHaveTextContent(
+        "This task has no dates, so its links aren't drawn on the chart and don't pass scheduling constraints on to other tasks.",
+      )
+    })
+
+    it('is hidden when the task has dates', async () => {
+      const { project, tasks } = await seedWorkspace()
+      const review = tasks['Write literature review']
+      renderHosts(`/projects/${project.id}/list?task=${review.id}`)
+      await findModal('Write literature review')
+      expect(screen.queryByText(hint)).not.toBeInTheDocument()
+    })
+
+    it('is hidden when the task has no links', async () => {
+      const { project, tasks } = await seedWorkspace()
+      const book = tasks['Book a room']
+      renderHosts(`/projects/${project.id}/list?task=${book.id}`)
+      await findModal('Book a room')
+      expect(screen.queryByText(hint)).not.toBeInTheDocument()
+    })
   })
 
   it('removing a chip moves focus to the next chip of the row', async () => {

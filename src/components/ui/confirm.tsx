@@ -8,7 +8,7 @@
  * time. Destructive confirmations focus Cancel first (design §5.8); others focus the action.
  */
 import { useRef, useSyncExternalStore, type ReactNode } from 'react'
-import { getFocusReturnTarget } from '@/lib/focus'
+import { getFocusReturnTarget, isFocusOwnedElsewhere } from '@/lib/focus'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -168,14 +168,20 @@ export function ConfirmHost() {
           }}
           onCloseAutoFocus={(event) => {
             // No trigger: return focus to where the request came from, else stay inside the
-            // dialog underneath (e.g. a modal that asked "Discard changes?").
-            const target =
-              current.returnFocus?.isConnected === true
-                ? current.returnFocus
-                : document.querySelector<HTMLElement>('[role="dialog"][data-state="open"]')
-            if (!target) return
+            // dialog underneath (e.g. a modal that asked "Discard changes?"). Radix runs this a
+            // task after the dialog unmounted, so the user may have moved on meanwhile (⌘K right
+            // after confirming): then focus stays where they put it.
+            const origin = current.returnFocus?.isConnected === true ? current.returnFocus : null
+            if (origin) {
+              event.preventDefault()
+              if (!isFocusOwnedElsewhere(origin)) origin.focus({ preventScroll: true })
+              return
+            }
+            const below = document.querySelector<HTMLElement>('[role="dialog"][data-state="open"]')
+            if (!below) return
             event.preventDefault()
-            target.focus({ preventScroll: true })
+            const active = document.activeElement
+            if (!active || active === document.body) below.focus({ preventScroll: true })
           }}
         >
           <AlertDialogHeader>

@@ -62,7 +62,10 @@ export function phaseIdOfContainer(containerId: string): string | null | undefin
 }
 
 /** The container holding `id`, or `id` itself when it IS a container; null when unknown. */
-export function findContainer(containers: Containers, id: string | null | undefined): string | null {
+export function findContainer(
+  containers: Containers,
+  id: string | null | undefined,
+): string | null {
   if (id === null || id === undefined) return null
   if (Object.hasOwn(containers, id)) return id
   for (const [containerId, items] of Object.entries(containers)) {
@@ -114,7 +117,12 @@ export function moveToContainer(
   placeAfter: boolean,
 ): Containers {
   const from = findContainer(containers, activeId)
-  if (!from || from === activeId || from === toContainer || !Object.hasOwn(containers, toContainer)) {
+  if (
+    !from ||
+    from === activeId ||
+    from === toContainer ||
+    !Object.hasOwn(containers, toContainer)
+  ) {
     return containers
   }
   const target = containers[toContainer].filter((id) => id !== activeId)
@@ -173,11 +181,14 @@ export function resolveTopLevelDrop({
   }
 
   const order =
-    overId === container ? [...containers[container]] : reorderWithin(containers[container], taskId, overId)
+    overId === container
+      ? [...containers[container]]
+      : reorderWithin(containers[container], taskId, overId)
   if (fromContainer === container && samePlace(initial[container], order, taskId)) return null
 
   // Alone in its new group: there are no neighbours to place it by (see the module comment).
-  const input: MoveTaskInput = order.length > 1 ? { taskId, ...neighbours(order, taskId) } : { taskId }
+  const input: MoveTaskInput =
+    order.length > 1 ? { taskId, ...neighbours(order, taskId) } : { taskId }
   if (fromContainer !== container) {
     const phaseId = phaseIdOfContainer(container)
     if (phaseId !== undefined) input.phaseId = phaseId
@@ -205,7 +216,11 @@ export function resolveSubtaskDrop({
  * Menu "Move up" (-1) / "Move down" (+1) among `order` (a group's top-level tasks, or a
  * parent's subtasks) → MoveTaskInput, or null at the edge.
  */
-export function stepMove(order: readonly string[], taskId: string, delta: -1 | 1): MoveTaskInput | null {
+export function stepMove(
+  order: readonly string[],
+  taskId: string,
+  delta: -1 | 1,
+): MoveTaskInput | null {
   const from = order.indexOf(taskId)
   const to = from + delta
   if (from < 0 || to < 0 || to >= order.length) return null

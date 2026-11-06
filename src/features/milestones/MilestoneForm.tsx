@@ -24,7 +24,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useActions, useMilestone, usePhases, useProject } from '@/data/hooks'
+import { isRetryable } from '@/data/errors'
+import { useActions, useMilestone, useMilestones, usePhases, useProject } from '@/data/hooks'
 import { formatDate } from '@/domain/dates'
 import {
   NAME_MAX_LENGTH,
@@ -34,6 +35,7 @@ import {
   type Result,
 } from '@/domain/types'
 import { validateName } from '@/domain/validation'
+import { currentMilestones, useRetryFulfilment } from '@/features/task-modal/retryFulfilment'
 import { notify } from '@/lib/notify'
 
 export interface MilestoneFormControls {
@@ -101,10 +103,18 @@ export function MilestoneForm({ state, controlsRef, onClose, onDeleting }: Miles
 
   const nameError = validateName(values.name, NAME_MAX_LENGTH, 'Milestone name')?.message ?? null
   const dateError = values.date ? null : 'Choose a date for this milestone.'
+  // Values the store already holds (a failed Save whose toast Retry stored it) leave nothing to save.
+  const matchesStored =
+    state.mode === 'edit' &&
+    milestone !== undefined &&
+    values.name.trim() === milestone.name.trim() &&
+    values.date === milestone.date &&
+    values.phaseId === milestone.phaseId
   const dirty =
-    values.name.trim() !== initial.name.trim() ||
-    values.date !== initial.date ||
-    values.phaseId !== initial.phaseId
+    !matchesStored &&
+    (values.name.trim() !== initial.name.trim() ||
+      values.date !== initial.date ||
+      values.phaseId !== initial.phaseId)
   const valid = nameError === null && dateError === null
   const canSubmit = valid && !saving && (state.mode === 'create' || dirty)
 
@@ -114,12 +124,24 @@ export function MilestoneForm({ state, controlsRef, onClose, onDeleting }: Miles
     latest.current = { values, dirty }
   })
   const mountedRef = useRef(true)
+  /** The milestone exists (created here, or by the toast's Retry): never create it twice. */
+  const doneRef = useRef(false)
   useEffect(() => {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
     }
   }, [])
+
+  // A failed create leaves this dialog open (nothing is lost) while the toast offers Retry. If
+  // that Retry stores the milestone, the dialog is done: it closes instead of inviting a duplicate.
+  const projectMilestones = useMilestones(projectId)
+  const retryFulfilment = useRetryFulfilment(projectMilestones, currentMilestones, () => {
+    if (doneRef.current) return
+    doneRef.current = true
+    if (mountedRef.current) onClose()
+    notify.success('Milestone created')
+  })
 
   const nameId = useId()
   const dateId = useId()
@@ -152,11 +174,12 @@ export function MilestoneForm({ state, controlsRef, onClose, onDeleting }: Miles
   const set = <K extends keyof Values>(key: K, value: Values[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
     setFormError(null)
+    retryFulfilment.disarm()
   }
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault()
-    if (savingRef.current) return
+    if (savingRef.current || doneRef.current) return
     setShowErrors(true)
     const current = latest.current.values
     if (!current.date || validateName(current.name, NAME_MAX_LENGTH, 'Milestone name')) return
@@ -167,14 +190,22 @@ export function MilestoneForm({ state, controlsRef, onClose, onDeleting }: Miles
     savingRef.current = true
     setSaving(true)
     setFormError(null)
+    retryFulfilment.disarm()
     let result: Result<unknown>
     if (state.mode === 'create') {
-      result = await createMilestone({
+      const input = {
         projectId: state.projectId,
         name: current.name,
         date: current.date,
         phaseId: current.phaseId,
-      })
+      }
+      result = await createMilestone(input)
+      if (!result.ok && isRetryable(result.error)) {
+        retryFulfilment.arm(
+          (milestone) =>
+            milestone.name.trim() === input.name.trim() && milestone.date === input.date,
+        )
+      }
     } else {
       const patch: MilestonePatch = {}
       if (current.name.trim() !== initial.name.trim()) patch.name = current.name
@@ -191,6 +222,7 @@ export function MilestoneForm({ state, controlsRef, onClose, onDeleting }: Miles
       }
       return
     }
+    doneRef.current = true
     // Closed meanwhile (perhaps another milestone is open now): leave that dialog alone.
     if (mountedRef.current) onClose()
     if (state.mode === 'create') notify.success('Milestone created')

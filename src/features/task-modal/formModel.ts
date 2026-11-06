@@ -131,17 +131,14 @@ export function isUnchanged(diff: TaskSaveDiff): boolean {
   return diff.schedule === null && Object.keys(diff.patch).length === 0
 }
 
-/** Create-mode starting values from the opener's defaults (a subtask takes its parent's phase). */
-export function initialCreateValues(
-  defaults: NewTaskDefaults,
-  parent: Pick<Task, 'phaseId'> | null | undefined,
-): TaskFormValues {
+/** Create-mode starting values from the opener's defaults. */
+export function initialCreateValues(defaults: NewTaskDefaults): TaskFormValues {
   return {
     title: '',
     description: '',
     status: defaults.status ?? 'todo',
     priority: defaults.priority ?? 'none',
-    phaseId: parent ? parent.phaseId : (defaults.phaseId ?? null),
+    phaseId: defaults.phaseId ?? null,
     startDate: defaults.startDate ?? null,
     dueDate: defaults.dueDate ?? null,
   }
@@ -165,7 +162,6 @@ export function buildNewTaskInput(
   values: TaskFormValues,
   context: {
     projectId: string
-    parentTaskId: string | null
     placement?: NewTaskDefaults['placement']
   },
 ): NewTaskInput {
@@ -178,7 +174,7 @@ export function buildNewTaskInput(
     startDate: values.startDate,
     dueDate: values.dueDate,
     phaseId: values.phaseId,
-    parentTaskId: context.parentTaskId,
+    parentTaskId: null,
   }
   if (context.placement) input.placement = context.placement
   return input

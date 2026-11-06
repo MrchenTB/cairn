@@ -14,7 +14,13 @@ export interface ProjectMenuItemsProps {
 }
 
 /** Edit · [extra] · status changes · Delete — the same list in the "…" menu and on right-click. */
-export function ProjectMenuItems({ kit: K, project, commands, onDelete, children }: ProjectMenuItemsProps) {
+export function ProjectMenuItems({
+  kit: K,
+  project,
+  commands,
+  onDelete,
+  children,
+}: ProjectMenuItemsProps) {
   return (
     <>
       <K.Item onSelect={() => commands.edit(project.id)}>

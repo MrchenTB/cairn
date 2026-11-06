@@ -5,7 +5,6 @@
  */
 import type { GanttScale } from '@/app/viewPrefs'
 import {
-  addMonths,
   dayOfWeek,
   endOfMonth,
   endOfWeek,
@@ -38,7 +37,7 @@ export interface ScaleSpec {
 }
 
 /*
- * Pixels per day. design-research §4.3 drafts 32/14/4 (tokens.css --gantt-day-width-*), and
+ * Pixels per day. design-research §4.3 and tokens.css --gantt-day-width-* now match 36/16/5 (once drafted 32/14/4), and
  * gantt-evaluation §7.4 proposes 36/16/5. We use 36/16/5: bars snap with Math.round, so a one-day
  * move needs half a day of pointer travel — 18 / 8 / 2.5px. On Week that is 8px instead of 7px
  * (a one-day nudge stays deliberate but easy, well clear of the 3px click slop), Day columns fit
@@ -188,7 +187,10 @@ function unitStart(day: number, unit: HeaderUnit, weekStartsOn: 0 | 1): number {
 function nextUnitStart(start: number, unit: HeaderUnit): number {
   if (unit === 'day') return start + 1
   if (unit === 'week') return start + 7
-  return toEpochDay(addMonths(fromEpochDay(start), unit === 'month' ? 1 : 12))
+  // From the unit's last day: the day after December 9999 has no date of its own.
+  const iso = fromEpochDay(start)
+  if (unit === 'month') return toEpochDay(endOfMonth(iso)) + 1
+  return toEpochDay(makeISODate(parseISODate(iso).year, 12, 31)) + 1
 }
 
 /** [start, end] of every unit intersecting [from, to] (inclusive), in order. */
@@ -271,6 +273,21 @@ export function buildHeaderTiers(options: {
     })
   const units = HEADER_UNITS[scale]
   return { top: cells(units.top, 'top'), bottom: cells(units.bottom, 'bottom') }
+}
+
+/**
+ * True when a pill centred on `centerX` (`half` px to each side) covers, or comes within `gap` px
+ * of, a header label that starts at `labelLeft` and is `labelWidth` wide (all in timeline px). The
+ * today pill hides the label of the week / month it sits in rather than half-covering it.
+ */
+export function labelOverlapsPill(
+  labelLeft: number,
+  labelWidth: number,
+  centerX: number,
+  half: number,
+  gap = 4,
+): boolean {
+  return labelLeft + labelWidth + gap > centerX - half && labelLeft - gap < centerX + half
 }
 
 // ---------------------------------------------------------------------------

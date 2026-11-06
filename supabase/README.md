@@ -127,7 +127,7 @@ order by 1;
    - 不要關閉整個 Email provider（那會讓你自己也無法登入）。用 CLI 管理設定時對應的是 `[auth] enable_signup = false`，不是 `[auth.email]` 底下的設定。
 4. **URL Configuration**：
    - **Site URL**：改成部署後的網址，例如 `https://cairn.<account>.workers.dev` 或你的自訂網域（預設值 `http://localhost:3000` 一定要改）。
-   - **Redirect URLs**：加入正式網址（官方建議正式環境寫精確路徑，例如 `https://<你的網域>/login`），以及本機開發用的 `http://localhost:5173/**`。
+   - **Redirect URLs**：加入正式網址本身（只有網域，結尾不要加 `/login` 之類的路徑，也不要加 `/`：App 送出的就是這個值，不在清單內時信裡的連結會退回 Site URL），以及本機開發用的 `http://localhost:5173/**`。
 5. **密碼**：建議至少 8 碼。
 6. **金鑰**：前端只放 Project URL 與 **publishable key**（`sb_publishable_…`；舊版 anon key 也可）到 `.env.local`。**secret key／service_role key 絕對不能放進前端或 Git**——它會繞過 RLS。
 7. 「忘記密碼」信件同樣受內建寄信限制。需要寄到其他信箱時，要自行設定 custom SMTP（需另外申請寄信服務，可能產生費用，請自行評估）。

@@ -605,6 +605,37 @@ describe('database rules mirrored', () => {
     expect(await stored()).toEqual(before)
   })
 
+  it('importWorkspace checks the links among its own rows: cycles and duplicates are refused, a diamond is fine', async () => {
+    const before = await stored()
+    const link = (id: string, predecessorId: string, successorId: string) =>
+      makeDependency({ id, projectId: 'np', predecessorId, successorId })
+    const base: BackupData = {
+      projects: [makeProject({ id: 'np', sortOrder: 'b0' })],
+      phases: [],
+      tasks: ['n1', 'n2', 'n3', 'n4'].map((id) => makeTask({ id, projectId: 'np' })),
+      milestones: [],
+      dependencies: [],
+    }
+    const cycle = [link('l1', 'n1', 'n2'), link('l2', 'n2', 'n3'), link('l3', 'n3', 'n1')]
+    await expectError(
+      repo.importWorkspace({ ...base, dependencies: cycle }),
+      'validation',
+      /circular/,
+    )
+    const twice = [link('l1', 'n1', 'n2'), link('l2', 'n1', 'n2')]
+    await expectError(repo.importWorkspace({ ...base, dependencies: twice }), 'conflict')
+    expect(await stored()).toEqual(before)
+    const diamond = [
+      link('l1', 'n1', 'n2'),
+      link('l2', 'n1', 'n3'),
+      link('l3', 'n2', 'n4'),
+      link('l4', 'n3', 'n4'),
+    ]
+    await expect(repo.importWorkspace({ ...base, dependencies: diamond })).resolves.toMatchObject({
+      dependencies: 4,
+    })
+  })
+
   it('a task cannot become a subtask of a task it shares a dependency with', async () => {
     await repo.insertTask(task('a'))
     await repo.insertTask(task('b'))

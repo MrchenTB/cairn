@@ -49,7 +49,7 @@ export function defaultsWithDraft(
   projectId: string,
   draft: TaskFormValues,
 ): NewTaskDefaults {
-  const next: NewTaskDefaults = { ...defaults, projectId, phaseId: null, parentTaskId: null }
+  const next: NewTaskDefaults = { ...defaults, projectId, phaseId: null }
   restoredDrafts.set(next, { ...draft, phaseId: null })
   return next
 }

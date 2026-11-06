@@ -81,7 +81,9 @@ describe('ListView — flat project (no phases)', () => {
     await user.type(input, 'Water plants{Enter}')
     // Focus stays in the add row for rapid entry.
     expect(input).toHaveFocus()
-    await waitFor(() => expect(rowTitles()).toEqual(['Buy stamps', 'Post the letter', 'Water plants']))
+    await waitFor(() =>
+      expect(rowTitles()).toEqual(['Buy stamps', 'Post the letter', 'Water plants']),
+    )
     expect(tasksOf(project.id).map((task) => task.title)).toEqual([
       'Buy stamps',
       'Post the letter',
@@ -93,6 +95,17 @@ describe('ListView — flat project (no phases)', () => {
     expect(screen.getByRole('button', { name: 'Add task' })).toHaveFocus()
   })
 
+  it('lets the browser skip off-screen rows (fixed 36px height, content-visibility)', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Big' }))
+    must(await a.createTask({ projectId: project.id, title: 'One' }))
+    renderList(project.id)
+    const row = document.querySelector('[data-task-row]') as HTMLElement
+    expect(row.className).toContain('h-9')
+    expect(row.className).toContain('[content-visibility:auto]')
+    expect(row.className).toContain('[contain-intrinsic-size:auto_36px]')
+  })
+
   it('rejects an empty or invalid title inline (nothing is created)', async () => {
     const a = getWorkspaceActions()
     const project = must(await a.createProject({ name: 'Errands' }))
@@ -102,7 +115,9 @@ describe('ListView — flat project (no phases)', () => {
     const input = screen.getByRole('textbox', { name: 'New task' })
     await user.type(input, `${'x'.repeat(501)}{Enter}`)
     expect(input).toHaveAttribute('aria-invalid', 'true')
-    expect(screen.getByRole('alert')).toHaveTextContent('Task title must be at most 500 characters.')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Task title must be at most 500 characters.',
+    )
     expect(tasksOf(project.id)).toHaveLength(1)
   })
 })
@@ -113,7 +128,13 @@ describe('ListView — phases', () => {
     const project = must(await a.createProject({ name: 'Research' }))
     const discovery = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
     const report = must(await a.createPhase({ projectId: project.id, name: 'Report' }))
-    must(await a.createTask({ projectId: project.id, title: 'Interview users', phaseId: discovery.id }))
+    must(
+      await a.createTask({
+        projectId: project.id,
+        title: 'Interview users',
+        phaseId: discovery.id,
+      }),
+    )
     must(await a.createTask({ projectId: project.id, title: 'Write report', phaseId: report.id }))
     must(await a.createTask({ projectId: project.id, title: 'Survey', phaseId: discovery.id }))
     return { project, discovery, report }
@@ -138,7 +159,10 @@ describe('ListView — phases', () => {
     const { user } = renderList(project.id)
 
     await user.click(screen.getByRole('button', { name: 'Add task to Discovery' }))
-    await user.type(screen.getByRole('textbox', { name: 'New task in Discovery' }), 'Synthesis{Enter}')
+    await user.type(
+      screen.getByRole('textbox', { name: 'New task in Discovery' }),
+      'Synthesis{Enter}',
+    )
 
     const created = await waitFor(() => {
       const task = byTitle(project.id, 'Synthesis')
@@ -214,7 +238,9 @@ describe('ListView — subtasks', () => {
         status: 'done',
       }),
     )
-    must(await a.createTask({ projectId: project.id, title: 'Forum post', parentTaskId: parent.id }))
+    must(
+      await a.createTask({ projectId: project.id, title: 'Forum post', parentTaskId: parent.id }),
+    )
     const { user } = renderList(project.id)
 
     // Collapsed by default: the parent shows "1/2".
@@ -234,6 +260,52 @@ describe('ListView — subtasks', () => {
 
     await user.click(screen.getByRole('button', { name: 'Hide subtasks of Recruit' }))
     expect(rowTitles()).toEqual(['Recruit'])
+  })
+
+  it('puts the cursor in the new subtask field after "Add subtask" is chosen from a menu', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const parent = must(await a.createTask({ projectId: project.id, title: 'Recruit' }))
+    const { user } = renderList(project.id)
+
+    // The row's ⋯ menu.
+    await user.click(screen.getByRole('button', { name: 'Actions for Recruit' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Add subtask' }))
+    const field = await screen.findByRole('textbox', { name: 'New subtask of Recruit' })
+    await waitFor(() => expect(field).toHaveFocus())
+    await user.keyboard('Email list{Enter}')
+    await waitFor(() => expect(byTitle(project.id, 'Email list')?.parentTaskId).toBe(parent.id))
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: /New subtask/ })).not.toBeInTheDocument(),
+    )
+
+    // The right-click menu.
+    const row = document.querySelector(`[data-task-row="${parent.id}"]`)
+    if (!row) throw new Error('row not rendered')
+    await user.pointer({ keys: '[MouseRight]', target: row })
+    await user.click(await screen.findByRole('menuitem', { name: 'Add subtask' }))
+    const again = await screen.findByRole('textbox', { name: 'New subtask of Recruit' })
+    await waitFor(() => expect(again).toHaveFocus())
+  })
+
+  it('puts the cursor in the group\'s add row after "Add task" is chosen from its menu', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    const discovery = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
+    must(
+      await a.createTask({
+        projectId: project.id,
+        title: 'Interview users',
+        phaseId: discovery.id,
+      }),
+    )
+    const { user } = renderList(project.id)
+
+    await user.click(screen.getByRole('button', { name: 'Actions for phase Discovery' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Add task' }))
+    const field = await screen.findByRole('textbox', { name: 'New task in Discovery' })
+    await waitFor(() => expect(field).toHaveFocus())
   })
 
   it('changes a status from the row (the List updates through the store)', async () => {
@@ -263,7 +335,9 @@ describe('ListView — editing in place', () => {
     const row = document.querySelector(`[data-task-row="${task.id}"]`) as HTMLElement
     await user.click(within(row).getByRole('button', { name: 'Due date: not set' }))
     await user.click(await screen.findByRole('button', { name: /^Tomorrow/ }))
-    await waitFor(() => expect(useWorkspaceStore.getState().data.tasks[task.id].dueDate).toBe(tomorrow))
+    await waitFor(() =>
+      expect(useWorkspaceStore.getState().data.tasks[task.id].dueDate).toBe(tomorrow),
+    )
     expect(within(row).getByRole('button', { name: /^Due date: / })).toHaveTextContent('Tomorrow')
 
     // The other (memoised) row still shows its own values.
@@ -309,8 +383,13 @@ describe('ListView — editing in place', () => {
       await a.createMilestone({ projectId: project.id, name: 'Kick-off', date: '2026-10-20' }),
     )
     const { user } = renderList(project.id)
-    await user.click(screen.getByRole('button', { name: /^Milestone Kick-off, Tuesday, October 20, 2026/ }))
-    expect(useUIStore.getState().milestoneDialog).toEqual({ mode: 'edit', milestoneId: milestone.id })
+    await user.click(
+      screen.getByRole('button', { name: /^Milestone Kick-off, Tuesday, October 20, 2026/ }),
+    )
+    expect(useUIStore.getState().milestoneDialog).toEqual({
+      mode: 'edit',
+      milestoneId: milestone.id,
+    })
   })
 })
 
@@ -319,7 +398,13 @@ describe('ListView — "No phase"', () => {
     const a = getWorkspaceActions()
     const project = must(await a.createProject({ name: 'Research' }))
     const discovery = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
-    must(await a.createTask({ projectId: project.id, title: 'Interview users', phaseId: discovery.id }))
+    must(
+      await a.createTask({
+        projectId: project.id,
+        title: 'Interview users',
+        phaseId: discovery.id,
+      }),
+    )
     must(await a.createTask({ projectId: project.id, title: 'Survey', phaseId: discovery.id }))
     const { user } = renderList(project.id)
     expect(screen.queryByRole('button', { name: /^No phase/ })).not.toBeInTheDocument()
@@ -344,7 +429,10 @@ describe('ListView — empty project', () => {
 
     expect(screen.getByRole('heading', { name: 'No tasks yet' })).toBeInTheDocument()
     expect(screen.getByText(/Phases are optional/)).toBeInTheDocument()
-    await user.type(screen.getByRole('textbox', { name: 'Add your first task' }), 'Sketch idea{Enter}')
+    await user.type(
+      screen.getByRole('textbox', { name: 'Add your first task' }),
+      'Sketch idea{Enter}',
+    )
 
     await waitFor(() => expect(rowTitles()).toEqual(['Sketch idea']))
     // The list keeps an add row open for the next one.

@@ -121,7 +121,10 @@ export function AddTaskComposer({ columnLabel, onCreate, onCreated }: AddTaskCom
           {error}
         </p>
       ) : null}
-      <div className="flex items-center gap-1.5">
+      {/* Safari and Firefox on macOS do not focus a button on click, so the input's blur would
+          have a null relatedTarget and close an empty composer before the click lands. Keeping
+          the focus on the input makes the buttons behave the same in every browser. */}
+      <div className="flex items-center gap-1.5" onMouseDown={(event) => event.preventDefault()}>
         <Button variant="primary" size="xs" onClick={() => void submit()}>
           Add task
         </Button>

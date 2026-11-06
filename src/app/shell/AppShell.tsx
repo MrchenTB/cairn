@@ -17,6 +17,7 @@ import { RouteAnnouncer } from './RouteAnnouncer'
 import { ShortcutsDialog } from './ShortcutsDialog'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
+import { UnsavedWritesGuard } from './UnsavedWritesGuard'
 
 /** Remembers visited projects (sidebar "Recent") and each project's last view. */
 function useProjectRouteMemory() {
@@ -45,6 +46,7 @@ export function AppShell() {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-app text-fg">
+      <UnsavedWritesGuard />
       {/* `not-sr-only` resets padding/margin, so the visible styles are all focus-scoped. */}
       <a
         href="#main"

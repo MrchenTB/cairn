@@ -2,6 +2,7 @@ import type { ComponentProps } from 'react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { X } from 'lucide-react'
 import { useFocusReturn } from '@/lib/focus'
+import { isImeKeyEvent } from '@/lib/keyboard'
 import { isToastTarget } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { Button } from './button'
@@ -62,6 +63,8 @@ export function DialogContent({
   overlayClassName,
   onCloseAutoFocus,
   onPointerDownOutside,
+  onEscapeKeyDown,
+  onKeyDown,
   children,
   ...props
 }: DialogContentProps) {
@@ -85,6 +88,17 @@ export function DialogContent({
           if (!event.defaultPrevented && isToastTarget(event.detail.originalEvent.target)) {
             event.preventDefault()
           }
+        }}
+        // Input-method keys belong to the IME: Esc that drops a composition must not close the
+        // dialog, and Enter that picks a candidate must not submit its form (implicit submission
+        // — Safari sends that Enter after compositionend, as keyCode 229).
+        onEscapeKeyDown={(event) => {
+          onEscapeKeyDown?.(event)
+          if (!event.defaultPrevented && isImeKeyEvent(event)) event.preventDefault()
+        }}
+        onKeyDown={(event) => {
+          onKeyDown?.(event)
+          if (event.key === 'Enter' && isImeKeyEvent(event.nativeEvent)) event.preventDefault()
         }}
         {...props}
       >

@@ -190,3 +190,35 @@ describe('keyboard nudges', () => {
     ).toBeNull()
   })
 })
+
+describe('dates dragged past the ends of the supported calendar', () => {
+  const pastEnd = toEpochDay('9999-12-31') + 3
+  const beforeStart = toEpochDay('0001-01-01') - 3
+
+  it('are named in the tooltip instead of throwing mid-drag', () => {
+    const origin = { start: toEpochDay('9999-12-20'), end: toEpochDay('9999-12-28') }
+    for (const dates of [
+      { start: pastEnd - 9, end: pastEnd },
+      { start: beforeStart, end: beforeStart + 2 },
+      { start: pastEnd, end: null },
+    ]) {
+      expect(dragTooltip('move', dates, origin, '2026-11-04').text).toBe(
+        'Outside the supported calendar',
+      )
+    }
+    expect(
+      dragTooltip('point', { start: pastEnd, end: null }, origin, '2026-11-04', true).text,
+    ).toBe('Outside the supported calendar')
+  })
+
+  it('never break a bar’s accessible name', () => {
+    const label = barAriaLabel(
+      { title: 'Zeta', status: 'todo' },
+      { kind: 'range', start: pastEnd - 9, end: pastEnd },
+      '2026-11-04',
+      null,
+      false,
+    )
+    expect(label).toContain('Zeta')
+  })
+})

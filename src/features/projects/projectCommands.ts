@@ -55,7 +55,11 @@ export interface ProjectCommands {
    * Confirms (stating exactly what is deleted), then deletes. `leave` navigates to /projects
    * first (used from inside the project). Resolves true when the project was deleted.
    */
-  remove(project: Project, contents: ProjectContents, options?: { leave?: boolean }): Promise<boolean>
+  remove(
+    project: Project,
+    contents: ProjectContents,
+    options?: { leave?: boolean },
+  ): Promise<boolean>
 }
 
 export function useProjectCommands(): ProjectCommands {

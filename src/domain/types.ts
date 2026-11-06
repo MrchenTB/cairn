@@ -255,13 +255,7 @@ export interface ScheduleChange {
 // ---------------------------------------------------------------------------
 
 export type AppErrorKind =
-  | 'validation'
-  | 'network'
-  | 'auth'
-  | 'permission'
-  | 'not_found'
-  | 'conflict'
-  | 'unknown'
+  'validation' | 'network' | 'auth' | 'permission' | 'not_found' | 'conflict' | 'unknown'
 
 export interface AppError {
   kind: AppErrorKind

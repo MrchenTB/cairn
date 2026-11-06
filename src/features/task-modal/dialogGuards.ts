@@ -6,7 +6,7 @@
  * `pointer-events: none`, so the event may be reported on the overlay underneath the toast:
  * the toast's rectangle decides, not the event target.
  */
-import { restoreFocus } from '@/lib/focus'
+import { isFocusOwnedElsewhere, restoreFocus } from '@/lib/focus'
 
 interface OutsidePointerEvent {
   detail: { originalEvent: PointerEvent }
@@ -62,6 +62,16 @@ export function afterDialogsClosed(
     if (frame) cancelAnimationFrame(frame)
     if (timer) window.clearTimeout(timer)
   }
+}
+
+/**
+ * Runs a delayed focus move into `container` (a dialog) only while no other dialog (the search
+ * overlay, opened meanwhile) is on screen: that one owns focus now. Returns true when it ran.
+ */
+export function focusIfNotCovered(container: Element | null, focus: () => void): boolean {
+  if (container && isFocusOwnedElsewhere(container)) return false
+  focus()
+  return true
 }
 
 /**

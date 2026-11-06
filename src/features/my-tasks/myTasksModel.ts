@@ -21,7 +21,7 @@ export const TAB_LABELS: Record<MyTasksTab, string> = {
   today: 'Today',
   upcoming: 'Upcoming',
   overdue: 'Overdue',
-  all: 'All',
+  all: 'All Tasks',
 }
 
 /** One-line definitions (tab tooltips, info popover) — worded after the bucket rules. */
@@ -29,7 +29,7 @@ export const TAB_DEFINITIONS: Record<MyTasksTab, string> = {
   today: 'Due today and not done',
   upcoming: 'Due in the next 7 days, after today',
   overdue: 'Past their due date and not done',
-  all: 'Every task, grouped by due date',
+  all: 'Every open task, grouped by due date',
 }
 
 /** Query param of the All tab's "Show completed" switch (`?completed=1`; default off). */
@@ -94,5 +94,5 @@ export function groupAllTasks(
  * Overdue (and Overview's upcoming list) only show open tasks, All shows done ones on request.
  */
 export function staysInList(status: Task['status'], showsDone: boolean): boolean {
-  return showsDone || status !== 'done'
+  return showsDone || isOpenTask({ status })
 }

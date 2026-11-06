@@ -55,6 +55,18 @@ describe('Sidebar', () => {
     expect(recentNames()).toEqual(['Done', 'C', 'A', 'B', 'D'])
   })
 
+  it('shows placeholders while loading, but says so when the workspace could not be loaded', () => {
+    useWorkspaceStore.setState({ status: 'loading', data: EMPTY_WORKSPACE })
+    const { container } = renderUI(<Sidebar />, { route: '/overview' })
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
+
+    act(() => useWorkspaceStore.setState({ status: 'error' }))
+    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0)
+    const section = screen.getByRole('region', { name: 'Recent' })
+    expect(within(section).getByText('Couldn’t load projects')).toBeInTheDocument()
+    expect(within(section).queryByText('No projects yet')).not.toBeInTheDocument()
+  })
+
   it('marks exactly one item as the current page on a project route', async () => {
     seed(projects)
     act(() => recordProjectVisit('b'))

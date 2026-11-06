@@ -29,7 +29,11 @@ import { StatusIcon } from '@/components/task/StatusIcon'
 import { StatusMenu } from '@/components/task/StatusMenu'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { insetFocus } from '@/components/ui/styles'
 import { Tooltip } from '@/components/ui/tooltip'
 import { dueBucket } from '@/domain/buckets'
@@ -45,8 +49,10 @@ export interface TaskCommands {
   setDates(task: Task, dates: { startDate: ISODate | null; dueDate: ISODate | null }): void
   /** Shows or hides the subtasks of a parent. */
   toggleExpanded(taskId: string): void
-  /** Expands the parent and opens its "Add subtask" row. */
+  /** Expands the parent and opens its "Add subtask" row (its field gets the cursor). */
   addSubtask(taskId: string): void
+  /** `onCloseAutoFocus` of the row's menus (see ListContextValue.openRowAfterMenu). */
+  onMenuClosed(event: Event): void
   move(task: Task, delta: -1 | 1): void
   moveToPhase(task: Task, phaseId: string | null): void
   remove(task: Task): void
@@ -110,7 +116,9 @@ export const TaskRow = memo(function TaskRow({
   const hasSubtasks = subtaskTotal > 0
   const menu: TaskMenuContext = { canMoveUp, canMoveDown, phases }
 
-  const items = (kit: MenuKit) => <TaskMenuItems kit={kit} task={task} menu={menu} commands={commands} />
+  const items = (kit: MenuKit) => (
+    <TaskMenuItems kit={kit} task={task} menu={menu} commands={commands} />
+  )
 
   return (
     <ContextMenu>
@@ -120,6 +128,9 @@ export const TaskRow = memo(function TaskRow({
           data-depth={depth}
           className={cn(
             'group/row relative flex h-9 items-center pr-3 pl-1 text-ui',
+            // Rows are a fixed 36px high: off-screen rows skip style and layout work, which keeps a
+            // menu, a status change or a drag pick-up cheap in a project with hundreds of tasks.
+            '[contain-intrinsic-size:auto_36px] [content-visibility:auto]',
             'transition-colors duration-fast hover:bg-hover hover:duration-instant data-[state=open]:bg-hover',
             // A status / priority / date / ⋯ menu of this row is open: keep the row marked.
             'has-[[data-state=open]]:bg-hover',
@@ -227,21 +238,27 @@ export const TaskRow = memo(function TaskRow({
                   value={task.startDate}
                   max={task.dueDate}
                   rangeHint="The start can’t be after the due date."
-                  onChange={(startDate) => commands.setDates(task, { startDate, dueDate: task.dueDate })}
+                  onChange={(startDate) =>
+                    commands.setDates(task, { startDate, dueDate: task.dueDate })
+                  }
                   align="end"
                   className={cn('text-fg-tertiary', insetFocus)}
                 />
               ) : null}
             </span>
             <span className="flex w-24 items-center justify-end gap-0.5">
-              {overdue ? <CircleAlert className="size-3.5 shrink-0 text-danger" aria-hidden /> : null}
+              {overdue ? (
+                <CircleAlert className="size-3.5 shrink-0 text-danger" aria-hidden />
+              ) : null}
               <DateField
                 variant="ghost"
                 label="Due date"
                 value={task.dueDate}
                 min={task.startDate}
                 rangeHint="The due date can’t be before the start."
-                onChange={(dueDate) => commands.setDates(task, { startDate: task.startDate, dueDate })}
+                onChange={(dueDate) =>
+                  commands.setDates(task, { startDate: task.startDate, dueDate })
+                }
                 align="end"
                 className={cn(
                   insetFocus,
@@ -266,14 +283,20 @@ export const TaskRow = memo(function TaskRow({
                   </Button>
                 </DropdownMenuTrigger>
               </Tooltip>
-              <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuContent
+                align="end"
+                className="w-52"
+                onCloseAutoFocus={commands.onMenuClosed}
+              >
                 {items(dropdownKit)}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-52">{items(contextKit)}</ContextMenuContent>
+      <ContextMenuContent className="w-52" onCloseAutoFocus={commands.onMenuClosed}>
+        {items(contextKit)}
+      </ContextMenuContent>
     </ContextMenu>
   )
 })

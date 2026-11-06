@@ -142,3 +142,38 @@ describe('DialogContent outside clicks', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })
+
+describe('DialogContent input-method keys', () => {
+  function renderForm() {
+    const onOpenChange = vi.fn()
+    renderUI(
+      <Dialog open onOpenChange={onOpenChange}>
+        <DialogContent aria-describedby={undefined}>
+          <DialogTitle>Name it</DialogTitle>
+          <form noValidate onSubmit={(event) => event.preventDefault()}>
+            <input aria-label="Name" />
+          </form>
+        </DialogContent>
+      </Dialog>,
+    )
+    return { onOpenChange, field: screen.getByRole('textbox', { name: 'Name' }) }
+  }
+
+  it('Esc during a composition does not close; a plain Esc does', () => {
+    const { onOpenChange, field } = renderForm()
+    fireEvent.keyDown(field, { key: 'Escape', isComposing: true })
+    // Safari: the Esc that drops the pre-edit string arrives after compositionend, keyCode 229.
+    fireEvent.keyDown(field, { key: 'Escape', keyCode: 229, isComposing: false })
+    expect(onOpenChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('the Enter that picks a candidate is never left to implicit form submission', () => {
+    const { field } = renderForm()
+    // fireEvent returns false when the default action was prevented (no implicit submit then).
+    expect(fireEvent.keyDown(field, { key: 'Enter', isComposing: true })).toBe(false)
+    expect(fireEvent.keyDown(field, { key: 'Enter', keyCode: 229, isComposing: false })).toBe(false)
+    expect(fireEvent.keyDown(field, { key: 'Enter', keyCode: 13 })).toBe(true)
+  })
+})

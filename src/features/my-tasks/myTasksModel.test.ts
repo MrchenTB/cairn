@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { myTasks } from '@/domain/buckets'
 import { makeProject, makeTask, makeWorkspace } from '@/domain/testFactories'
-import {
-  groupAllTasks,
-  myTasksCounts,
-  parseMyTasksTab,
-  staysInList,
-} from './myTasksModel'
+import { groupAllTasks, myTasksCounts, parseMyTasksTab, staysInList } from './myTasksModel'
 
 const TODAY = '2026-11-03'
 

@@ -1,3 +1,4 @@
+import type { Transaction } from '@electric-sql/pglite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   catchPgError,
@@ -555,5 +556,75 @@ describe('authenticated privileges', () => {
 
   it('cannot call trigger functions directly', async () => {
     await expectPgError(bob.query('select public.tg_set_updated_at()'), '42501')
+  })
+})
+
+describe('tokens without a usable identity fail closed', () => {
+  /** Role `authenticated` with no `sub` claim, so auth.uid() is null. */
+  const noSubject = <T>(run: (tx: Transaction) => Promise<T>): Promise<T> =>
+    db.admin.transaction(async (tx) => {
+      await tx.exec('set local role authenticated')
+      return run(tx)
+    })
+
+  it.each(TABLES)('%s: no subject reads and changes nothing, and cannot insert', async (table) => {
+    const before = await snapshotOwned(db.admin, alice.id)
+    expect((await noSubject((tx) => tx.query(`select * from public.${table}`))).rows).toEqual([])
+    const [column, value] = UPDATES[table]
+    const updated = await noSubject((tx) =>
+      tx.query(`update public.${table} set ${column} = $1`, [value]),
+    )
+    expect(updated.affectedRows ?? 0).toBe(0)
+    const deleted = await noSubject((tx) => tx.query(`delete from public.${table}`))
+    expect(deleted.affectedRows ?? 0).toBe(0)
+    await expect(
+      noSubject((tx) => tx.query(`insert into public.${table} default values`)),
+    ).rejects.toThrow()
+    expect(await snapshotOwned(db.admin, alice.id)).toEqual(before)
+  })
+
+  it("no subject cannot claim Alice's user_id", async () => {
+    await expectPgError(
+      noSubject((tx) =>
+        tx.query('insert into public.projects (user_id, name, sort_order) values ($1, $2, $3)', [
+          alice.id,
+          'Claimed',
+          'a0',
+        ]),
+      ),
+      '42501',
+      'row-level security',
+    )
+  })
+
+  it("no subject finds nothing through the RPCs, even Alice's rows", async () => {
+    const before = await snapshotOwned(db.admin, alice.id)
+    await expectPgError(
+      noSubject((tx) =>
+        tx.query('select * from public.apply_task_schedule($1::jsonb)', [
+          JSON.stringify([{ id: a.other.id, start_date: null, due_date: null }]),
+        ]),
+      ),
+      'P0002',
+    )
+    await expectPgError(
+      noSubject((tx) => tx.query('select public.delete_task($1)', [a.other.id])),
+      'P0002',
+    )
+    expect(await snapshotOwned(db.admin, alice.id)).toEqual(before)
+  })
+
+  it('the still valid token of a deleted account finds nothing and cannot write', async () => {
+    const carol = await db.createUser()
+    const own = await seedWorkspace(carol)
+    await insertRow(carol, 'user_preferences', { theme: 'dark' })
+    await db.admin.query('delete from auth.users where id = $1', [carol.id])
+
+    for (const table of TABLES) {
+      expect((await carol.query(`select * from public.${table}`)).rows, table).toEqual([])
+    }
+    await expectPgError(makeProject(carol), '23503')
+    await expectPgError(insertRow(carol, 'user_preferences', { theme: 'light' }), '23503')
+    await expectPgError(carol.query('select public.delete_task($1)', [own.other.id]), 'P0002')
   })
 })

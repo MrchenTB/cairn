@@ -191,6 +191,55 @@ describe('moveForBoardDrop — robustness', () => {
   })
 })
 
+describe('moveForBoardDrop — the columns the user saw (`seen`)', () => {
+  /** What the store holds now: card x's earlier move failed and was rolled back during the drag. */
+  const current: BoardColumnIds = { todo: ['x', 'y'], in_progress: ['p1', 'p2'], done: [] }
+  /** What the drag preview still shows: x in In Progress, and y dragged to between p1 and p2. */
+  const seen: BoardColumnIds = { todo: [], in_progress: ['x', 'p1', 'y', 'p2'], done: [] }
+  const order = ['x', 'p1', 'y', 'p2']
+
+  it('takes the neighbours from the preview, not from the store that changed under the drag', () => {
+    const drop = { activeId: 'y', overColumn: 'in_progress', overIndex: 2 } as const
+    // The user saw y between p1 and p2 ...
+    expect(moveForBoardDrop(drop, current, order, seen)).toEqual({
+      taskId: 'y',
+      status: 'in_progress',
+      afterId: 'p1',
+      beforeId: 'p2',
+    })
+    // ... which the store's columns alone (x rolled back) would have turned into "after p2".
+    expect(moveForBoardDrop(drop, current, order)).toEqual({
+      taskId: 'y',
+      status: 'in_progress',
+      afterId: 'p2',
+      beforeId: null,
+    })
+  })
+
+  it('skips an in-place drop only when the column is what the user saw', () => {
+    const same = { todo: [...columns.todo], in_progress: [...columns.in_progress], done: [] }
+    expect(
+      moveForBoardDrop(
+        { activeId: 'c', overColumn: 'todo', overIndex: 1 },
+        columns,
+        projectOrder,
+        same,
+      ),
+    ).toBeNull()
+    // A card appeared in the column during the drag: the store decides (it writes nothing if the
+    // card is already where the neighbours put it).
+    const changed = { ...same, todo: ['a', 'z', 'c', 'e'] }
+    expect(
+      moveForBoardDrop(
+        { activeId: 'c', overColumn: 'todo', overIndex: 2 },
+        columns,
+        projectOrder,
+        changed,
+      ),
+    ).toEqual({ taskId: 'c', afterId: 'z', beforeId: 'e' })
+  })
+})
+
 describe('column helpers', () => {
   it('finds the column of a card or of a column droppable id', () => {
     expect(findColumn(columns, 'f')).toBe('in_progress')

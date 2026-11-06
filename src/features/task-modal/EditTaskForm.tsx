@@ -78,6 +78,8 @@ export interface EditTaskFormProps {
   onClose: () => void
   /** Called right before the form deletes the task (so the host does not report it missing). */
   onDeleting: (taskId: string) => void
+  /** Whether the form holds unsaved work (so the host asks before replacing it). */
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 /**
@@ -98,6 +100,7 @@ function EditTaskFormBody({
   controlsRef,
   onClose,
   onDeleting,
+  onDirtyChange,
 }: EditTaskFormProps & { task: Task; exists: boolean }) {
   const project = useProject(task.projectId)
   const parent = useTask(task.parentTaskId)
@@ -143,6 +146,11 @@ function EditTaskFormBody({
     }
   }, [])
 
+  useEffect(() => {
+    onDirtyChange?.(dirty && !saving)
+    return () => onDirtyChange?.(false)
+  }, [dirty, saving, onDirtyChange])
+
   // Focus the title with the caret at the end whenever this form appears.
   useEffect(() => {
     const el = titleRef.current
@@ -176,6 +184,7 @@ function EditTaskFormBody({
     const controls: ModalControls = {
       requestClose: () => void requestClose(),
       submit: () => submitRef.current(),
+      focus: () => titleRef.current?.focus({ preventScroll: true }),
     }
     controlsRef.current = controls
     return () => {
@@ -449,7 +458,7 @@ function EditTaskFormBody({
         <div className="mt-6 border-t border-subtle pt-3">
           <p className="mb-2 text-meta text-fg-tertiary">
             {isSubtask
-              ? 'Dependencies save right away.'
+              ? 'Dependencies save right away. A subtask can’t have subtasks of its own (one level only).'
               : 'Subtasks and dependencies save right away.'}
           </p>
           <div className="flex flex-col gap-5">

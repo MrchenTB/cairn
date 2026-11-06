@@ -106,7 +106,9 @@ export function DateField({
           id={id}
           aria-label={`${label}: ${value ? formatDate(value, 'long') : 'not set'}`}
           aria-invalid={ariaInvalid || undefined}
-          onClick={(event) => event.stopPropagation()}
+          // No stopPropagation here: Radix treats a click that never reaches the document as
+          // "handled elsewhere", so another open popover (e.g. the neighbouring date chip's)
+          // would stay open and two calendars would stack.
           className={cn(
             TRIGGER[variant],
             'disabled:pointer-events-none disabled:opacity-50',

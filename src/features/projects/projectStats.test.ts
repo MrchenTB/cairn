@@ -31,7 +31,10 @@ describe('taskCountsByProject', () => {
         makeTask({ projectId: 'ghost' }),
       ],
     })
-    expect(taskCountsByProject(data)).toEqual({ p1: { open: 2, total: 4 }, p2: { open: 0, total: 0 } })
+    expect(taskCountsByProject(data)).toEqual({
+      p1: { open: 2, total: 4 },
+      p2: { open: 0, total: 0 },
+    })
   })
 })
 

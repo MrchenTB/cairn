@@ -227,6 +227,12 @@ describe('ProjectsPage — progress and counts', () => {
     expect(within(row('Website refresh')).getByText('100%')).toBeInTheDocument()
   })
 
+  it('names the task-count column "Open / total" so 0 / 2 beside 100% is not read as "none done"', () => {
+    seed(workspace())
+    renderPage('/projects?status=all')
+    expect(screen.getByRole('columnheader', { name: 'Open / total' })).toBeVisible()
+  })
+
   it('updates when a task is completed elsewhere (same store)', () => {
     const data = workspace()
     seed(data)

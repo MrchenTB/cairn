@@ -122,6 +122,14 @@ export function DependenciesSection({ task, onOpenTask }: DependenciesSectionPro
           />
         ))}
       </div>
+      {!task.startDate &&
+      !task.dueDate &&
+      (links.blockedBy.length > 0 || links.blocking.length > 0) ? (
+        <p className="mt-1.5 text-meta text-fg-tertiary">
+          This task has no dates, so its links aren&apos;t drawn on the chart and don&apos;t pass
+          scheduling constraints on to other tasks.
+        </p>
+      ) : null}
       <FieldError id={errorId}>{error}</FieldError>
     </section>
   )

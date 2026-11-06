@@ -102,7 +102,19 @@ function MyTasks() {
   const empty = sections.every((section) => section.tasks.length === 0)
 
   return (
-    <PageContainer width="full">
+    <PageContainer
+      width="full"
+      // A row the keyboard scrolls into view stays clear of the sticky view bar (and, on All, of
+      // the 2rem section heading) instead of ending up under them; 0.25rem is the gap between a
+      // row's edge and its controls.
+      style={{
+        scrollPaddingTop:
+          tab === 'all'
+            ? 'calc(var(--viewbar-height) + 2.25rem)'
+            : 'calc(var(--viewbar-height) + 0.25rem)',
+        scrollPaddingBottom: '0.25rem',
+      }}
+    >
       <PageHeader
         title="My Tasks"
         actions={
@@ -118,14 +130,19 @@ function MyTasks() {
           <>
             {tab === 'all' ? (
               <div className="flex items-center gap-2 pr-1">
+                {/* The name is fixed (the visible text shortens in a narrow view bar). */}
                 <Switch
                   id="my-tasks-show-completed"
+                  aria-label="Show completed tasks"
                   checked={showCompleted}
                   onCheckedChange={setShowCompleted}
                 />
-                <Label htmlFor="my-tasks-show-completed" className="text-ui">
-                  Show completed
-                  <span className="font-normal text-fg-tertiary tabular-nums">{counts.done}</span>
+                <Label htmlFor="my-tasks-show-completed" className="text-ui whitespace-nowrap">
+                  <span className="@max-[36rem]/viewbar:hidden">Show completed</span>
+                  <span className="hidden @max-[36rem]/viewbar:inline">Completed</span>
+                  <span className="font-normal text-fg-tertiary tabular-nums @max-[36rem]/viewbar:hidden">
+                    {counts.done}
+                  </span>
                 </Label>
               </div>
             ) : null}
@@ -156,7 +173,12 @@ function MyTasks() {
 
 function MyTasksTabs({ counts }: { counts: MyTasksCounts }) {
   return (
-    <NavTabs aria-label="My Tasks">
+    // The tabs give way (and scroll) rather than run under the view bar's controls when the
+    // window is very narrow; the vertical padding keeps the tabs' focus rings from being clipped.
+    <NavTabs
+      aria-label="My Tasks"
+      className="-my-2 min-w-0 overflow-x-auto py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
       {MY_TASKS_TABS.map((tab) => {
         const count = counts[tab]
         const spoken = tab === 'all' ? taskCount(count, 'open task') : taskCount(count)
@@ -189,7 +211,13 @@ function DefinitionsPopover({ today }: { today: string }) {
     <Popover>
       <Tooltip content="How tasks are grouped" side="bottom" align="end">
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="How tasks are grouped">
+          {/* Hidden in a very narrow view bar; the tabs' tooltips carry the same definitions. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="How tasks are grouped"
+            className="@max-[30rem]/viewbar:hidden"
+          >
             <Info strokeWidth={1.75} />
           </Button>
         </PopoverTrigger>
@@ -260,7 +288,9 @@ function MyTasksEmpty({
           title: 'Nothing due in the next 7 days',
           description: 'Tasks due after today and within a week show up here.',
           secondaryAction:
-            counts.all > 0 ? tabLink('all', `View all ${taskCount(counts.all, 'open task')}`) : undefined,
+            counts.all > 0
+              ? tabLink('all', `View all ${taskCount(counts.all, 'open task')}`)
+              : undefined,
         }
       case 'overdue':
         return {

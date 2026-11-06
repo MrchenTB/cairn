@@ -72,6 +72,32 @@ describe('Milestone dialog', { timeout: 20_000 }, () => {
     expect(success).toHaveBeenCalledWith('Milestone created')
   })
 
+  it('when Retry stores the milestone a failed create left behind, the dialog closes (no duplicate)', async () => {
+    const { project } = await seedWorkspace()
+    const success = vi.spyOn(notify, 'success')
+    const { user } = renderHosts(`/projects/${project.id}/gantt`)
+    openMilestoneDialog({ mode: 'create', projectId: project.id, date: '2026-11-20' })
+    const dialog = await screen.findByRole('dialog', { name: 'New milestone' })
+    const create = within(dialog).getByRole('button', { name: 'Create milestone' })
+
+    window.__cairnTest?.failNextWrites(1)
+    await user.type(nameBox(), 'Kick-off')
+    await user.click(create)
+    await waitFor(() => expect(create).toBeEnabled())
+    expect(milestones()).toHaveLength(0)
+    expect(success).not.toHaveBeenCalled()
+
+    must(await useWorkspaceStore.getState().actions.retryLastFailed())
+    await expectClosed()
+    expect(milestones()).toEqual([
+      expect.objectContaining({ name: 'Kick-off', date: '2026-11-20' }),
+    ])
+    // The store's own "Saved" confirms the Retry; "Milestone created" must appear exactly once.
+    expect(success.mock.calls.filter(([message]) => message === 'Milestone created')).toHaveLength(
+      1,
+    )
+  })
+
   it('opens with the requested phase and date (e.g. from a List group)', async () => {
     const { project, discoveryId } = await seedWorkspace()
     renderHosts(`/projects/${project.id}/list`)
@@ -134,6 +160,27 @@ describe('Milestone dialog', { timeout: 20_000 }, () => {
     await expectClosed()
     expect(useUIStore.getState().milestoneDialog).toBeNull()
     expect(useWorkspaceStore.getState().data.milestones[milestone.id].name).toBe('Draft review')
+  })
+
+  it('when Retry stores a failed edit, nothing is left to save and closing asks nothing', async () => {
+    const { projectId, milestone } = await seedMilestone()
+    const { user } = renderHosts(`/projects/${projectId}/gantt`)
+    openMilestoneDialog({ mode: 'edit', milestoneId: milestone.id })
+    const dialog = await screen.findByRole('dialog', { name: 'Edit milestone' })
+    const save = within(dialog).getByRole('button', { name: 'Save' })
+
+    window.__cairnTest?.failNextWrites(1)
+    await user.type(nameBox(), ' 2')
+    await user.click(save)
+    await waitFor(() => expect(save).toBeEnabled())
+    expect(useWorkspaceStore.getState().data.milestones[milestone.id].name).toBe('Draft review')
+
+    must(await useWorkspaceStore.getState().actions.retryLastFailed())
+    expect(useWorkspaceStore.getState().data.milestones[milestone.id].name).toBe('Draft review 2')
+    await waitFor(() => expect(save).toBeDisabled())
+    await user.keyboard('{Escape}')
+    await expectClosed()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   it('deletes after confirmation', async () => {

@@ -9,7 +9,11 @@ import { ProjectDot } from '@/components/task/ProjectDot'
 import { formatDate, formatDateRange } from '@/domain/dates'
 import type { ISODate } from '@/domain/types'
 import { cn } from '@/lib/utils'
-import { dayCenter, type MiniTimeline as MiniTimelineModel, type TimelineRow } from './overviewModel'
+import {
+  dayCenter,
+  type MiniTimeline as MiniTimelineModel,
+  type TimelineRow,
+} from './overviewModel'
 import { OverviewSection, SectionEmpty, SectionLink } from './OverviewSection'
 
 const LABEL_COLUMN = 'w-44'
@@ -25,9 +29,7 @@ export function MiniTimeline({ timeline, today }: { timeline: MiniTimelineModel;
   const range = formatDateRange(window.start, window.end, today)
   const notes = [
     more > 0 ? `${more} more in Timeline` : null,
-    idle > 0
-      ? `${plural(idle, 'active project')} with nothing scheduled in these weeks`
-      : null,
+    idle > 0 ? `${plural(idle, 'active project')} with nothing scheduled in these weeks` : null,
   ].filter(Boolean)
 
   return (
@@ -44,7 +46,10 @@ export function MiniTimeline({ timeline, today }: { timeline: MiniTimelineModel;
       ) : (
         <div className="relative">
           {/* Week columns (behind the rows). */}
-          <div aria-hidden className={cn('pointer-events-none absolute inset-y-0 right-0', LABEL_OFFSET)}>
+          <div
+            aria-hidden
+            className={cn('pointer-events-none absolute inset-y-0 right-0', LABEL_OFFSET)}
+          >
             {window.weeks.map((week, index) => (
               <span
                 key={week}
@@ -75,7 +80,10 @@ export function MiniTimeline({ timeline, today }: { timeline: MiniTimelineModel;
           </ul>
           {/* Today line (above the bars). */}
           {todayX !== null ? (
-            <div aria-hidden className={cn('pointer-events-none absolute inset-y-0 right-0', LABEL_OFFSET)}>
+            <div
+              aria-hidden
+              className={cn('pointer-events-none absolute inset-y-0 right-0', LABEL_OFFSET)}
+            >
               <span
                 className="absolute top-6 bottom-0 w-[1.5px] -translate-x-1/2 bg-(--gantt-today)"
                 style={{ left: `${todayX}%` }}
@@ -152,14 +160,17 @@ function TimelineRowItem({
       <span id={descriptionId} className="sr-only">
         {description}
       </span>
-      <div aria-hidden className="relative h-full min-w-0 flex-1">
+      {/* Not interactive itself: clicks fall through to the row's stretched link. */}
+      <div aria-hidden className="pointer-events-none relative h-full min-w-0 flex-1">
         {placed ? (
           <span
             data-span=""
+            // Fill + outline like a Gantt bar (the outline keeps a thin bar at 3:1 on the page);
+            // a bar that continues past the window has no outline and no rounding on that side.
             className={cn(
-              'absolute top-1/2 h-2 -translate-y-1/2 bg-(--gantt-bar-fill-active)',
-              placed.clippedStart ? 'rounded-l-none' : 'rounded-l-full',
-              placed.clippedEnd ? 'rounded-r-none' : 'rounded-r-full',
+              'absolute top-1/2 h-2 -translate-y-1/2 border border-(--gantt-bar-border) bg-(--gantt-bar-fill-active)',
+              placed.clippedStart ? 'rounded-l-none border-l-0' : 'rounded-l-full',
+              placed.clippedEnd ? 'rounded-r-none border-r-0' : 'rounded-r-full',
             )}
             style={{ left: `${placed.left}%`, width: `max(${placed.width}%, 6px)` }}
           />

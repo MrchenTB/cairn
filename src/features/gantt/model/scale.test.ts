@@ -9,6 +9,7 @@ import {
   gridBackgroundStyle,
   gridLines,
   isWeekendDay,
+  labelOverlapsPill,
   renderWindow,
   timelineRange,
   visibleDayRange,
@@ -260,4 +261,67 @@ describe('visible window', () => {
     expect(isWeekendDay(d('2026-11-08'))).toBe(true)
     expect(isWeekendDay(d('2026-11-09'))).toBe(false)
   })
+})
+
+describe('labelOverlapsPill', () => {
+  // A Week cell is 112px wide with its label ("Nov 2", ~30px) starting 6px in; the pill is ~42px.
+  const label = { left: 6, width: 30 }
+  const half = 21
+
+  it('is true when today falls on the first days of the week (the pill would cover the label)', () => {
+    for (const todayX of [8, 24, 40]) {
+      expect(labelOverlapsPill(label.left, label.width, todayX, half)).toBe(true)
+    }
+  })
+
+  it('is false once the pill has moved clear of the label', () => {
+    for (const todayX of [72, 88, 104]) {
+      expect(labelOverlapsPill(label.left, label.width, todayX, half)).toBe(false)
+    }
+  })
+
+  it('keeps a small gap: a pill that almost touches the label still hides it', () => {
+    // Label ends at 36; a pill starting at 38 is within the 4px gap, one starting at 41 is not.
+    expect(labelOverlapsPill(label.left, label.width, 38 + half, half)).toBe(true)
+    expect(labelOverlapsPill(label.left, label.width, 41 + half, half)).toBe(false)
+  })
+
+  it('also hides a label the pill sits entirely to the left of (today in the previous cell)', () => {
+    expect(labelOverlapsPill(120, 30, 100, half)).toBe(true)
+    expect(labelOverlapsPill(160, 30, 100, half)).toBe(false)
+  })
+})
+
+describe('the ends of the supported calendar', () => {
+  it('eachUnit stops at the last year and month without leaving the calendar', () => {
+    const lastDay = d('9999-12-31')
+    expect(eachUnit(d('9999-06-01'), lastDay, 'year', 1)).toEqual([[d('9999-01-01'), lastDay]])
+    expect(eachUnit(d('9999-11-10'), d('9999-11-20'), 'month', 1)).toEqual([
+      [d('9999-11-01'), d('9999-11-30')],
+    ])
+    expect(eachUnit(d('0001-01-01'), d('0001-03-01'), 'year', 1)[0][0]).toBe(d('0001-01-01'))
+  })
+
+  it.each(['day', 'week', 'month'] as const)(
+    'builds a %s header for data on either end of the calendar',
+    (scale) => {
+      const today = d('2026-11-04')
+      for (const bounds of [
+        { start: d('9999-12-20'), end: d('9999-12-31') },
+        { start: d('0001-01-01'), end: d('0001-01-02') },
+        { start: d('0001-01-01'), end: d('9999-12-31') },
+      ]) {
+        const range = timelineRange(bounds, today, scale, 1)
+        for (const window of [
+          { start: range.end - 400, end: range.end + 400 },
+          { start: range.start - 400, end: range.start + 400 },
+        ]) {
+          const { dayWidth } = SCALES[scale]
+          const options = { scale, range, window, dayWidth, weekStartsOn: 1 as const, today }
+          expect(buildHeaderTiers(options).bottom.length).toBeGreaterThan(0)
+          expect(() => gridLines({ scale, range, window, dayWidth })).not.toThrow()
+        }
+      }
+    },
+  )
 })

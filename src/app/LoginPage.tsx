@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router'
 import { MailCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,12 @@ type FormMode = 'sign-in' | 'sign-up'
 
 interface Notice {
   title: string
-  body: string
+  body: ReactNode
+}
+
+/** An email address inside running text: it moves to the next line whole (and only breaks when it cannot fit at all). */
+function Address({ children }: { children: string }) {
+  return <span className="inline-block max-w-full [overflow-wrap:anywhere]">{children}</span>
 }
 
 /** `field` = the input the message is about (null = the whole form, e.g. a server error). */
@@ -118,7 +123,12 @@ function CredentialsForm({ mode, onModeChange }: CredentialsFormProps) {
       setPassword('')
       setNotice({
         title: 'Confirm your email',
-        body: `We sent a confirmation link to ${trimmed}. Open it, then come back here and sign in.`,
+        body: (
+          <>
+            We sent a confirmation link to <Address>{trimmed}</Address>. Open it, then come back
+            here and sign in.
+          </>
+        ),
       })
     }
   }
@@ -142,7 +152,12 @@ function CredentialsForm({ mode, onModeChange }: CredentialsFormProps) {
     }
     setNotice({
       title: 'Check your email',
-      body: `If an account exists for ${trimmed}, you’ll receive a link to reset your password.`,
+      body: (
+        <>
+          If an account exists for <Address>{trimmed}</Address>, you’ll receive a link to reset your
+          password.
+        </>
+      ),
     })
   }
 

@@ -15,24 +15,24 @@
 
 ## 0. 先讀：依 2024–2025 年經驗做事會出錯的地方
 
-| # | 領域 | 現況（2026-11-02） | 會出錯的舊做法 |
-|---|---|---|---|
-| 1 | Supabase Data API | 2026-05-30 起，**新專案**在 `public` 新建的表**不會自動**開放給 Data API（supabase-js／REST）。2026-10-30 起，**所有專案**都套用這個行為。〔文件〕 | 只寫 `create table` 加 RLS policy，沒寫 `GRANT`。結果 supabase-js 回 `42501 permission denied for table …`。 |
-| 2 | Supabase CLI | **v3.0.0 今天（2026-11-02）才發布**。`db push`、`gen types`、`db dump` 等指令**預設改打本機 stack**，要加 `--remote` 才會推到雲端專案。改動雲端前會先問，直接按 Enter 等於**拒絕**；CI 必須加 `--yes`。〔文件〕〔實測 `--help`〕 | `npx supabase db push` 以為會推到已 link 的專案。 |
-| 3 | Supabase API key | 前端改用 **publishable key**（`sb_publishable_…`），官方 React 範例的變數名是 `VITE_SUPABASE_PUBLISHABLE_KEY`。舊的 `anon`／`service_role` JWT key 會在 **2026 年底前**淘汰。〔文件〕 | 繼續用 `VITE_SUPABASE_ANON_KEY` 和舊 anon JWT。 |
-| 4 | Supabase Auth 郵件 | 內建 SMTP **只寄給專案團隊成員的信箱**，**每小時 2 封**，而且不適合正式用途。〔文件〕 | 以為註冊確認信、重設密碼信可以寄到任意信箱。 |
-| 5 | Supabase Free | **沒有任何自動備份或 PITR**。連續 7 天活動量太低，專案會被暫停；暫停後 1 年內可以在 Dashboard 恢復。〔文件〕 | 以為 Free 有每日備份。 |
-| 6 | TypeScript 7 | `baseUrl` 已**移除**，寫了會直接報錯（TS5102）。`strict` 預設為 `true`，`types` 預設為 `[]`，`noUncheckedSideEffectImports` 預設為 `true`。**7.0 沒有 JS API**。〔實測〕〔文件〕 | 照 shadcn 文件在 tsconfig 加 `"baseUrl": "."`。 |
-| 7 | shadcn CLI 4.x | **根目錄的 `tsconfig.json` 也要有 `compilerOptions.paths`**，否則元件會被寫進字面上的 `./@/components/...` 資料夾。要用 Radix 必須加 `--base radix`，不加時 `--defaults` 會選 Base UI 的 `base-nova` preset。產生的程式碼改用 `cn` 套件。〔實測〕 | 只在 `tsconfig.app.json` 設 alias；以為 shadcn 預設就是 Radix。 |
-| 8 | React Router 8 | `react-router-dom` **已移除**。Data mode 的 `RouterProvider` 要從 `react-router/dom` 匯入，其他 API 從 `react-router` 匯入。套件改為 ESM-only，需要 Node ≥ 22.22.0、React ≥ 19.2.7。〔文件〕〔實測 build〕 | `import … from "react-router-dom"`。 |
-| 9 | Vite 8 | 改用 Rolldown 和 Oxc。`build.rollupOptions` 改名為 `build.rolldownOptions`，並內建 `resolve.tsconfigPaths`。〔文件〕〔實測〕 | 繼續設定 esbuild 相關選項，或另裝 `vite-tsconfig-paths`。 |
-| 10 | react-day-picker 10 | 推薦的套件名改為 `@daypicker/react`。`initialFocus`、`fromDate`、`toDate` 等 v9 舊 props **已刪除**，寫了會出型別錯誤。〔實測〕〔文件〕 | 照 2024 年 shadcn date-picker 範例寫 `<Calendar initialFocus />`。 |
-| 11 | lucide-react 1.x | **品牌圖示全部移除**（`Github`、`Figma`、`Slack` 等）。圖示預設帶 `aria-hidden`。〔實測〕〔文件〕 | 用 `Github` icon。 |
-| 12 | Vitest 5／jsdom | Vitest 5 需要 Node `^22.12 \|\| ^24 \|\| >=26`；`clearMocks` 預設為 `true`；不再往上層目錄找 config。jsdom 沒有 `ResizeObserver`、`matchMedia`、`scrollIntoView`。jest-dom 7 要求 `@testing-library/dom` 作為 peer。〔文件〕〔實測〕 | 沒有寫 polyfill，`cmdk` 測試直接 crash。 |
-| 13 | Node 版本 | 本機是 **Node 23.9.0**（奇數版，已 EOL），不在 Vitest 5 和 jsdom 30 的 `engines` 範圍內，雖然實測可以跑。最新 LTS 是 24.22.2 和 26.13.0。〔npm〕〔實測〕 | `package.json` 的 `engines: >=22.12` 低於 react-router 8 要求的 22.22.0。 |
-| 14 | Cloudflare | Pages 文件明確寫「Start new projects with Workers」。Workers Static Assets 的 SPA fallback **要自己設定**；沒有對應檔案時，連 `/assets/missing.js` 也會回 `200 index.html`。〔文件〕〔實測 wrangler dev〕 | 以為 Workers 跟 Pages 一樣會自動做 SPA fallback。 |
-| 15 | 排序鍵 | fractional-indexing 的 key **區分大小寫**，必須用 code-unit 順序比較。DB 欄位要加 `COLLATE "C"`，JS 端不可用 `localeCompare`。〔實測〕 | `ORDER BY sort_order` 時依賴資料庫的 locale collation。 |
-| 16 | 日期 | `new Date('2026-11-02')` 會被當成 **UTC 午夜**，在 UTC−8 會變成 11/01。〔實測〕 | 用 `new Date(str)` 處理日期型欄位。 |
+| #   | 領域                | 現況（2026-11-02）                                                                                                                                                                                                                                | 會出錯的舊做法                                                                                               |
+| --- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1   | Supabase Data API   | 2026-05-30 起，**新專案**在 `public` 新建的表**不會自動**開放給 Data API（supabase-js／REST）。2026-10-30 起，**所有專案**都套用這個行為。〔文件〕                                                                                                | 只寫 `create table` 加 RLS policy，沒寫 `GRANT`。結果 supabase-js 回 `42501 permission denied for table …`。 |
+| 2   | Supabase CLI        | **v3.0.0 今天（2026-11-02）才發布**。`db push`、`gen types`、`db dump` 等指令**預設改打本機 stack**，要加 `--remote` 才會推到雲端專案。改動雲端前會先問，直接按 Enter 等於**拒絕**；CI 必須加 `--yes`。〔文件〕〔實測 `--help`〕                  | `npx supabase db push` 以為會推到已 link 的專案。                                                            |
+| 3   | Supabase API key    | 前端改用 **publishable key**（`sb_publishable_…`），官方 React 範例的變數名是 `VITE_SUPABASE_PUBLISHABLE_KEY`。舊的 `anon`／`service_role` JWT key 會在 **2026 年底前**淘汰。〔文件〕                                                             | 繼續用 `VITE_SUPABASE_ANON_KEY` 和舊 anon JWT。                                                              |
+| 4   | Supabase Auth 郵件  | 內建 SMTP **只寄給專案團隊成員的信箱**，**每小時 2 封**，而且不適合正式用途。〔文件〕                                                                                                                                                             | 以為註冊確認信、重設密碼信可以寄到任意信箱。                                                                 |
+| 5   | Supabase Free       | **沒有任何自動備份或 PITR**。連續 7 天活動量太低，專案會被暫停；暫停後 1 年內可以在 Dashboard 恢復。〔文件〕                                                                                                                                      | 以為 Free 有每日備份。                                                                                       |
+| 6   | TypeScript 7        | `baseUrl` 已**移除**，寫了會直接報錯（TS5102）。`strict` 預設為 `true`，`types` 預設為 `[]`，`noUncheckedSideEffectImports` 預設為 `true`。**7.0 沒有 JS API**。〔實測〕〔文件〕                                                                  | 照 shadcn 文件在 tsconfig 加 `"baseUrl": "."`。                                                              |
+| 7   | shadcn CLI 4.x      | **根目錄的 `tsconfig.json` 也要有 `compilerOptions.paths`**，否則元件會被寫進字面上的 `./@/components/...` 資料夾。要用 Radix 必須加 `--base radix`，不加時 `--defaults` 會選 Base UI 的 `base-nova` preset。產生的程式碼改用 `cn` 套件。〔實測〕 | 只在 `tsconfig.app.json` 設 alias；以為 shadcn 預設就是 Radix。                                              |
+| 8   | React Router 8      | `react-router-dom` **已移除**。Data mode 的 `RouterProvider` 要從 `react-router/dom` 匯入，其他 API 從 `react-router` 匯入。套件改為 ESM-only，需要 Node ≥ 22.22.0、React ≥ 19.2.7。〔文件〕〔實測 build〕                                        | `import … from "react-router-dom"`。                                                                         |
+| 9   | Vite 8              | 改用 Rolldown 和 Oxc。`build.rollupOptions` 改名為 `build.rolldownOptions`，並內建 `resolve.tsconfigPaths`。〔文件〕〔實測〕                                                                                                                      | 繼續設定 esbuild 相關選項，或另裝 `vite-tsconfig-paths`。                                                    |
+| 10  | react-day-picker 10 | 推薦的套件名改為 `@daypicker/react`。`initialFocus`、`fromDate`、`toDate` 等 v9 舊 props **已刪除**，寫了會出型別錯誤。〔實測〕〔文件〕                                                                                                           | 照 2024 年 shadcn date-picker 範例寫 `<Calendar initialFocus />`。                                           |
+| 11  | lucide-react 1.x    | **品牌圖示全部移除**（`Github`、`Figma`、`Slack` 等）。圖示預設帶 `aria-hidden`。〔實測〕〔文件〕                                                                                                                                                 | 用 `Github` icon。                                                                                           |
+| 12  | Vitest 5／jsdom     | Vitest 5 需要 Node `^22.12 \|\| ^24 \|\| >=26`；`clearMocks` 預設為 `true`；不再往上層目錄找 config。jsdom 沒有 `ResizeObserver`、`matchMedia`、`scrollIntoView`。jest-dom 7 要求 `@testing-library/dom` 作為 peer。〔文件〕〔實測〕              | 沒有寫 polyfill，`cmdk` 測試直接 crash。                                                                     |
+| 13  | Node 版本           | 本機是 **Node 23.9.0**（奇數版，已 EOL），不在 Vitest 5 和 jsdom 30 的 `engines` 範圍內，雖然實測可以跑。最新 LTS 是 24.22.2 和 26.13.0。〔npm〕〔實測〕                                                                                          | `package.json` 的 `engines: >=22.12` 低於 react-router 8 要求的 22.22.0。                                    |
+| 14  | Cloudflare          | Pages 文件明確寫「Start new projects with Workers」。Workers Static Assets 的 SPA fallback **要自己設定**；沒有對應檔案時，連 `/assets/missing.js` 也會回 `200 index.html`。〔文件〕〔實測 wrangler dev〕                                         | 以為 Workers 跟 Pages 一樣會自動做 SPA fallback。                                                            |
+| 15  | 排序鍵              | fractional-indexing 的 key **區分大小寫**，必須用 code-unit 順序比較。DB 欄位要加 `COLLATE "C"`，JS 端不可用 `localeCompare`。〔實測〕                                                                                                            | `ORDER BY sort_order` 時依賴資料庫的 locale collation。                                                      |
+| 16  | 日期                | `new Date('2026-11-02')` 會被當成 **UTC 午夜**，在 UTC−8 會變成 11/01。〔實測〕                                                                                                                                                                   | 用 `new Date(str)` 處理日期型欄位。                                                                          |
 
 ---
 
@@ -42,18 +42,18 @@
 
 來源：<https://supabase.com/pricing>
 
-| 項目 | Free | 備註 |
-|---|---|---|
-| Database 容量 | 每個專案 500 MB | Shared CPU，500 MB RAM |
-| MAU | 50,000 | 單人使用遠低於上限 |
-| Egress | 5 GB，另有 5 GB cached egress | |
-| File storage | 1 GB，單檔上限 50 MB | 本專案目前不需要 |
-| 專案數 | 最多 2 個 active projects | 使用者若已經有其他 Free 專案，名額可能不夠 |
-| 閒置暫停 | 1 週活動量太低就會暫停 | 見 A2 |
-| 自動備份／PITR | **都沒有** | 見 A3 |
-| Log 保留 | 1 天 | |
-| Edge Functions | 每月 500,000 次 | 本專案不用 |
-| Realtime | 200 個同時連線、每月 2M 則訊息 | 本專案 V1 不一定會用 |
+| 項目           | Free                           | 備註                                       |
+| -------------- | ------------------------------ | ------------------------------------------ |
+| Database 容量  | 每個專案 500 MB                | Shared CPU，500 MB RAM                     |
+| MAU            | 50,000                         | 單人使用遠低於上限                         |
+| Egress         | 5 GB，另有 5 GB cached egress  |                                            |
+| File storage   | 1 GB，單檔上限 50 MB           | 本專案目前不需要                           |
+| 專案數         | 最多 2 個 active projects      | 使用者若已經有其他 Free 專案，名額可能不夠 |
+| 閒置暫停       | 1 週活動量太低就會暫停         | 見 A2                                      |
+| 自動備份／PITR | **都沒有**                     | 見 A3                                      |
+| Log 保留       | 1 天                           |                                            |
+| Edge Functions | 每月 500,000 次                | 本專案不用                                 |
+| Realtime       | 200 個同時連線、每月 2M 則訊息 | 本專案 V1 不一定會用                       |
 
 Pro 方案每月 $25 起，包含每日備份（保留 7 天）、8 GB disk、250 GB egress。**未經使用者同意，不可以升級。**
 
@@ -135,7 +135,7 @@ Pro 方案每月 $25 起，包含每日備份（保留 7 天）、8 GB disk、25
 
 **本專案建議的最短設定（單人使用）**
 
-1. Dashboard → Authentication → Users → **Add user → Create new user**，輸入 email 和密碼，並勾選 *Auto Confirm User*，這樣就不需要寄確認信。這個 UI 選項來自社群文件，官方頁面沒有寫到，畫面標籤以實際 Dashboard 為準〔未驗證〕。
+1. Dashboard → Authentication → Users → **Add user → Create new user**，輸入 email 和密碼，並勾選 _Auto Confirm User_，這樣就不需要寄確認信。這個 UI 選項來自社群文件，官方頁面沒有寫到，畫面標籤以實際 Dashboard 為準〔未驗證〕。
 2. 關閉 **Allow new users to sign up**（Auth 的 general configuration，<https://supabase.com/docs/guides/auth/general-configuration>）。文件說明：「If this config is disabled, only existing users can sign in.」若用 CLI 管理設定，對應 `config.toml` 的 `[auth] enable_signup = false`。CLI v3 特別提醒：**不要**改 `[auth.email]` 底下的 `enable_signup`，那個會把整個 email provider 關掉，連既有使用者都無法登入。
 3. 重設密碼（`resetPasswordForEmail`）走的是內建 SMTP，只有當使用者的 email 就是 Supabase 組織成員的 email 時才收得到，而且每小時 2 封。若要寄到其他信箱，需要設定 custom SMTP；這要使用者自己申請帳號，**不能自行開通付費服務**。
 
@@ -151,13 +151,13 @@ Pro 方案每月 $25 起，包含每日備份（保留 7 天）、8 GB disk、25
 
 **Session 保存**〔實測：讀 `@supabase/supabase-js@2.118.0` 和 `auth-js` 原始碼〕
 
-| 選項 | 預設值 |
-|---|---|
-| `persistSession` | `true`，存在 `localStorage` |
-| `storageKey` | `sb-<project-ref>-auth-token` |
-| `autoRefreshToken` | `true` |
-| `detectSessionInUrl` | `true` |
-| `flowType` | `'implicit'` |
+| 選項                 | 預設值                        |
+| -------------------- | ----------------------------- |
+| `persistSession`     | `true`，存在 `localStorage`   |
+| `storageKey`         | `sb-<project-ref>-auth-token` |
+| `autoRefreshToken`   | `true`                        |
+| `detectSessionInUrl` | `true`                        |
+| `flowType`           | `'implicit'`                  |
 
 - CLI `config.toml` 的預設值：`jwt_expiry = 3600`、`enable_refresh_token_rotation = true`〔實測〕。雲端專案的實際設定以 Dashboard 為準〔未驗證〕。
 - SPA 的做法：啟動時呼叫一次 `getSession()`，再用 `onAuthStateChange` 監聽狀態。重新整理或換裝置後，session 會自動恢復。
@@ -168,11 +168,11 @@ Pro 方案每月 $25 起，包含每日備份（保留 7 天）、8 GB disk、25
 
 **時間軸**
 
-| 日期 | 事件 |
-|---|---|
+| 日期       | 事件                                                  |
+| ---------- | ----------------------------------------------------- |
 | 2026-04-28 | 建立專案時出現「Automatically expose new tables」選項 |
-| 2026-05-30 | 新專案預設**不再**自動授權（分幾週逐步上線） |
-| 2026-10-30 | **所有既有專案**也套用 |
+| 2026-05-30 | 新專案預設**不再**自動授權（分幾週逐步上線）          |
+| 2026-10-30 | **所有既有專案**也套用                                |
 
 **內容**
 
@@ -259,6 +259,7 @@ grant select, insert, update, delete on table public.projects to authenticated;
   ```
 
   注意：被 RLS policy 呼叫的 helper 函式也受影響，要記得 `grant execute … to authenticated`。
+
 - **原子性**：PostgREST 會把每個請求（包含 RPC）放在單一 transaction 裡執行，任何錯誤都會 rollback（<https://docs.postgrest.org/en/stable/references/transactions.html>）。所以 PRD 要求「Auto 排程確認後原子寫入」，用一個 invoker RPC 一次 update 多筆就能做到。
 - 如果真的需要 definer，建議放在**沒有 expose 的 schema**（例如 `private`）。這是 hardening 文件的建議。
 
@@ -318,16 +319,16 @@ npx supabase@3.0.0 db advisors --remote --type security
 - Pages 文件首頁有一個 banner，標題是「Are you sure you want to use Pages?」，內文寫「[Workers] is Cloudflare's primary platform for building applications. **Start new projects with Workers.**」（<https://developers.cloudflare.com/pages/>）。Pages 沒有被宣告淘汰，但**新專案官方建議用 Workers**。
 - **本專案建議**：用 Workers 的 assets-only 部署，也就是沒有 Worker script、只放靜態檔。Pages 仍可用，兩者都免費（見下表）。
 
-| 項目 | Workers Static Assets（Free） | Pages（Free） |
-|---|---|---|
-| 靜態檔請求 | 免費、不限次數，不計入 Worker 的請求額度 | 免費 |
-| Worker script 請求 | 每天 100,000 次（UTC 午夜重置）；assets-only 沒有 script，所以不適用 | Pages Functions 才會用到 |
-| 每個版本或網站的檔案數 | 20,000（Paid 100,000，需 wrangler ≥ 4.34） | 20,000 |
-| 單檔大小 | 25 MiB | 25 MiB |
-| Git 自動建置 | Workers Builds：每月 3,000 build minutes、1 個並行、20 分鐘 timeout | 每月 500 次 build、1 個並行、20 分鐘 timeout |
-| `_headers`／`_redirects` | 支援（檔案放在 assets 目錄） | 支援。`_headers` 最多 100 條，每行 ≤ 2,000 字元；`_redirects` 最多 2,000 條靜態加 100 條動態 |
-| SPA fallback | **要自己設定** `not_found_handling = "single-page-application"` | **自動**：沒有頂層 `404.html` 時，就當成 SPA |
-| Build image 預設 Node | 24.22.1（npm 10.9.2） | 22.23.4（v3 image） |
+| 項目                     | Workers Static Assets（Free）                                        | Pages（Free）                                                                                |
+| ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 靜態檔請求               | 免費、不限次數，不計入 Worker 的請求額度                             | 免費                                                                                         |
+| Worker script 請求       | 每天 100,000 次（UTC 午夜重置）；assets-only 沒有 script，所以不適用 | Pages Functions 才會用到                                                                     |
+| 每個版本或網站的檔案數   | 20,000（Paid 100,000，需 wrangler ≥ 4.34）                           | 20,000                                                                                       |
+| 單檔大小                 | 25 MiB                                                               | 25 MiB                                                                                       |
+| Git 自動建置             | Workers Builds：每月 3,000 build minutes、1 個並行、20 分鐘 timeout  | 每月 500 次 build、1 個並行、20 分鐘 timeout                                                 |
+| `_headers`／`_redirects` | 支援（檔案放在 assets 目錄）                                         | 支援。`_headers` 最多 100 條，每行 ≤ 2,000 字元；`_redirects` 最多 2,000 條靜態加 100 條動態 |
+| SPA fallback             | **要自己設定** `not_found_handling = "single-page-application"`      | **自動**：沒有頂層 `404.html` 時，就當成 SPA                                                 |
+| Build image 預設 Node    | 24.22.1（npm 10.9.2）                                                | 22.23.4（v3 image）                                                                          |
 
 來源：
 
@@ -350,8 +351,8 @@ npx supabase@3.0.0 db advisors --remote --type security
   "compatibility_date": "2026-11-02",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
-  }
+    "not_found_handling": "single-page-application",
+  },
 }
 ```
 
@@ -440,43 +441,43 @@ wrangler 需要 Node ≥ 22。
 
 「repo 宣告」欄是 2026-11-02 21:10 讀到的 `package.json`。
 
-| 套件 | 最新版 | 發布日 | engines／peer 重點 | repo 宣告 | 結論 |
-|---|---|---|---|---|---|
-| react／react-dom | 19.3.1 | 2026-10-14 | | ^19.3.1 | OK |
-| react-router | 8.5.1 | 2026-10-27（8.0.0：2026-06-17） | node ≥ 22.22.0；react ≥ 19.2.7 | ^8.5.1 | OK，但 engines 要調高（見 C2） |
-| react-router-dom | 7.18.5（只有 v7 線） | | | 未使用 | v8 已不發行 |
-| vite | 8.3.5 | 2026-10-21 | node ^20.19 \|\| ≥ 22.12 | ^8.3.5 | OK |
-| @vitejs/plugin-react | 6.2.1 | 2026-11-02 | peer vite ^8 | ^6.1.2 | OK |
-| typescript | 7.0.2 | 2026-07-08（7.1.0-beta 在 `beta` tag） | | ~7.0.2 | OK |
-| @typescript/typescript6 | 6.0.2 | | 提供 6.0 的 JS API 和 `tsc6` | 未使用 | 只有工具需要 TS API 時才裝 |
-| oxlint | 1.90.0 | 2026-10-27 | type-aware 需要 peer `oxlint-tsgolint` ≥ 7.0.2005 | ^1.89.0 | OK |
-| tailwindcss／@tailwindcss/vite | 4.3.3 | 2026-07-16 | 插件 peer vite ^5.2 … ^8 | ^4.3.3 | OK |
-| shadcn（CLI） | 4.23.0 | 2026-10-27 | node ≥ 20.18.1 | 未安裝 | 用 `npx shadcn@4.23.0` |
-| radix-ui | 1.8.1 | 2026-10-12 | react ^16.8 … ^19 | ^1.8.1 | OK |
-| lucide-react | 1.66.0 | 2026-10-31（1.0.0：2026-03-23） | | ^1.66.0 | 注意品牌圖示已移除 |
-| cmdk | 1.1.1 | 2025-03-14 | react ^18 \|\| ^19 | ^1.1.1 | OK（已久未更新，但可正常運作） |
-| sonner | 2.0.8 | 2026-08-09 | react ^18 \|\| ^19 | ^2.0.8 | OK |
-| react-day-picker | 10.0.2 | 2026-09-30 | 相依 date-fns ^4.1、@date-fns/tz ^1.4.1 | ^10.0.2 | OK；`@daypicker/react@10.0.2` 是新名稱，內部依賴 react-day-picker 10.0.2 |
-| date-fns | 4.4.0 | 2026-05-29 | | 間接安裝 | 建議直接列入 dependencies |
-| zustand | 5.0.16 | 2026-10-22 | peer immer ≥ 9.0.6、react ≥ 18 | ^5.0.16 | OK |
-| immer | 11.2.9 | 2026-10-22（11.0.0：2025-11-23） | | ^11.2.9 | OK |
-| @dnd-kit/core | 6.3.1 | 2024-12-05 | react ≥ 16.8 | ^6.3.1 | OK |
-| @dnd-kit/sortable | 10.0.0 | 2024-12-04 | peer @dnd-kit/core ^6.3.0 | ^10.0.0 | OK |
-| @dnd-kit/modifiers | 9.0.0 | 2024-12-04 | peer @dnd-kit/core ^6.3.0 | ^9.0.0 | OK |
-| @dnd-kit/react | 0.5.3 | 2026-10-31 | | 未使用 | 新 API，尚未到 1.0，不建議採用 |
-| fractional-indexing | 4.0.0 | 2026-06-25 | ESM | ^4.0.0 | OK |
-| zod | 4.6.7 | 2026-10-12 | | ^4.6.7 | OK |
-| motion | 14.9.0 | 2026-10-30 | react ^18 \|\| ^19 | ^14.9.0 | OK |
-| vitest | 5.0.5 | 2026-10-15 | node ^22.12 \|\| ^24 \|\| ≥ 26；peer vite ^6.4 \|\| ^7 \|\| ^8（**必要**） | ^5.0.5 | OK |
-| jsdom | **30.1.3** | 2026-10-15 | node ^22.22.2 \|\| ^24.15 \|\| ≥ 26 | **^27.0.1**（實裝 27.0.1） | 可接受，理由見 C18 |
-| @testing-library/react | 16.3.3 | 2026-08-27 | peer **@testing-library/dom ^10**（必要） | ^16.3.3 | 建議把 dom 明列為 devDependency |
-| @testing-library/jest-dom | 7.0.1 | 2026-08-09 | node ≥ 22；peer @testing-library/dom ≥ 10 < 11（必要） | ^7.0.1 | 同上 |
-| @testing-library/user-event | 14.6.8 | 2026-10-13 | | ^14.6.8 | OK |
-| @playwright/test | 1.64.1 | 2026-10-14 | node ≥ 20 | ^1.64.1 | OK |
-| @electric-sql/pglite | 0.5.14 | 2026-10-31 | 內含 **PostgreSQL 18.6** | ^0.5.14 | 可用來測 RLS（見 C20） |
-| @supabase/supabase-js | 2.118.0 | 2026-10-15 | node ≥ 22（build 時）；`@opentelemetry/api` 是 optional peer | ^2.118.0 | OK；`next` tag 上已有 3.0.0-next.29 |
-| supabase（CLI） | 3.0.0 | **2026-11-02** | 最後一個 v2 是 2.122.0 | 未安裝 | 見 A11 |
-| wrangler | 4.156.1 | 2026-11-01 | node ≥ 22 | 未安裝 | 見 B4 |
+| 套件                           | 最新版               | 發布日                                 | engines／peer 重點                                                         | repo 宣告                  | 結論                                                                     |
+| ------------------------------ | -------------------- | -------------------------------------- | -------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| react／react-dom               | 19.3.1               | 2026-10-14                             |                                                                            | ^19.3.1                    | OK                                                                       |
+| react-router                   | 8.5.1                | 2026-10-27（8.0.0：2026-06-17）        | node ≥ 22.22.0；react ≥ 19.2.7                                             | ^8.5.1                     | OK，但 engines 要調高（見 C2）                                           |
+| react-router-dom               | 7.18.5（只有 v7 線） |                                        |                                                                            | 未使用                     | v8 已不發行                                                              |
+| vite                           | 8.3.5                | 2026-10-21                             | node ^20.19 \|\| ≥ 22.12                                                   | ^8.3.5                     | OK                                                                       |
+| @vitejs/plugin-react           | 6.2.1                | 2026-11-02                             | peer vite ^8                                                               | ^6.1.2                     | OK                                                                       |
+| typescript                     | 7.0.2                | 2026-07-08（7.1.0-beta 在 `beta` tag） |                                                                            | ~7.0.2                     | OK                                                                       |
+| @typescript/typescript6        | 6.0.2                |                                        | 提供 6.0 的 JS API 和 `tsc6`                                               | 未使用                     | 只有工具需要 TS API 時才裝                                               |
+| oxlint                         | 1.90.0               | 2026-10-27                             | type-aware 需要 peer `oxlint-tsgolint` ≥ 7.0.2005                          | ^1.89.0                    | OK                                                                       |
+| tailwindcss／@tailwindcss/vite | 4.3.3                | 2026-07-16                             | 插件 peer vite ^5.2 … ^8                                                   | ^4.3.3                     | OK                                                                       |
+| shadcn（CLI）                  | 4.23.0               | 2026-10-27                             | node ≥ 20.18.1                                                             | 未安裝                     | 用 `npx shadcn@4.23.0`                                                   |
+| radix-ui                       | 1.8.1                | 2026-10-12                             | react ^16.8 … ^19                                                          | ^1.8.1                     | OK                                                                       |
+| lucide-react                   | 1.66.0               | 2026-10-31（1.0.0：2026-03-23）        |                                                                            | ^1.66.0                    | 注意品牌圖示已移除                                                       |
+| cmdk                           | 1.1.1                | 2025-03-14                             | react ^18 \|\| ^19                                                         | ^1.1.1                     | OK（已久未更新，但可正常運作）                                           |
+| sonner                         | 2.0.8                | 2026-08-09                             | react ^18 \|\| ^19                                                         | ^2.0.8                     | OK                                                                       |
+| react-day-picker               | 10.0.2               | 2026-09-30                             | 相依 date-fns ^4.1、@date-fns/tz ^1.4.1                                    | ^10.0.2                    | OK；`@daypicker/react@10.0.2` 是新名稱，內部依賴 react-day-picker 10.0.2 |
+| date-fns                       | 4.4.0                | 2026-05-29                             |                                                                            | 間接安裝                   | 建議直接列入 dependencies                                                |
+| zustand                        | 5.0.16               | 2026-10-22                             | peer immer ≥ 9.0.6、react ≥ 18                                             | ^5.0.16                    | OK                                                                       |
+| immer                          | 11.2.9               | 2026-10-22（11.0.0：2025-11-23）       |                                                                            | ^11.2.9                    | OK                                                                       |
+| @dnd-kit/core                  | 6.3.1                | 2024-12-05                             | react ≥ 16.8                                                               | ^6.3.1                     | OK                                                                       |
+| @dnd-kit/sortable              | 10.0.0               | 2024-12-04                             | peer @dnd-kit/core ^6.3.0                                                  | ^10.0.0                    | OK                                                                       |
+| @dnd-kit/modifiers             | 9.0.0                | 2024-12-04                             | peer @dnd-kit/core ^6.3.0                                                  | ^9.0.0                     | OK                                                                       |
+| @dnd-kit/react                 | 0.5.3                | 2026-10-31                             |                                                                            | 未使用                     | 新 API，尚未到 1.0，不建議採用                                           |
+| fractional-indexing            | 4.0.0                | 2026-06-25                             | ESM                                                                        | ^4.0.0                     | OK                                                                       |
+| zod                            | 4.6.7                | 2026-10-12                             |                                                                            | ^4.6.7                     | OK                                                                       |
+| motion                         | 14.9.0               | 2026-10-30                             | react ^18 \|\| ^19                                                         | ^14.9.0                    | OK                                                                       |
+| vitest                         | 5.0.5                | 2026-10-15                             | node ^22.12 \|\| ^24 \|\| ≥ 26；peer vite ^6.4 \|\| ^7 \|\| ^8（**必要**） | ^5.0.5                     | OK                                                                       |
+| jsdom                          | **30.1.3**           | 2026-10-15                             | node ^22.22.2 \|\| ^24.15 \|\| ≥ 26                                        | **^27.0.1**（實裝 27.0.1） | 可接受，理由見 C18                                                       |
+| @testing-library/react         | 16.3.3               | 2026-08-27                             | peer **@testing-library/dom ^10**（必要）                                  | ^16.3.3                    | 建議把 dom 明列為 devDependency                                          |
+| @testing-library/jest-dom      | 7.0.1                | 2026-08-09                             | node ≥ 22；peer @testing-library/dom ≥ 10 < 11（必要）                     | ^7.0.1                     | 同上                                                                     |
+| @testing-library/user-event    | 14.6.8               | 2026-10-13                             |                                                                            | ^14.6.8                    | OK                                                                       |
+| @playwright/test               | 1.64.1               | 2026-10-14                             | node ≥ 20                                                                  | ^1.64.1                    | OK                                                                       |
+| @electric-sql/pglite           | 0.5.14               | 2026-10-31                             | 內含 **PostgreSQL 18.6**                                                   | ^0.5.14                    | 可用來測 RLS（見 C20）                                                   |
+| @supabase/supabase-js          | 2.118.0              | 2026-10-15                             | node ≥ 22（build 時）；`@opentelemetry/api` 是 optional peer               | ^2.118.0                   | OK；`next` tag 上已有 3.0.0-next.29                                      |
+| supabase（CLI）                | 3.0.0                | **2026-11-02**                         | 最後一個 v2 是 2.122.0                                                     | 未安裝                     | 見 A11                                                                   |
+| wrangler                       | 4.156.1              | 2026-11-01                             | node ≥ 22                                                                  | 未安裝                     | 見 B4                                                                    |
 
 ### C2. Node.js 執行環境〔npm〕〔實測〕
 
@@ -555,16 +556,16 @@ wrangler 需要 Node ≥ 22。
 
 **實測**：每個項目都跑過一次 `tsc`。
 
-| 設定 | TS 7.0.2 的結果 |
-|---|---|
-| `"baseUrl": "."` | **error TS5102**：「Option 'baseUrl' has been removed」，並建議改用 `"paths": {"*": ["./*"]}` |
-| `moduleResolution: "node"`（node10） | error TS5108：已移除 |
-| `target: "es5"`、`downlevelIteration`、`esModuleInterop: false`、`module: "amd"`、`outFile` | 全部報錯：已移除 |
-| 不寫 `strict` | **預設 `strict: true`**，實測會出現 implicit any 錯誤和 `possibly undefined` 錯誤 |
-| 不寫 `types` | **預設 `[]`**：`@types/*` 不再自動載入，實測 `React` namespace 找不到。測試相關的全域型別必須明列，例如 `"types": ["vite/client", "@testing-library/jest-dom/vitest"]` |
-| `import './x.css'` | `noUncheckedSideEffectImports` **預設 `true`**。沒有 `vite/client` 型別時會報 TS2882 |
-| `paths` 不寫 `baseUrl` | 可正常解析，以 tsconfig 所在目錄為基準 |
-| `tsc -b` 搭配 project references | 可正常運作 |
+| 設定                                                                                        | TS 7.0.2 的結果                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"baseUrl": "."`                                                                            | **error TS5102**：「Option 'baseUrl' has been removed」，並建議改用 `"paths": {"*": ["./*"]}`                                                                          |
+| `moduleResolution: "node"`（node10）                                                        | error TS5108：已移除                                                                                                                                                   |
+| `target: "es5"`、`downlevelIteration`、`esModuleInterop: false`、`module: "amd"`、`outFile` | 全部報錯：已移除                                                                                                                                                       |
+| 不寫 `strict`                                                                               | **預設 `strict: true`**，實測會出現 implicit any 錯誤和 `possibly undefined` 錯誤                                                                                      |
+| 不寫 `types`                                                                                | **預設 `[]`**：`@types/*` 不再自動載入，實測 `React` namespace 找不到。測試相關的全域型別必須明列，例如 `"types": ["vite/client", "@testing-library/jest-dom/vitest"]` |
+| `import './x.css'`                                                                          | `noUncheckedSideEffectImports` **預設 `true`**。沒有 `vite/client` 型別時會報 TS2882                                                                                   |
+| `paths` 不寫 `baseUrl`                                                                      | 可正常解析，以 tsconfig 所在目錄為基準                                                                                                                                 |
+| `tsc -b` 搭配 project references                                                            | 可正常運作                                                                                                                                                             |
 
 **官方公告重點**
 
@@ -635,6 +636,7 @@ npx shadcn@4.23.0 add dialog popover calendar command dropdown-menu tooltip sonn
   ```
 
   Vite 端可以用 `resolve: { tsconfigPaths: true }`〔實測〕，也可以沿用 `resolve.alias: { '@': path.resolve(import.meta.dirname, 'src') }`。
+
 - 另一種做法：shadcn 文件也支援 `package.json#imports`（例如 `#/…`）作為 alias 來源。
 - 實測：在 shadcnprobe 專案裡加入 dialog、popover、calendar、command、dropdown-menu、tooltip、sonner 之後，`tsc -b` 為 0 錯誤，`vite build` 也成功。
 
@@ -677,14 +679,14 @@ npx shadcn@4.23.0 add dialog popover calendar command dropdown-menu tooltip sonn
 - 推薦改用 `@daypicker/react`，舊名 `react-day-picker` 仍可用。CSS 改為 `import '@daypicker/react/style.css'`；用 shadcn 元件時不需要這個 CSS。
 - **刪除 v9 的舊 props 和別名**：
 
-  | 刪除 | 改用 |
-  |---|---|
-  | `initialFocus` | `autoFocus` |
-  | `fromDate`／`toDate` | `hidden={{ before, after }}`，再搭配 `startMonth`／`endMonth` |
-  | `fromMonth`／`toYear` 等 | `startMonth`／`endMonth` |
-  | `onDayKeyUp` 等事件 | 自訂 `DayButton` 元件 |
-  | `components.Button` | `PreviousMonthButton`／`NextMonthButton` |
-  | 舊的 `classNames` key（例如 `table`） | `month_grid` 等新名稱 |
+  | 刪除                                  | 改用                                                          |
+  | ------------------------------------- | ------------------------------------------------------------- |
+  | `initialFocus`                        | `autoFocus`                                                   |
+  | `fromDate`／`toDate`                  | `hidden={{ before, after }}`，再搭配 `startMonth`／`endMonth` |
+  | `fromMonth`／`toYear` 等              | `startMonth`／`endMonth`                                      |
+  | `onDayKeyUp` 等事件                   | 自訂 `DayButton` 元件                                         |
+  | `components.Button`                   | `PreviousMonthButton`／`NextMonthButton`                      |
+  | 舊的 `classNames` key（例如 `table`） | `month_grid` 等新名稱                                         |
 
 - 實測：`<Calendar initialFocus />`、`fromDate`、`toDate` 都會被 TS 7 報 TS2322。`autoFocus`、`hidden`、`startMonth`、`endMonth` 可以通過。
 - 非公曆曆法改為獨立的 `@daypicker/*` 套件。
@@ -711,7 +713,7 @@ npx shadcn@4.23.0 add dialog popover calendar command dropdown-menu tooltip sonn
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { useShallow } from 'zustand/react/shallow' // 官方文件寫 'zustand/shallow'，兩個路徑都有
-const useStore = create<State>()(immer((set) => ({ /* … */ })))
+const useStore = create<State>()(immer((set) => ({/* … */})))
 ```
 
 **zustand v5 的破壞性變更**（<https://github.com/pmndrs/zustand/blob/main/docs/reference/migrations/migrating-to-v5.md>）
@@ -745,14 +747,14 @@ const useStore = create<State>()(immer((set) => ({ /* … */ })))
 - 4.0 新增 `intDigits`。注意：**明確傳入 `digits` 時，連傳 `BASE_62_DIGITS` 也一樣**，產生的 key 會是 self-headed 格式，例如 `"50"`。只有完全省略 `digits`，才會得到傳統的 `a0`／`Zz` 格式。**建議一律不要傳 digits。**
 - 實測結果：
 
-  | 呼叫 | 結果 |
-  |---|---|
-  | `(null, null)` | `a0` |
-  | 往後加一個 | `a1` |
-  | 往前加一個 | `Zz` |
-  | `(a0, a1)` | `a0V` |
+  | 呼叫             | 結果                                                       |
+  | ---------------- | ---------------------------------------------------------- |
+  | `(null, null)`   | `a0`                                                       |
+  | 往後加一個       | `a1`                                                       |
+  | 往前加一個       | `Zz`                                                       |
+  | `(a0, a1)`       | `a0V`                                                      |
   | 兩個參數反過來傳 | 回傳中間值（文件：「they may be passed in either order」） |
-  | 兩個參數相同 | 拋出錯誤 |
+  | 兩個參數相同     | 拋出錯誤                                                   |
 
 - **排序必須用 code-unit 順序**：實測 `localeCompare` 會把 `Zz` 排到 `b00` 後面，是錯的。JS 端用 `<`／`>` 比較，Postgres 欄位用 `collate "C"`（實測順序正確：`Zz, a0, a0V, a1, b00`）。Supabase 雲端資料庫的預設 collation〔未驗證〕，所以**一定要在欄位上明確指定**。這已經是 `docs/decisions.md` 的 D8。
 
@@ -807,11 +809,22 @@ const useStore = create<State>()(immer((set) => ({ /* … */ })))
 - 建議放在 setup 的 polyfill（已驗證）：
 
   ```ts
-  globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} }
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
   Element.prototype.scrollIntoView ??= function () {}
-  window.matchMedia ??= ((q: string) => ({ matches: false, media: q, onchange: null,
-    addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {},
-    dispatchEvent: () => false })) as typeof window.matchMedia
+  window.matchMedia ??= ((q: string) => ({
+    matches: false,
+    media: q,
+    onchange: null,
+    addListener() {},
+    removeListener() {},
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent: () => false,
+  })) as typeof window.matchMedia
   ```
 
 **DB 測試要分開成獨立的 project**（實測）
@@ -839,20 +852,20 @@ const useStore = create<State>()(immer((set) => ({ /* … */ })))
 
 **可以。** 實測項目全部通過，腳本做法見附錄 A：
 
-| 能力 | 結果 |
-|---|---|
-| 版本 | `PostgreSQL 18.6 (PGlite 0.5.14)`，預設使用者 `postgres` 是 superuser |
-| `CREATE ROLE anon／authenticated／service_role … NOLOGIN` | OK |
-| `SET ROLE authenticated`、`RESET ROLE`、`SET LOCAL ROLE`（在 transaction 內） | OK，transaction 結束後會恢復為 `postgres` |
-| `set_config('request.jwt.claims', '{"sub": …}', false/true)` 搭配自製 `auth.uid()` | OK |
-| 非 superuser 角色的 RLS 是否生效 | **生效**：資料隔離、`WITH CHECK` 擋下、跨使用者 update／delete 影響 0 列 |
-| 沒有 GRANT 時 | `42501 permission denied for table` |
-| `REVOKE EXECUTE … FROM public, anon` | anon 呼叫時得到 `42501 permission denied for function` |
-| security definer 與 invoker | definer 會繞過 RLS，invoker 不會（行為和雲端相同） |
-| `ON DELETE SET NULL (phase_id)` | OK |
-| `collate "C"` 排序 | OK |
-| changelog 中的 `alter default privileges …` 語句 | OK |
-| `gen_random_uuid()` | OK，PG13 起內建 |
+| 能力                                                                               | 結果                                                                     |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 版本                                                                               | `PostgreSQL 18.6 (PGlite 0.5.14)`，預設使用者 `postgres` 是 superuser    |
+| `CREATE ROLE anon／authenticated／service_role … NOLOGIN`                          | OK                                                                       |
+| `SET ROLE authenticated`、`RESET ROLE`、`SET LOCAL ROLE`（在 transaction 內）      | OK，transaction 結束後會恢復為 `postgres`                                |
+| `set_config('request.jwt.claims', '{"sub": …}', false/true)` 搭配自製 `auth.uid()` | OK                                                                       |
+| 非 superuser 角色的 RLS 是否生效                                                   | **生效**：資料隔離、`WITH CHECK` 擋下、跨使用者 update／delete 影響 0 列 |
+| 沒有 GRANT 時                                                                      | `42501 permission denied for table`                                      |
+| `REVOKE EXECUTE … FROM public, anon`                                               | anon 呼叫時得到 `42501 permission denied for function`                   |
+| security definer 與 invoker                                                        | definer 會繞過 RLS，invoker 不會（行為和雲端相同）                       |
+| `ON DELETE SET NULL (phase_id)`                                                    | OK                                                                       |
+| `collate "C"` 排序                                                                 | OK                                                                       |
+| changelog 中的 `alter default privileges …` 語句                                   | OK                                                                       |
+| `gen_random_uuid()`                                                                | OK，PG13 起內建                                                          |
 
 **測試 harness 建議**（依上述實測整理）
 

@@ -354,11 +354,14 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
         if (column) {
           const overIndex = final[column].indexOf(activeKey)
           lastDrop.current = { column, position: overIndex + 1, count: final[column].length }
-          // Neighbours come from what the user saw; "same column?" from the current status.
+          // Neighbours come from what the user saw (`final`, the drag preview) — the store may
+          // have changed under the drag, e.g. an earlier failed move rolled back — while "same
+          // column?" and the project order come from the current state.
           move = moveForBoardDrop(
             { activeId: activeKey, overColumn: column, overIndex },
             latest.current.baseColumns,
             latest.current.model.projectOrder,
+            final,
           )
         }
       }
@@ -429,6 +432,8 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
     return result
   }, [shown, cardsById])
   const activeCard = activeId ? cardsById.get(activeId) : undefined
+  // The column the dragged card is over (= its status once dropped): the lifted card shows it.
+  const activeColumn = activeId ? findColumn(shown, activeId) : null
   const projectEmpty = model.totalTasks === 0
 
   return (
@@ -475,6 +480,7 @@ export function Board({ projectId, model, phaseFilter, showPhase, today }: Board
           {activeCard ? (
             <BoardCardOverlay
               task={activeCard.task}
+              previewStatus={activeColumn ?? undefined}
               phase={activeCard.phase}
               subtasksDone={activeCard.subtasks.done}
               subtasksTotal={activeCard.subtasks.total}

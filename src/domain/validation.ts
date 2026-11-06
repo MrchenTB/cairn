@@ -20,6 +20,10 @@ import {
 } from './types'
 import type { AppError, BackupData, BackupFile, ISODate, Result } from './types'
 
+// The production CSP has no 'unsafe-eval' (public/_headers). Without this, zod's first schema
+// probes `new Function`, and the browser reports a CSP violation even though zod catches the error.
+z.config({ jitless: true })
+
 function validationError(message: string, cause?: unknown): AppError {
   return cause === undefined
     ? { kind: 'validation', message }
@@ -205,7 +209,9 @@ const MAX_REPORTED_PROBLEMS = 5
 
 function quote(text: string): string {
   const clean = text.replace(/\s+/g, ' ').trim()
-  return `"${clean.length > 40 ? `${clean.slice(0, 39)}…` : clean}"`
+  // By code point: a slice in the middle of a surrogate pair would leave a broken character.
+  const chars = Array.from(clean)
+  return `"${chars.length > 40 ? `${chars.slice(0, 39).join('')}…` : clean}"`
 }
 
 /** Short, never-throwing rendering of an unexpected header value. */

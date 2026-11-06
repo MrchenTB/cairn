@@ -133,7 +133,8 @@ export const SYNC_ERROR_TOAST_ID = 'cairn-sync-error'
 export const UNSAVED_ON_RESET_TOAST_ID = 'cairn-unsaved-on-reset'
 
 /** The toast API the store needs (injectable for tests; `dismiss` is optional). */
-export type Notifier = Pick<typeof notify, 'error'> & Partial<Pick<typeof notify, 'dismiss'>>
+export type Notifier = Pick<typeof notify, 'error'> &
+  Partial<Pick<typeof notify, 'dismiss' | 'success'>>
 
 /** Event sources for cross-device freshness (browser: window, document, navigator). */
 export interface WorkspaceEnvironment {
@@ -245,6 +246,8 @@ interface RetryHandle {
   used: boolean
   /** The re-sent change reached the write pipeline (which reported its outcome). */
   sent: boolean
+  /** What a failed create stood for (see WriteSpec.intent). */
+  intent?: string
 }
 
 /** Fields every write of an entity sets as a side effect; they never make two changes overlap. */
@@ -570,6 +573,12 @@ interface WriteSpec<T> {
    * answer was lost, a dependency another device added).
    */
   alreadyDone?: { kind: 'not_found' | 'conflict'; value: () => T }
+  /**
+   * For creates: what the new row stands for (same place, same content). Entering the same thing
+   * again after it failed is the user doing it over, so the older failure's Retry is withdrawn:
+   * left alive it would store the task a second time.
+   */
+  intent?: string
 }
 
 /** The tables an import fills (BackupData and WorkspaceData share these names). */
@@ -579,11 +588,38 @@ const IMPORTED_TABLES = ['projects', 'phases', 'tasks', 'milestones', 'dependenc
 const DELETED: WriteSpec<void>['alreadyDone'] = { kind: 'not_found', value: () => undefined }
 
 /**
- * Creates: when the attempt is a Retry (`retrying`), a duplicate means the first attempt was
- * stored although its answer was lost.
+ * Creates: the id is a new UUID made on this device, so a duplicate can only be this very create
+ * arriving again. Either a Retry whose first attempt was stored although its answer was lost, or
+ * a first attempt: a browser re-sends a request (POST too) when its reused connection dies, and
+ * the second delivery is the one that answers. Either way it is stored; failing here would invite
+ * the user to create it again, under a new id.
  */
-function storedIfDuplicate<T>(retrying: boolean, row: T): WriteSpec<T>['alreadyDone'] {
-  return retrying ? { kind: 'conflict', value: () => row } : undefined
+function storedIfDuplicate<T>(row: T): WriteSpec<T>['alreadyDone'] {
+  return { kind: 'conflict', value: () => row }
+}
+
+/**
+ * New sort keys for rows whose keys tie within their list (`listOf`). Ties are broken by id, and an
+ * import gives new ids: without this the order would change. Rows without a tie are left out.
+ */
+function keysUntied<T extends Ordered>(
+  rows: readonly T[],
+  listOf: (row: T) => string,
+): Map<string, string> {
+  const lists = new Map<string, T[]>()
+  for (const row of rows) {
+    const list = lists.get(listOf(row))
+    if (list) list.push(row)
+    else lists.set(listOf(row), [row])
+  }
+  const keys = new Map<string, string>()
+  for (const list of lists.values()) {
+    const sorted = sortByOrder(list)
+    if (sorted.every((row, i) => i === 0 || sorted[i - 1].sortOrder !== row.sortOrder)) continue
+    const fresh = keysBetween(null, null, sorted.length)
+    sorted.forEach((row, i) => keys.set(row.id, fresh[i]))
+  }
+  return keys
 }
 
 /** Creates an independent workspace store (the app uses `useWorkspaceStore`; tests make their own). */
@@ -731,14 +767,41 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     }
 
     /**
+     * The failed creation (still waiting for Retry) of an entity that `write` changes. The server
+     * refused such a change with "not found" only because it never got the creation (only that
+     * request failed), so the change belongs to the creation's failure: Retry sends both in order.
+     */
+    function failedCreationOf(write: PendingWrite | null): RetryHandle | null {
+      if (!write) return null
+      const changed = changedPaths(write.patches)
+      return (
+        failedWrites.find(
+          (handle) =>
+            handle.epoch === epoch &&
+            !handle.stale &&
+            !handle.used &&
+            handle.patches.some(
+              (patch) =>
+                patch.op === 'add' &&
+                patch.path.length === 3 &&
+                changed.some((path) => path.length > 3 && isPrefix(patch.path, path)),
+            ),
+        ) ?? null
+      )
+    }
+
+    /**
      * A new change (`paths`, made at `seq`) replaces older failed changes of the same fields:
      * their Retry would now overwrite it with an older value, so it is withdrawn (and the toast
      * offering it goes away — the newer change is what counts now).
      */
-    function supersedeFailures(paths: readonly Path[], seq: number): void {
+    function supersedeFailures(paths: readonly Path[], seq: number, intent?: string): void {
       if (paths.length === 0) return
       const replaced = (handle: RetryHandle) =>
-        !handle.stale && !handle.used && handle.seq < seq && replaces(paths, handle.paths)
+        !handle.stale &&
+        !handle.used &&
+        handle.seq < seq &&
+        (replaces(paths, handle.paths) || (intent !== undefined && handle.intent === intent))
       let withdrawn = false
       for (const handle of failedWrites) {
         if (replaced(handle)) {
@@ -794,6 +857,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             stale: false,
             used: false,
             sent: false,
+            intent: spec.intent,
           }
           failedWrites = [...failedWrites, retry].sort((a, b) => a.seq - b.seq)
         }
@@ -851,7 +915,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           pending = { patches, inverse, seq }
           pendingWrites.push(pending)
           setDoc(next)
-          if (!spec.background) supersedeFailures(changedPaths(patches), seq)
+          if (!spec.background) supersedeFailures(changedPaths(patches), seq, spec.intent)
         }
       }
       if (!spec.background) userWritesPending += 1
@@ -877,7 +941,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           if (startEpoch === epoch) {
             const later = settle(pending)
             if (pending && later) safely(() => rollback(pending, later))
-            onWriteFailed(spec, error, pending, later ?? [], seq)
+            // "Not found" for a change to an entity whose creation failed is that creation's failure.
+            const creation = error.kind === 'not_found' ? failedCreationOf(pending) : null
+            const reported = creation?.error ?? error
+            onWriteFailed(spec, reported, pending, later ?? [], seq)
+            return failed(reported)
           }
           return failed(error)
         }
@@ -918,10 +986,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       // The failure is being handled; a new toast follows if it fails again.
       notifier.dismiss?.(SYNC_ERROR_TOAST_ID)
       if (toastRetry && batch.includes(toastRetry)) toastRetry = null
+      let reran = false
       for (const handle of batch) {
         if (epoch !== startEpoch) return failed(SIGNED_OUT_ERROR)
         if (handle.stale || handle.used) continue // a newer change replaced it meanwhile
         handle.used = true
+        reran = true
         failedWrites = failedWrites.filter((other) => other !== handle)
         updateSync({ canRetry: hasFailedWrites() })
         retrying = handle
@@ -944,6 +1014,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           return toVoid(result)
         }
       }
+      // One confirmation per Retry click, however many writes it re-sent.
+      if (reran && epoch === startEpoch) notifier.success?.('Saved')
       return OK
     }
 
@@ -1004,9 +1076,17 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       updateSync({ canRetry: hasFailedWrites(), ...(cleared ? { lastError: null } : {}) })
     }
 
-    /** A successful load/refresh: the error of an earlier failed load is over. */
+    /**
+     * A successful load/refresh: the error of an earlier failed load is over, and so is a change
+     * the server refused. It was reported and undone, it would fail the same way if sent again, and
+     * the screen now shows the current data: nothing is left to sync.
+     */
     function loadedSync(sync: SyncState): SyncState {
-      const cleared = lastErrorFromLoad ? { lastError: null, canRetry: false } : {}
+      let cleared: Partial<SyncState> = {}
+      if (lastErrorFromLoad) cleared = { lastError: null, canRetry: false }
+      else if (sync.lastError && !isRetryable(sync.lastError)) {
+        cleared = { lastError: failedWrites.at(-1)?.error ?? null }
+      }
       lastErrorFromLoad = false
       return { ...sync, ...cleared, lastLoadedAt: now() }
     }
@@ -1078,8 +1158,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       }
     }
 
-    async function refresh(refreshOptions: { silent?: boolean } = {}): Promise<Result> {
+    async function refresh(
+      refreshOptions: { silent?: boolean; reportFailure?: boolean } = {},
+    ): Promise<Result> {
       const silent = refreshOptions.silent ?? false
+      // A silent refresh stays quiet about a failure unless the caller shows it itself.
+      const report = !silent || (refreshOptions.reportFailure ?? false)
       const { status, sync } = get()
       if (status === 'error') return load()
       if (status !== 'ready' || sync.pending > 0) return OK // nothing loaded yet, or writes pending
@@ -1091,8 +1175,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         const snapshot = await repository().loadWorkspace()
         if (token !== loadToken) return OK
         if (writeSeq !== startedAtWrite || get().sync.pending > 0) {
-          // A write started after this read began: the snapshot may predate it. Keep local state.
+          // A write started after this read began: the snapshot may predate it. Keep local state,
+          // and read again once idle (this refresh may be what shows a failed write was stored).
           if (!silent) set({ status: 'ready' })
+          requestResync()
           return OK
         }
         applySnapshot(snapshot)
@@ -1102,19 +1188,26 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       } catch (thrown) {
         const error = toAppError(thrown)
         if (token !== loadToken) return OK
-        if (!silent) {
-          // A failed write awaiting Retry stays the error reported.
-          const keepWriteError = hasFailedWrites()
-          if (!keepWriteError) lastErrorFromLoad = true
+        // A refused session is never quiet: it is recorded so the session gets re-checked.
+        if (report || error.kind === 'auth') {
+          // A failed write awaiting Retry stays the error reported, except over a refused session
+          // (the next good load shows it again).
+          const writeFailed = hasFailedWrites()
+          if (!writeFailed) lastErrorFromLoad = true
           set((state) => ({
             status: 'ready',
-            sync: keepWriteError ? state.sync : { ...state.sync, lastError: error },
+            sync:
+              writeFailed && error.kind !== 'auth'
+                ? state.sync
+                : { ...state.sync, lastError: error },
           }))
-          toastRetry = null // this toast replaces the failure toast (same id)
-          notifier.error("Couldn't refresh", {
-            id: SYNC_ERROR_TOAST_ID,
-            description: error.message,
-          })
+          if (!silent && report) {
+            toastRetry = null // this toast replaces the failure toast (same id)
+            notifier.error("Couldn't refresh", {
+              id: SYNC_ERROR_TOAST_ID,
+              description: error.message,
+            })
+          }
         }
         return failed(error)
       }
@@ -1199,7 +1292,16 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertProject(project),
         reconcile: (row) => [tableRow('projects', row)],
-        alreadyDone: storedIfDuplicate(presetId !== undefined, project),
+        alreadyDone: storedIfDuplicate(project),
+        intent: JSON.stringify([
+          'project',
+          project.name,
+          project.description,
+          project.status,
+          project.color,
+          project.startDate,
+          project.dueDate,
+        ]),
         retry: () => createProject(input, project.id),
       })
     }
@@ -1257,7 +1359,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           },
           persist: (repo) => repo.deleteProject(id),
           alreadyDone: DELETED,
-          retry: () => deleteProject(id),
+          // The user agreed to delete what was there then, not what they added since.
+          retry: () => {
+            const addedSince = (['phases', 'tasks', 'milestones'] as const).some((table) =>
+              Object.values(get().data[table]).some(
+                (row) => row.projectId === id && !Object.hasOwn(data[table], row.id),
+              ),
+            )
+            return addedSince
+              ? Promise.resolve(
+                  invalid(
+                    'This project has items added since. Delete it again if you still want to.',
+                  ),
+                )
+              : deleteProject(id)
+          },
         }),
       )
     }
@@ -1311,7 +1427,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertPhase(phase),
         reconcile: (row) => [tableRow('phases', row)],
-        alreadyDone: storedIfDuplicate(presetId !== undefined, phase),
+        alreadyDone: storedIfDuplicate(phase),
+        intent: JSON.stringify(['phase', phase.projectId, phase.name]),
         retry: () => createPhase(input, phase.id),
       })
     }
@@ -1519,7 +1636,19 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertTask(task),
         reconcile: (row) => [tableRow('tasks', row)],
-        alreadyDone: storedIfDuplicate(presetId !== undefined, task),
+        alreadyDone: storedIfDuplicate(task),
+        intent: JSON.stringify([
+          'task',
+          task.projectId,
+          task.parentTaskId,
+          task.phaseId,
+          task.title,
+          task.description,
+          task.status,
+          task.priority,
+          task.startDate,
+          task.dueDate,
+        ]),
         retry: () => createTask(input, task.id),
       })
     }
@@ -1672,17 +1801,25 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
               }
             }
           },
-          // keepSubtasks is sent as asked even when this device sees no subtasks: subtasks added
-          // on another device are then refused by the server instead of deleted unseen.
+          // Without subtasks on this device nobody was asked about any: "keep" is sent, so subtasks
+          // added on another device are refused by the server instead of deleted unseen.
           persist: (repo) =>
             repo.deleteTask(
               id,
-              options.keepSubtasks
+              options.keepSubtasks || subtasks.length === 0
                 ? { keepSubtasks: true, promotedSortOrders: promoted }
                 : { keepSubtasks: false },
             ),
           alreadyDone: DELETED,
-          retry: () => deleteTask(id, options),
+          // Subtasks added since were never part of what the user agreed to delete.
+          retry: () =>
+            !keep && subtaskSiblings(get().data.tasks, id).some((row) => !removed.has(row.id))
+              ? Promise.resolve(
+                  invalid(
+                    'This task has new subtasks. Delete it again to choose what happens to them.',
+                  ),
+                )
+              : deleteTask(id, options),
         }),
       )
     }
@@ -1720,7 +1857,14 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         },
         persist: (repo) => repo.insertMilestone(milestone),
         reconcile: (row) => [tableRow('milestones', row)],
-        alreadyDone: storedIfDuplicate(presetId !== undefined, milestone),
+        alreadyDone: storedIfDuplicate(milestone),
+        intent: JSON.stringify([
+          'milestone',
+          milestone.projectId,
+          milestone.phaseId,
+          milestone.name,
+          milestone.date,
+        ]),
         retry: () => createMilestone(input, milestone.id),
       })
     }
@@ -1978,6 +2122,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       const projects = sortByOrder(data.projects)
       const lastKey = sortByOrder(Object.values(get().data.projects)).at(-1)?.sortOrder ?? null
       const keys = keysBetween(lastKey, null, projects.length)
+      const phaseKeys = keysUntied(data.phases, (phase) => phase.projectId)
+      const taskKeys = keysUntied(data.tasks, (task) =>
+        JSON.stringify([task.projectId, task.parentTaskId]),
+      )
       const phaseOf = new Map(data.tasks.map((task) => [task.id, task.phaseId]))
       const phaseOfTask = (task: { parentTaskId: string | null; phaseId: string | null }) =>
         task.parentTaskId !== null && phaseOf.has(task.parentTaskId)
@@ -1995,6 +2143,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           ...phase,
           id: fresh(maps.phases, phase.id),
           projectId: fresh(maps.projects, phase.projectId),
+          sortOrder: phaseKeys.get(phase.id) ?? phase.sortOrder,
           createdAt: timestamp,
           updatedAt: timestamp,
         })),
@@ -2004,6 +2153,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
           projectId: fresh(maps.projects, task.projectId),
           phaseId: ref(maps.phases, phaseOfTask(task)),
           parentTaskId: ref(maps.tasks, task.parentTaskId),
+          sortOrder: taskKeys.get(task.id) ?? task.sortOrder,
           completedAt: task.status === 'done' ? (task.completedAt ?? timestamp) : null,
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -2030,23 +2180,25 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
     async function importBackup(file: BackupFile): Promise<Result<ImportSummary>> {
       const parsed = parseBackupFile(file)
       if (!parsed.ok) return failed(parsed.error)
-      return importCopy(remapBackup(parsed.value.data), false)
+      return importCopy(remapBackup(parsed.value.data))
     }
 
     /**
-     * Retries send the SAME copy (same ids): when the first attempt reached the server but its
-     * answer was lost, the retry is refused as a duplicate instead of importing a second copy —
-     * and that refusal means the copy is stored.
+     * Retries send the SAME copy (same ids): when an earlier attempt reached the server but its
+     * answer was lost, the repeat is refused as a duplicate instead of importing a second copy.
+     * The ids are new and a backup with duplicate links never gets this far (parseBackupFile), so
+     * that refusal can only mean this copy is stored, whole: the import is atomic. It also covers
+     * a first attempt the browser delivered twice (see storedIfDuplicate).
      */
-    function importCopy(copy: BackupData, retrying: boolean): Promise<Result<ImportSummary>> {
+    function importCopy(copy: BackupData): Promise<Result<ImportSummary>> {
       return write<ImportSummary>({
         label: 'import the backup',
         persist: async (repo) => {
           try {
             return await repo.importWorkspace(copy)
           } catch (error) {
-            if (!retrying || toAppError(error).kind !== 'conflict') throw error
-            requestResync() // already imported by the attempt whose answer was lost
+            if (toAppError(error).kind !== 'conflict') throw error
+            requestResync() // already imported by a delivery whose answer was lost
             return {
               projects: copy.projects.length,
               phases: copy.phases.length,
@@ -2075,7 +2227,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             }),
           )
         },
-        retry: () => importCopy(copy, true),
+        retry: () => importCopy(copy),
       })
     }
 
@@ -2281,15 +2433,27 @@ export function createAuthStore(options: AuthStoreOptions) {
       }
     }
 
-    /** Re-reads the session; when it cannot be read (offline) the current state stays. */
-    async function recheckSession(): Promise<void> {
+    /**
+     * The server rejected the session, which this device may still consider valid (its clock is
+     * off, the project's signing keys changed): asks for a new one. When that is refused the
+     * session is over; when the server cannot be reached (offline) the current state stays.
+     */
+    async function recheckSession(refreshWhenValid = false): Promise<void> {
       let user: AuthUser | null
       try {
-        user = await service().getUser()
+        const auth = service()
+        user = auth.revalidate ? await auth.revalidate() : await auth.getUser()
       } catch {
         return
       }
       applyUser(user)
+      // Still valid after all (renewed): the data the server refused is fetched again.
+      if (user && refreshWhenValid && get().status === 'signed_in') {
+        // A moment later, so the renewed session has settled before the data is fetched.
+        setTimeout(() => {
+          if (get().status === 'signed_in') void workspace().refresh({ silent: true })
+        }, 50)
+      }
     }
 
     /** The server rejected the session (expired / revoked): see whether it is still valid. */
@@ -2304,7 +2468,10 @@ export function createAuthStore(options: AuthStoreOptions) {
           (rejected(state.sync.lastError, previous.sync.lastError) ||
             rejected(state.loadError, previous.loadError))
         ) {
-          void recheckSession()
+          // Only the first refusal refetches, so a server that keeps refusing cannot loop.
+          void recheckSession(
+            previous.sync.lastError?.kind !== 'auth' && previous.loadError?.kind !== 'auth',
+          )
         }
       })
       options.signal?.addEventListener('abort', unsubscribe, { once: true })
@@ -2469,7 +2636,14 @@ export const useAuthStore = createAuthStore({
   signal: lifetime.signal,
 })
 
-if (dataMode === 'local' && isTestHooksEnabled() && typeof window !== 'undefined') {
+// `import.meta.env` is replaced at build time: a normal production build drops this block, and
+// with it the hooks' code.
+if (
+  (import.meta.env.DEV || import.meta.env.MODE === 'e2e') &&
+  dataMode === 'local' &&
+  isTestHooksEnabled() &&
+  typeof window !== 'undefined'
+) {
   installTestHooks(defaultRepository() as LocalRepository, {
     onReset: () => useWorkspaceStore.getState().actions.load(),
   })

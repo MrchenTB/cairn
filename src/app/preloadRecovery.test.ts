@@ -13,11 +13,14 @@ function memoryStorage() {
   }
 }
 
-function setup(storage: () => ReturnType<typeof memoryStorage> | null) {
+function setup(
+  storage: () => ReturnType<typeof memoryStorage> | null,
+  isOnline: () => boolean = () => true,
+) {
   const target = new EventTarget()
   const reload = vi.fn()
   let clock = 1_000_000
-  const uninstall = installPreloadRecovery({ target, storage, reload, now: () => clock })
+  const uninstall = installPreloadRecovery({ target, storage, reload, now: () => clock, isOnline })
   const fire = () => {
     const event = new Event('vite:preloadError', { cancelable: true })
     target.dispatchEvent(event)
@@ -75,6 +78,23 @@ describe('installPreloadRecovery', () => {
     }))
     expect(full.fire().defaultPrevented).toBe(false)
     expect(full.reload).not.toHaveBeenCalled()
+  })
+
+  it('does not reload while offline: the reload would end on the browser offline page', () => {
+    // A chunk that cannot be fetched offline is not a stale deploy; the error boundary explains.
+    const storage = memoryStorage()
+    let online = false
+    const { reload, fire } = setup(
+      () => storage,
+      () => online,
+    )
+    const event = fire()
+    expect(reload).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
+    expect(storage.getItem(PRELOAD_RELOAD_KEY)).toBeNull() // and it does not use up the one reload
+    online = true
+    expect(fire().defaultPrevented).toBe(true)
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 
   it('can be uninstalled', () => {

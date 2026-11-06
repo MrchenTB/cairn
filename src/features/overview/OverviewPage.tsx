@@ -62,7 +62,10 @@ function Overview() {
   const openProjectDialog = useUIStore((s) => s.openProjectDialog)
   const newProject = () => openProjectDialog({ mode: 'create' })
 
-  const active = useMemo(() => projects.filter((project) => project.status === 'active'), [projects])
+  const active = useMemo(
+    () => projects.filter((project) => project.status === 'active'),
+    [projects],
+  )
   const metrics = useMemo(() => overviewMetrics(data, today), [data, today])
   const buckets = useMemo(() => myTasks(data, today), [data, today])
   const upcoming = useMemo(() => upcomingTasks(buckets), [buckets])
@@ -82,7 +85,7 @@ function Overview() {
         <EmptyState
           icon={WelcomeMark}
           title="Plan clearly. Work simply."
-          description="Start with a project, add tasks, and see them as a list, a board or a Gantt chart. Phases and milestones are optional."
+          description="Start with a project, then see its tasks as a list, a board or a Gantt chart."
           action={
             <Button variant="primary" size="md" onClick={newProject}>
               <Plus strokeWidth={2} />
@@ -114,7 +117,8 @@ function Overview() {
           today={today}
           hasOtherProjects={Object.keys(data.projects).length > active.length}
         />
-        <div className="grid gap-8 @4xl:grid-cols-2">
+        {/* Two columns only when each has room for a subtask title next to project and date. */}
+        <div className="grid gap-8 @[58rem]:grid-cols-2">
           <UpcomingTasks upcoming={upcoming} hasTasks={hasTasks} />
           <UpcomingMilestones milestones={milestones} projects={data.projects} today={today} />
         </div>

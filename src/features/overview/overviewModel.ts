@@ -3,7 +3,7 @@
  * overviewMetrics, progressByProject, rollupRange); this module only selects, limits and lays
  * out their results for the dashboard.
  */
-import type { MyTasksBuckets } from '@/domain/buckets'
+import { isOpenTask, type MyTasksBuckets } from '@/domain/buckets'
 import { addDays, diffDays, isISODate, maxDate, minDate, startOfWeek } from '@/domain/dates'
 import { compareMilestones } from '@/domain/hierarchy'
 import { rollupRange } from '@/domain/scheduling'
@@ -19,25 +19,23 @@ export const MILESTONE_WINDOW_DAYS = 30
 export const TIMELINE_WEEKS = 6
 export const TIMELINE_ROWS_LIMIT = 8
 
-export type UpcomingTab = 'overdue' | 'today' | 'upcoming'
-
 export interface UpcomingTasks {
   /** Overdue first, then due today, then the next 7 days (each in My Tasks order). */
   tasks: Task[]
   /** All tasks in those three buckets (tasks.length is capped by the limit). */
   total: number
-  /** The My Tasks tab "View all" opens: the first non-empty bucket in the same order. */
-  tab: UpcomingTab
 }
 
+/**
+ * The tasks the Overview lists. "View all in My Tasks" opens the All tab: its Overdue / Today /
+ * Upcoming sections reproduce this order and these counts (no single bucket tab does).
+ */
 export function upcomingTasks(
   buckets: MyTasksBuckets,
   limit: number = UPCOMING_TASKS_LIMIT,
 ): UpcomingTasks {
   const all = [...buckets.overdue, ...buckets.today, ...buckets.upcoming]
-  const tab: UpcomingTab =
-    buckets.overdue.length > 0 ? 'overdue' : buckets.today.length > 0 ? 'today' : 'upcoming'
-  return { tasks: all.slice(0, Math.max(0, limit)), total: all.length, tab }
+  return { tasks: all.slice(0, Math.max(0, limit)), total: all.length }
 }
 
 /** Own-property lookup: ids are data, never Object.prototype keys. */
@@ -159,6 +157,16 @@ export function dayCenter(date: ISODate, window: TimelineWindow): number | null 
   return ((index + 0.5) / window.days) * 100
 }
 
+/** The roll-up of the open tasks that touch the window (null when there are none). */
+function openWorkIn(tasks: readonly Task[], window: TimelineWindow): DateSpan | null {
+  const inside = tasks.filter((task) => {
+    if (!isOpenTask(task)) return false
+    const own = rollupRange([task])
+    return own !== null && placeSpan(own, window) !== null
+  })
+  return rollupRange(inside)
+}
+
 export interface TimelineRow {
   project: Project
   span: DateSpan | null
@@ -178,8 +186,8 @@ export interface MiniTimeline {
 }
 
 /**
- * The Overview's "Next 6 weeks": one row per active project (in project order) whose span or
- * milestones fall inside the window.
+ * The Overview's "Next 6 weeks": one row per active project (in project order) whose span,
+ * open work or milestones fall inside the window.
  */
 export function miniTimeline(
   data: WorkspaceData,
@@ -203,8 +211,19 @@ export function miniTimeline(
   const qualified: TimelineRow[] = []
   for (const project of activeProjects) {
     const milestones = milestonesByProject.get(project.id) ?? []
-    const span = projectSpan(project, tasksByProject.get(project.id) ?? [], milestones)
-    const placed = span ? placeSpan(span, window) : null
+    const tasks = tasksByProject.get(project.id) ?? []
+    let span = projectSpan(project, tasks, milestones)
+    let placed = span ? placeSpan(span, window) : null
+    if (!placed) {
+      // The project's own dates can end before its work does (a slipped deadline). Open work
+      // still inside the window keeps the project on the chart, drawn where that work is.
+      const work = openWorkIn(tasks, window)
+      const workPlaced = work ? placeSpan(work, window) : null
+      if (work && workPlaced) {
+        span = work
+        placed = workPlaced
+      }
+    }
     const inWindow = milestones
       .filter((m) => isISODate(m.date) && m.date >= window.start && m.date <= window.end)
       .sort(compareMilestones)
