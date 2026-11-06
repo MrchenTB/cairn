@@ -17,6 +17,12 @@
  * the tasks those changes force move (see `computeAutoSchedule`); `changes: []` resolves every
  * conflict.
  *
+ * Completed tasks are history. Auto-schedule never moves a task whose status is 'done' (it is
+ * reported as `blocked` instead), and a violated dependency whose SUCCESSOR is done is not a
+ * conflict to act on but a historical inconsistency (`findHistoricalInconsistencies`): moving the
+ * successor would rewrite what happened, and the predecessor cannot be moved earlier. A done
+ * predecessor with an open successor is an ordinary conflict (the successor can still move).
+ *
  * Implementation note: all arithmetic runs on epoch-day integers. Every function here treats a
  * date that is not a real 'YYYY-MM-DD' date (e.g. '2026-02-29') as missing, so corrupt data never
  * throws and spans, conflicts and auto-schedule always agree on what is scheduled.
@@ -92,13 +98,43 @@ function taskLookup(
   return (id) => ownTask(tasks, id)
 }
 
-/** Accepts tasks as a map or array; dependencies whose tasks are missing are ignored. */
+/**
+ * The conflicts to act on: violated dependencies whose successor is not done (so it can still
+ * move). Accepts tasks as a map or array; dependencies whose tasks are missing are ignored.
+ */
 export function findConflicts(
   tasks: Record<string, Task> | readonly Task[],
   dependencies: readonly Dependency[],
 ): DependencyConflict[] {
+  return scanViolations(tasks, dependencies)
+    .filter((v) => !v.successorDone)
+    .map((v) => v.conflict)
+}
+
+/**
+ * Violated dependencies whose successor is already done: what happened is kept as it is, so these
+ * are neither flagged as conflicts nor moved by Auto-schedule. Kept visible in the Task Modal.
+ */
+export function findHistoricalInconsistencies(
+  tasks: Record<string, Task> | readonly Task[],
+  dependencies: readonly Dependency[],
+): DependencyConflict[] {
+  return scanViolations(tasks, dependencies)
+    .filter((v) => v.successorDone)
+    .map((v) => v.conflict)
+}
+
+interface Violation {
+  conflict: DependencyConflict
+  successorDone: boolean
+}
+
+function scanViolations(
+  tasks: Record<string, Task> | readonly Task[],
+  dependencies: readonly Dependency[],
+): Violation[] {
   const getTask = taskLookup(tasks)
-  const conflicts: DependencyConflict[] = []
+  const conflicts: Violation[] = []
   for (const dependency of dependencies) {
     if (dependency.predecessorId === dependency.successorId) continue
     const predecessor = getTask(dependency.predecessorId)
@@ -111,12 +147,15 @@ export function findConflicts(
     const actualStart = tryFromEpochDay(start)
     if (requiredStart === null || actualStart === null) continue // past 9999-12-31
     conflicts.push({
-      dependencyId: dependency.id,
-      predecessorId: predecessor.id,
-      successorId: successor.id,
-      requiredStart,
-      actualStart,
-      shiftDays: finish + 1 - start,
+      conflict: {
+        dependencyId: dependency.id,
+        predecessorId: predecessor.id,
+        successorId: successor.id,
+        requiredStart,
+        actualStart,
+        shiftDays: finish + 1 - start,
+      },
+      successorDone: successor.status === 'done',
     })
   }
   return conflicts
@@ -223,11 +262,31 @@ export function computeAutoSchedule(
   dependencies: readonly Dependency[],
   changes: readonly ScheduleChange[],
 ): ScheduleShift[] {
+  return computeAutoScheduleDetailed(tasks, dependencies, changes).shifts
+}
+
+export interface AutoScheduleResult {
+  /** What would be written besides the user's own change. Never a done task. */
+  shifts: ScheduleShift[]
+  /**
+   * Completed tasks that would have had to move but are kept as they are (their dates are
+   * history). The dates here are what the move WOULD have been, for telling the user; they are
+   * never written. Their successors are judged against the dates they really have.
+   */
+  blocked: ScheduleShift[]
+}
+
+/** `computeAutoSchedule` plus the completed tasks it refused to move. */
+export function computeAutoScheduleDetailed(
+  tasks: Record<string, Task>,
+  dependencies: readonly Dependency[],
+  changes: readonly ScheduleChange[],
+): AutoScheduleResult {
   try {
     return autoSchedule(tasks, dependencies, changes)
   } catch {
     // Defensive only: the walk below does not throw for any data shape we know of.
-    return []
+    return { shifts: [], blocked: [] }
   }
 }
 
@@ -235,7 +294,7 @@ function autoSchedule(
   tasks: Record<string, Task>,
   dependencies: readonly Dependency[],
   changes: readonly ScheduleChange[],
-): ScheduleShift[] {
+): AutoScheduleResult {
   // Dense node indices for the tasks that take part in at least one usable dependency.
   const nodeIds: string[] = []
   const nodeIndex = new Map<string, number>()
@@ -263,7 +322,7 @@ function autoSchedule(
     if (!predecessor || !successor) continue
     edges.push([nodeOf(predecessor), nodeOf(successor)])
   }
-  if (edges.length === 0) return []
+  if (edges.length === 0) return { shifts: [], blocked: [] }
 
   // The user's explicit edit: new dates are inputs, and those tasks never move again.
   for (const change of changes) {
@@ -294,7 +353,7 @@ function autoSchedule(
    * start; it then starts on its required start (after ALL predecessors, >= trigger). Updates the
    * working dates.
    */
-  const shiftLater = (node: number, trigger: number): ScheduleShift | null => {
+  const shiftLater = (node: number, trigger: number, commit: boolean): ScheduleShift | null => {
     const currentStart = start[node]
     const currentDue = due[node]
     const latest = currentStart ?? currentDue
@@ -307,8 +366,11 @@ function autoSchedule(
     const nextStartDate = nextStart === null ? null : tryFromEpochDay(nextStart)
     const nextDueDate = nextDue === null ? null : tryFromEpochDay(nextDue)
     if ((nextStart !== null && !nextStartDate) || (nextDue !== null && !nextDueDate)) return null
-    start[node] = nextStart
-    due[node] = nextDue
+    // A completed task is only measured, never changed: its successors see its real dates.
+    if (commit) {
+      start[node] = nextStart
+      due[node] = nextDue
+    }
     const task = tasks[nodeIds[node]]
     const from = { startDate: task.startDate, dueDate: task.dueDate }
     return {
@@ -323,11 +385,15 @@ function autoSchedule(
   const queue: number[] = []
   for (let node = 0; node < n; node++) if (indegree[node] === 0) queue.push(node)
   const shifts: ScheduleShift[] = []
+  const blocked: ScheduleShift[] = []
   for (let head = 0; head < queue.length; head++) {
     const node = queue[head]
     if (!fixed[node]) {
-      const shift = shiftLater(node, resolveAll ? required[node] : forced[node])
-      if (shift) {
+      const done = tasks[nodeIds[node]].status === 'done'
+      const shift = shiftLater(node, resolveAll ? required[node] : forced[node], !done)
+      if (shift && done) {
+        blocked.push(shift)
+      } else if (shift) {
         shifts.push(shift)
         pushes[node] = 1
       }
@@ -342,7 +408,7 @@ function autoSchedule(
       if (--indegree[next] === 0) queue.push(next)
     }
   }
-  return shifts
+  return { shifts, blocked }
 }
 
 /** The writes for `applySchedule([change, ...toScheduleChanges(shifts)])`. */

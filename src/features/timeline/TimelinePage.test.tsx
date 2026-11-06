@@ -306,6 +306,8 @@ describe('TimelinePage rows', () => {
     const s = await seed()
     const a = getWorkspaceActions()
     // Violated: Brief starts (at -2) long before Review, its new predecessor, is due (at +9).
+    // Brief is done in the seed, and a done successor is history (not a conflict): reopen it.
+    must(await a.updateTask(s.brief.id, { status: 'in_progress' }))
     must(await a.addDependency(s.review.id, s.brief.id))
     const { user } = renderTimeline()
     await user.click(screen.getByRole('button', { name: /^Expand Launch/ }))
@@ -313,6 +315,18 @@ describe('TimelinePage rows', () => {
     expect(bar).not.toHaveAttribute('title')
     await user.hover(bar)
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Should start after “Review”')
+  })
+
+  it('does not mark a done task as conflicting: it finished before its predecessor, which is history', async () => {
+    const s = await seed()
+    const a = getWorkspaceActions()
+    must(await a.addDependency(s.review.id, s.brief.id)) // Brief is done
+    const { user } = renderTimeline()
+    await user.click(screen.getByRole('button', { name: /^Expand Launch/ }))
+    const bar = chart().querySelector(`[data-task-id="${s.brief.id}"]`) as HTMLElement
+    await user.hover(bar)
+    expect(await screen.findByRole('tooltip')).not.toHaveTextContent('Should start after')
+    expect(bar.getAttribute('aria-label')).not.toContain('conflict')
   })
 
   it('reflects store changes without a reload', async () => {

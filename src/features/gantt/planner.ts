@@ -21,7 +21,7 @@
 import { getWorkspaceActions, useWorkspaceStore } from '@/data/store'
 import { validateDateRange } from '@/domain/validation'
 import {
-  computeAutoSchedule,
+  computeAutoScheduleDetailed,
   findConflicts,
   toScheduleChanges,
   type ScheduleShift,
@@ -66,6 +66,8 @@ export interface ReschedulePlan {
   change: ScheduleChange | null
   /** Other tasks that move, in dependency order. */
   shifts: ScheduleShift[]
+  /** Completed tasks Auto-schedule would have moved and keeps as they are (never written). */
+  blocked: ScheduleShift[]
   /** Everything "Apply" writes in ONE applySchedule call. */
   writes: ScheduleChange[]
   /** Set when the plan can no longer be computed (task or dependency deleted meanwhile). */
@@ -89,12 +91,21 @@ export function computeReschedulePlan(
   const dependencies = projectDependencies(data, request.projectId)
   if (request.kind === 'change') {
     if (!own(data.tasks, request.change.taskId)) {
-      return { change: null, shifts: [], writes: [], error: 'This task no longer exists.' }
+      return {
+        change: null,
+        shifts: [],
+        blocked: [],
+        writes: [],
+        error: 'This task no longer exists.',
+      }
     }
-    const shifts = computeAutoSchedule(data.tasks, dependencies, [request.change])
+    const { shifts, blocked } = computeAutoScheduleDetailed(data.tasks, dependencies, [
+      request.change,
+    ])
     return {
       change: request.change,
       shifts,
+      blocked,
       writes: [request.change, ...toScheduleChanges(shifts)],
       error: null,
     }
@@ -103,7 +114,13 @@ export function computeReschedulePlan(
     const dependency = own(data.dependencies, request.dependencyId)
     const predecessor = dependency ? own(data.tasks, dependency.predecessorId) : undefined
     if (!dependency || !predecessor) {
-      return { change: null, shifts: [], writes: [], error: 'This dependency no longer exists.' }
+      return {
+        change: null,
+        shifts: [],
+        blocked: [],
+        writes: [],
+        error: 'This dependency no longer exists.',
+      }
     }
     // The predecessor keeps its dates; only what the new link forces moves.
     const pinned: ScheduleChange = {
@@ -111,11 +128,11 @@ export function computeReschedulePlan(
       startDate: predecessor.startDate,
       dueDate: predecessor.dueDate,
     }
-    const shifts = computeAutoSchedule(data.tasks, dependencies, [pinned])
-    return { change: null, shifts, writes: toScheduleChanges(shifts), error: null }
+    const { shifts, blocked } = computeAutoScheduleDetailed(data.tasks, dependencies, [pinned])
+    return { change: null, shifts, blocked, writes: toScheduleChanges(shifts), error: null }
   }
-  const shifts = computeAutoSchedule(data.tasks, dependencies, [])
-  return { change: null, shifts, writes: toScheduleChanges(shifts), error: null }
+  const { shifts, blocked } = computeAutoScheduleDetailed(data.tasks, dependencies, [])
+  return { change: null, shifts, blocked, writes: toScheduleChanges(shifts), error: null }
 }
 
 // ---------------------------------------------------------------------------
@@ -132,11 +149,36 @@ export interface PlannerEnv {
   ): Promise<RescheduleOutcome>
 }
 
+/**
+ * What one successful write changed, enough to take it back: the dates it wrote (`applied`) and
+ * the dates those tasks had just before (`previous`). Auto mode's confirmed shifts are part of the
+ * same record, so undoing restores them together, atomically.
+ */
+export interface ScheduleWriteRecord {
+  applied: ScheduleChange[]
+  previous: ScheduleChange[]
+}
+
+export type UndoOutcome =
+  | { status: 'restored' }
+  /** A task in the record was changed (or deleted) since: restoring would overwrite newer work. */
+  | { status: 'stale' }
+  | { status: 'invalid'; error: AppError }
+  | { status: 'failed'; error: AppError }
+
+export interface PlanOptions {
+  source?: ScheduleChangeSource
+  /**
+   * Called once with the record of the write, right after it succeeded (not for 'unchanged', a
+   * cancelled preview or a failed write).
+   */
+  onWritten?: (record: ScheduleWriteRecord) => void
+}
+
 export interface Planner {
-  planScheduleChange(
-    change: ScheduleChange,
-    options?: { source?: ScheduleChangeSource },
-  ): Promise<PlanOutcome>
+  planScheduleChange(change: ScheduleChange, options?: PlanOptions): Promise<PlanOutcome>
+  /** Puts back the dates before `record`, unless a task in it has changed since. */
+  undoScheduleWrite(record: ScheduleWriteRecord): Promise<UndoOutcome>
   /** Opens the "resolve all conflicts" preview for a project (Manual "Review", conflicts chip). */
   reviewConflicts(projectId: string): Promise<PlanOutcome>
   /**
@@ -191,7 +233,29 @@ export function createPlanner(env: PlannerEnv): Planner {
     })
   }
 
+  const normalizeChange = (c: ScheduleChange): ScheduleChange => ({
+    taskId: c.taskId,
+    startDate: c.startDate ?? null,
+    dueDate: c.dueDate ?? null,
+  })
+
   const planner: Planner = {
+    async undoScheduleWrite(record) {
+      const data = env.getData()
+      for (const applied of record.applied) {
+        const task = own(data.tasks, applied.taskId)
+        const wanted = normalizeChange(applied)
+        if (!task || task.startDate !== wanted.startDate || task.dueDate !== wanted.dueDate) {
+          return { status: 'stale' }
+        }
+      }
+      const result = await env.applySchedule(record.previous)
+      if (result.ok) return { status: 'restored' }
+      return result.error.kind === 'validation'
+        ? { status: 'invalid', error: result.error }
+        : { status: 'failed', error: result.error }
+    },
+
     async planScheduleChange(change, options = {}) {
       const data = env.getData()
       const task: Task | undefined = own(data.tasks, change.taskId)
@@ -210,23 +274,55 @@ export function createPlanner(env: PlannerEnv): Planner {
       const before = conflictIds(data, projectId)
       const mode = own(data.projects, projectId)?.scheduleMode ?? 'manual'
 
+      // The dates the write replaces, read right before it (a preview may sit open for a while).
+      let record: ScheduleWriteRecord | null = null
+      const write = async (changes: readonly ScheduleChange[]): Promise<Result> => {
+        const current = env.getData()
+        const previous = changes.map((c) => {
+          const t = own(current.tasks, c.taskId)
+          return { taskId: c.taskId, startDate: t?.startDate ?? null, dueDate: t?.dueDate ?? null }
+        })
+        const result = await env.applySchedule(changes)
+        if (result.ok) record = { applied: changes.map(normalizeChange), previous }
+        return result
+      }
+
       let outcome: PlanOutcome
-      const shifts =
+      const { shifts, blocked } =
         mode === 'auto'
-          ? computeAutoSchedule(data.tasks, projectDependencies(data, projectId), [normalized])
-          : []
+          ? computeAutoScheduleDetailed(data.tasks, projectDependencies(data, projectId), [
+              normalized,
+            ])
+          : { shifts: [], blocked: [] }
       if (shifts.length > 0) {
         const decision = await env.requestReschedule(
           { kind: 'change', projectId, change: normalized, source: options.source ?? 'gantt' },
-          (choice, writes) => env.applySchedule(choice === 'only' ? [normalized] : writes),
+          (choice, writes) => write(choice === 'only' ? [normalized] : writes),
         )
         outcome = fromReschedule(decision)
       } else {
         // Called synchronously (no await before it): the optimistic update lands in the same tick
         // as the caller's drop, so a dragged bar never flickers back.
-        outcome = fromResult(await env.applySchedule([normalized]))
+        outcome = fromResult(await write([normalized]))
       }
-      if (outcome.status === 'written') warnAboutNewConflicts(projectId, before)
+      if (outcome.status === 'written') {
+        warnAboutNewConflicts(projectId, before)
+        // With a preview, the dialog already listed them; without one nobody would know.
+        if (shifts.length === 0 && blocked.length > 0) {
+          const names = blocked.map((s) => `“${own(data.tasks, s.taskId)?.title ?? 'A task'}”`)
+          env.warn(
+            blocked.length === 1
+              ? '1 completed task was not moved'
+              : `${blocked.length} completed tasks were not moved`,
+            {
+              description: `${names.slice(0, 2).join(', ')}${names.length > 2 ? '…' : ''} ${
+                blocked.length === 1 ? 'is' : 'are'
+              } done, so ${blocked.length === 1 ? 'its' : 'their'} dates stay as they were.`,
+            },
+          )
+        }
+        if (record) options.onWritten?.(record)
+      }
       return outcome
     },
 
@@ -272,7 +368,7 @@ const browserPlanner = createPlanner({
 /** Changes a task's dates through the project's dependency rules. See the module comment. */
 export async function planScheduleChange(
   change: ScheduleChange,
-  options: { source?: ScheduleChangeSource } = {},
+  options: PlanOptions = {},
 ): Promise<boolean> {
   const outcome = await browserPlanner.planScheduleChange(change, options)
   return outcome.status === 'written' || outcome.status === 'unchanged'
@@ -281,9 +377,14 @@ export async function planScheduleChange(
 /** Like `planScheduleChange`, but tells why nothing was written (validation message included). */
 export function planScheduleChangeDetailed(
   change: ScheduleChange,
-  options: { source?: ScheduleChangeSource } = {},
+  options: PlanOptions = {},
 ): Promise<PlanOutcome> {
   return browserPlanner.planScheduleChange(change, options)
+}
+
+/** Takes back one write (see `ScheduleWriteRecord`). */
+export function undoScheduleWrite(record: ScheduleWriteRecord): Promise<UndoOutcome> {
+  return browserPlanner.undoScheduleWrite(record)
 }
 
 /** Opens the "resolve all conflicts" preview for a project. */

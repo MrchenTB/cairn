@@ -1,5 +1,11 @@
 /** User-facing labels and token classes for task/project enums (one place, used everywhere). */
-import type { ProjectColor, ProjectStatus, TaskPriority, TaskStatus } from '@/domain/types'
+import type {
+  PhaseColor,
+  ProjectColor,
+  ProjectStatus,
+  TaskPriority,
+  TaskStatus,
+} from '@/domain/types'
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: 'To Do',
@@ -70,4 +76,11 @@ export const PROJECT_COLOR_TEXT: Record<ProjectColor, string> = {
   yellow: 'text-project-yellow',
   green: 'text-project-green',
   teal: 'text-project-teal',
+}
+
+/** Accessible description of a phase colour, e.g. "Teal" or "Project color (Violet)". */
+export function phaseColorLabel(value: PhaseColor | null, projectColor: ProjectColor): string {
+  return value
+    ? PROJECT_COLOR_LABELS[value]
+    : `Project color (${PROJECT_COLOR_LABELS[projectColor]})`
 }

@@ -113,7 +113,9 @@ import {
   reviewConflicts,
   reviewNewDependency,
   type PlanOutcome,
+  type ScheduleWriteRecord,
 } from '../planner'
+import { announceDateChange, classifyDateChange } from '../dateUndo'
 import { useRescheduleStore } from '../rescheduleStore'
 import { DragTooltip } from './DragTooltip'
 import { GanttRowView, type RowOverride, type RowPreview } from './GanttRow'
@@ -774,8 +776,14 @@ export function GanttChart({
       // or the Auto preview is open; a cancelled or failed write lets the bar return.
       const token = holdPending(rowKey, { taskId, dates, origin, mode: null })
       let outcome: PlanOutcome
+      let record: ScheduleWriteRecord | null = null
       try {
-        outcome = await planScheduleChangeDetailed(change, { source: 'gantt' })
+        outcome = await planScheduleChangeDetailed(change, {
+          source: 'gantt',
+          onWritten: (written) => {
+            record = written
+          },
+        })
       } finally {
         releasePending(rowKey, token)
       }
@@ -783,8 +791,19 @@ export function GanttChart({
         notify.error("Couldn't change dates", { description: outcome.error.message })
       } else if (outcome.status === 'written') {
         const title = latest.current.tasksById[taskId]?.title ?? 'Task'
-        setAnnouncement(`${title}: ${datesLabel(dates, today)}`)
+        const label = datesLabel(dates, today)
+        setAnnouncement(`${title}: ${label}`)
         if (how === 'draw') revealRow(rowKey)
+        const written = record as ScheduleWriteRecord | null // set by onWritten above
+        if (written) {
+          announceDateChange({
+            kind: classifyDateChange(origin, dates),
+            title,
+            label,
+            record: written,
+            today,
+          })
+        }
       }
     },
   )

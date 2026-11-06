@@ -23,11 +23,29 @@ let lastKeyed: { description: string | undefined; at: number; sonnerId: string }
 const SAME_FAILURE_MS = 1000
 
 export const notify = {
-  success(message: string, options?: { description?: string; action?: NotifyAction }) {
+  success(
+    message: string,
+    options?: {
+      description?: string
+      action?: NotifyAction
+      /** A toast with the same id is updated in place instead of stacking another one. */
+      id?: string | number
+      /** ms (sonner's default otherwise) */
+      duration?: number
+    },
+  ) {
     return toast.success(message, options)
   },
   /** Neutral information (with the info icon, like every other toast type). */
-  info(message: string, options?: { description?: string; action?: NotifyAction }) {
+  info(
+    message: string,
+    options?: {
+      description?: string
+      action?: NotifyAction
+      id?: string | number
+      duration?: number
+    },
+  ) {
     return toast.info(message, options)
   },
   warning(message: string, options?: { description?: string; action?: NotifyAction }) {

@@ -137,10 +137,3 @@ export function PhaseColorPopover({
     </Popover>
   )
 }
-
-/** Accessible description of a phase colour, e.g. "Teal" or "Project color (Violet)". */
-export function phaseColorLabel(value: PhaseColor | null, projectColor: ProjectColor): string {
-  return value
-    ? PROJECT_COLOR_LABELS[value]
-    : `Project color (${PROJECT_COLOR_LABELS[projectColor]})`
-}

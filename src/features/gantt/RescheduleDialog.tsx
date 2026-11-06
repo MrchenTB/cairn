@@ -184,9 +184,27 @@ function RescheduleDialogContent({ active }: { active: ActiveReschedule }) {
               <p className="text-ui text-fg-secondary">
                 {kind === 'change'
                   ? 'No other tasks need to move anymore.'
-                  : 'Every successor already starts after its predecessors finish.'}
+                  : plan.blocked.length > 0
+                    ? 'No open task needs to move.'
+                    : 'Every successor already starts after its predecessors finish.'}
               </p>
             )}
+            {plan.blocked.length > 0 ? (
+              <section aria-label="Completed tasks kept as they are" className="mt-3">
+                <p className="mb-1.5 text-meta font-semibold text-fg-tertiary">
+                  Completed — kept as they are
+                </p>
+                <ul className="flex flex-col">
+                  {plan.blocked.map((shift) => (
+                    <BlockedRow key={shift.taskId} shift={shift} data={data} today={today} />
+                  ))}
+                </ul>
+                <p className="mt-1 text-meta text-fg-tertiary">
+                  Done tasks are history, so Auto-schedule never changes their dates. Edit them
+                  yourself if they really should move.
+                </p>
+              </section>
+            ) : null}
             <p className="mt-3 flex gap-2 text-meta text-fg-tertiary">
               <CalendarClock className="mt-px size-3.5 shrink-0" aria-hidden />
               <span>
@@ -283,6 +301,29 @@ function summaryFor(
   return count > 0
     ? `${plural(count, 'task')} ${count === 1 ? 'moves' : 'move'} later so every successor starts after its predecessors finish.`
     : 'Nothing needs to move.'
+}
+
+/** A done task that would have moved: its real dates, and where it would have had to start. */
+function BlockedRow({
+  shift,
+  data,
+  today,
+}: {
+  shift: ScheduleShift
+  data: WorkspaceData
+  today: ISODate
+}) {
+  const task = data.tasks[shift.taskId]
+  if (!task) return null
+  return (
+    <li className="flex items-center gap-2 border-t border-subtle py-1.5 first:border-t-0">
+      <StatusIcon status={task.status} size={14} />
+      <span className="min-w-0 flex-1 truncate text-ui text-fg">{task.title}</span>
+      <span className="text-meta whitespace-nowrap text-fg-tertiary tabular-nums">
+        stays {dateText(shift.from.startDate, shift.from.dueDate, today)}
+      </span>
+    </li>
+  )
 }
 
 function ShiftRow({

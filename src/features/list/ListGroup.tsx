@@ -19,7 +19,8 @@ import {
   Plus,
   Trash,
 } from 'lucide-react'
-import { phaseColorLabel, PhaseColorPopover } from '@/components/task/PhaseColorPicker'
+import { phaseColorLabel } from '@/components/task/labels'
+import { PhaseColorPopover } from '@/components/task/PhaseColorPicker'
 import { ProjectDot } from '@/components/task/ProjectDot'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

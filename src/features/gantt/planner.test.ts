@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeDependency, makeProject, makeTask, makeWorkspace } from '@/domain/testFactories'
 import type { Result, ScheduleChange, ScheduleMode, Task, WorkspaceData } from '@/domain/types'
-import { computeReschedulePlan, createPlanner, type PlannerEnv } from './planner'
+import {
+  computeReschedulePlan,
+  createPlanner,
+  type PlannerEnv,
+  type ScheduleWriteRecord,
+} from './planner'
 import type {
   RescheduleDecision,
   RescheduleExecutor,
@@ -304,5 +309,181 @@ describe('computeReschedulePlan', () => {
     )
     expect(plan.error).toBe('This task no longer exists.')
     expect(plan.writes).toEqual([])
+  })
+})
+
+describe('write records and undo', () => {
+  const record = () => {
+    const seen: ScheduleWriteRecord[] = []
+    return { seen, onWritten: (r: ScheduleWriteRecord) => seen.push(r) }
+  }
+
+  it('records what a write replaced; undo puts every date back and the task is where it was', async () => {
+    const h = setup({ tasks: chain(), links })
+    const r = record()
+    await h.planner.planScheduleChange(delayA, { onWritten: r.onWritten })
+    expect(r.seen).toEqual([
+      {
+        applied: [delayA],
+        previous: [{ taskId: 'A', startDate: '2026-11-02', dueDate: '2026-11-04' }],
+      },
+    ])
+    expect(h.data().tasks.A).toMatchObject({ startDate: '2026-11-04', dueDate: '2026-11-06' })
+    expect(await h.planner.undoScheduleWrite(r.seen[0])).toEqual({ status: 'restored' })
+    // Both ends come back, not just one of them.
+    expect(h.data().tasks.A).toMatchObject({ startDate: '2026-11-02', dueDate: '2026-11-04' })
+  })
+
+  it('is reported once, only for a write that happened', async () => {
+    const unchanged = setup({ tasks: chain(), links })
+    const none = record()
+    await unchanged.planner.planScheduleChange(
+      { taskId: 'A', startDate: '2026-11-02', dueDate: '2026-11-04' },
+      { onWritten: none.onWritten },
+    )
+    const cancelled = setup({ mode: 'auto', tasks: chain(), links, answer: 'cancel' })
+    await cancelled.planner.planScheduleChange(delayA, { onWritten: none.onWritten })
+    const failing = setup({ tasks: chain(), links, failRemote: true })
+    await failing.planner.planScheduleChange(delayA, { onWritten: none.onWritten })
+    const invalid = setup({ tasks: chain(), links })
+    await invalid.planner.planScheduleChange(
+      { taskId: 'A', startDate: '2026-11-06', dueDate: '2026-11-01' },
+      { onWritten: none.onWritten },
+    )
+    expect(none.seen).toEqual([])
+  })
+
+  it('a task dated for the first time (drawn on an unscheduled row) undoes back to no dates', async () => {
+    const h = setup({
+      tasks: [makeTask({ id: 'U', projectId: 'p', title: 'Idea', startDate: null, dueDate: null })],
+    })
+    const r = record()
+    await h.planner.planScheduleChange(
+      { taskId: 'U', startDate: '2026-11-03', dueDate: '2026-11-05' },
+      { onWritten: r.onWritten },
+    )
+    expect(r.seen[0].previous).toEqual([{ taskId: 'U', startDate: null, dueDate: null }])
+    expect(await h.planner.undoScheduleWrite(r.seen[0])).toEqual({ status: 'restored' })
+    expect(h.data().tasks.U).toMatchObject({ startDate: null, dueDate: null })
+  })
+
+  it('a confirmed Auto write records the shifted tasks too, and one undo restores all of them', async () => {
+    const h = setup({ mode: 'auto', tasks: chain(), links, answer: 'apply' })
+    const r = record()
+    await h.planner.planScheduleChange(delayA, { onWritten: r.onWritten })
+    expect(r.seen[0].applied.map((c) => c.taskId)).toEqual(['A', 'B', 'C'])
+    expect(r.seen[0].previous).toEqual([
+      { taskId: 'A', startDate: '2026-11-02', dueDate: '2026-11-04' },
+      { taskId: 'B', startDate: '2026-11-05', dueDate: '2026-11-06' },
+      { taskId: 'C', startDate: '2026-11-07', dueDate: '2026-11-09' },
+    ])
+    h.applySchedule.mockClear()
+    expect(await h.planner.undoScheduleWrite(r.seen[0])).toEqual({ status: 'restored' })
+    expect(h.applySchedule).toHaveBeenCalledTimes(1) // atomic
+    for (const [id, [start, due]] of Object.entries({
+      A: ['2026-11-02', '2026-11-04'],
+      B: ['2026-11-05', '2026-11-06'],
+      C: ['2026-11-07', '2026-11-09'],
+    })) {
+      expect(h.data().tasks[id]).toMatchObject({ startDate: start, dueDate: due })
+    }
+  })
+
+  it('"Only move this task" records only that task', async () => {
+    const h = setup({ mode: 'auto', tasks: chain(), links, answer: 'only' })
+    const r = record()
+    await h.planner.planScheduleChange(delayA, { onWritten: r.onWritten })
+    expect(r.seen[0].applied.map((c) => c.taskId)).toEqual(['A'])
+  })
+
+  it('refuses to undo over newer changes (nothing is written)', async () => {
+    const h = setup({ tasks: chain(), links })
+    const r = record()
+    await h.planner.planScheduleChange(delayA, { onWritten: r.onWritten })
+    // Someone edits the task afterwards.
+    await h.planner.planScheduleChange({
+      taskId: 'A',
+      startDate: '2026-11-08',
+      dueDate: '2026-11-09',
+    })
+    h.applySchedule.mockClear()
+    expect(await h.planner.undoScheduleWrite(r.seen[0])).toEqual({ status: 'stale' })
+    expect(h.applySchedule).not.toHaveBeenCalled()
+    expect(h.data().tasks.A).toMatchObject({ startDate: '2026-11-08', dueDate: '2026-11-09' })
+  })
+
+  it('a failed undo write is reported as failed and changes nothing', async () => {
+    const ok = setup({ tasks: chain(), links })
+    const r = record()
+    await ok.planner.planScheduleChange(delayA, { onWritten: r.onWritten })
+    const failing = setup({ tasks: chain(), links, failRemote: true })
+    // Same data as after the write, but the remote now refuses.
+    ;(failing.data() as WorkspaceData).tasks.A = {
+      ...failing.data().tasks.A,
+      startDate: '2026-11-04',
+      dueDate: '2026-11-06',
+    }
+    expect(await failing.planner.undoScheduleWrite(r.seen[0])).toMatchObject({ status: 'failed' })
+  })
+})
+
+describe('completed tasks are never rescheduled automatically', () => {
+  const withDone = () => {
+    const tasks = chain()
+    tasks[1] = { ...tasks[1], status: 'done' } // Beta (B)
+    return tasks
+  }
+
+  it('Auto: an edit that would push a done successor writes only the edit, and says so', async () => {
+    const h = setup({ mode: 'auto', tasks: withDone(), links, answer: 'apply' })
+    const outcome = await h.planner.planScheduleChange(delayA)
+    expect(outcome).toEqual({ status: 'written' })
+    expect(h.requests).toEqual([]) // nothing to preview: B stays, C is judged against B's real dates
+    expect(h.writes).toEqual([[delayA]])
+    expect(h.data().tasks.B).toMatchObject({ startDate: '2026-11-05', dueDate: '2026-11-06' })
+    expect(h.warnings.map((w) => w.message)).toEqual(['1 completed task was not moved'])
+    expect(h.warnings[0].description).toBe('“Beta” is done, so its dates stay as they were.')
+  })
+
+  it('Auto: open successors still move (preview), and the plan lists the done ones as kept', async () => {
+    const tasks = withDone()
+    tasks.push(
+      makeTask({
+        id: 'D',
+        projectId: 'p',
+        title: 'Delta',
+        startDate: '2026-11-05',
+        dueDate: '2026-11-06',
+      }),
+    )
+    const h = setup({ mode: 'auto', tasks, links: [...links, ['A', 'D']], answer: 'apply' })
+    await h.planner.planScheduleChange(delayA)
+    expect(h.requests).toHaveLength(1)
+    expect(h.writes[0].map((w) => w.taskId).sort()).toEqual(['A', 'D'])
+    expect(h.data().tasks.B).toMatchObject({ startDate: '2026-11-05', dueDate: '2026-11-06' })
+    const plan = computeReschedulePlan(
+      h.requests[0],
+      setup({ mode: 'auto', tasks, links: [...links, ['A', 'D']] }).data(),
+    )
+    expect(plan.shifts.map((s) => s.taskId)).toEqual(['D'])
+    expect(plan.blocked.map((s) => s.taskId)).toEqual(['B'])
+  })
+
+  it('Manual: no warning about a done task finishing before its predecessor', async () => {
+    const h = setup({ tasks: withDone(), links })
+    await h.planner.planScheduleChange(delayA)
+    expect(h.warnings).toEqual([]) // B is done: history, not a new conflict to act on
+  })
+
+  it('Resolve all: the plan skips done tasks and the dialog can say which', () => {
+    const tasks = withDone()
+    tasks[0] = { ...tasks[0], startDate: '2026-11-04', dueDate: '2026-11-08' } // A now overlaps B (done)
+    tasks[2] = { ...tasks[2], startDate: '2026-11-06' } // and C overlaps B too (an open successor)
+    const { data } = setup({ tasks, links })
+    const plan = computeReschedulePlan({ kind: 'resolve', projectId: 'p' }, data())
+    expect(plan.blocked.map((s) => s.taskId)).toEqual(['B'])
+    expect(plan.writes.map((w) => w.taskId)).toEqual(['C'])
+    // C is judged against the done B's real finish (Nov 6): it only has to clear that.
+    expect(plan.writes[0]).toMatchObject({ startDate: '2026-11-07' })
   })
 })

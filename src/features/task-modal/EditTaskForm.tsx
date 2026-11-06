@@ -35,11 +35,11 @@ import {
   useTask,
   useToday,
 } from '@/data/hooks'
-import { findConflicts } from '@/domain/scheduling'
+import { findConflicts, findHistoricalInconsistencies } from '@/domain/scheduling'
 import type { Task } from '@/domain/types'
 import { planScheduleChangeDetailed } from '@/features/gantt/planner'
 import { notify } from '@/lib/notify'
-import { ConflictBanner } from './ConflictBanner'
+import { ConflictBanner, HistoricalNote } from './ConflictBanner'
 import { DependenciesSection } from './DependenciesSection'
 import { confirmDiscard } from './discard'
 import {
@@ -309,13 +309,17 @@ function EditTaskFormBody({
     (values.startDate !== task.startDate || values.dueDate !== task.dueDate)
   const plannedStart = datesEdited ? values.startDate : task.startDate
   const plannedDue = datesEdited ? values.dueDate : task.dueDate
-  const conflicts = useMemo(() => {
+  const { conflicts, historical } = useMemo(() => {
     const planned = projectTasks.map((t) =>
       t.id === task.id ? { ...t, startDate: plannedStart, dueDate: plannedDue } : t,
     )
-    return findConflicts(planned, dependencies).filter(
-      (c) => c.successorId === task.id || c.predecessorId === task.id,
-    )
+    const involvesThisTask = (c: { successorId: string; predecessorId: string }) =>
+      c.successorId === task.id || c.predecessorId === task.id
+    return {
+      conflicts: findConflicts(planned, dependencies).filter(involvesThisTask),
+      // Done tasks that finished before their predecessor did: kept as history, not a to-do.
+      historical: findHistoricalInconsistencies(planned, dependencies).filter(involvesThisTask),
+    }
   }, [projectTasks, dependencies, task.id, plannedStart, plannedDue])
 
   const isSubtask = task.parentTaskId !== null
@@ -450,6 +454,17 @@ function EditTaskFormBody({
               tasksById={tasksById}
               today={today}
               pending={datesEdited}
+            />
+          </div>
+        ) : null}
+
+        {historical.length > 0 ? (
+          <div className="mt-4">
+            <HistoricalNote
+              task={task}
+              inconsistencies={historical}
+              tasksById={tasksById}
+              today={today}
             />
           </div>
         ) : null}
