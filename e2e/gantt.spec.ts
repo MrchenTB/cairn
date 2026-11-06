@@ -513,9 +513,13 @@ test.describe('gantt (local mode)', () => {
       .poll(() => stored(page, ids.alpha))
       .toEqual({ start: '2026-11-07', due: '2026-11-09' })
     expect(await writes(page)).toBe(1)
-    // The drop did not open the task, and a successful move is not announced with a toast.
+    // The drop did not open the task. A successful move is confirmed with ONE quiet toast that
+    // names the new range and offers Undo (UX iteration 2); see gantt-undo.spec.ts for the Undo.
     await expect(page).not.toHaveURL(/task=/)
-    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(1)
+    await expect(page.locator('[data-sonner-toast]')).toContainText(
+      'Moved · Nov 7 – Nov 9 · 3 days',
+    )
 
     await page.reload()
     await expect(bar(page, ids.alpha)).toHaveAccessibleName('Alpha, Nov 7 – Nov 9, 3 days, To Do')
