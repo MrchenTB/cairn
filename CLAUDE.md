@@ -28,7 +28,7 @@ React 19、TypeScript 7、Vite 8、Tailwind 4、zustand + immer（FIFO 寫入佇
 3. 跑下一節的檢查，確認沒有影響既有功能或資料。
 4. 推送分支、建立 Pull Request，內文寫：改了什麼、怎麼驗收、是否動到資料庫。
 5. 從 `gh pr checks` 或 PR 留言取得 Preview 網址，交給使用者驗收。
-6. 使用者要修改就在同一分支繼續。**使用者明確同意發布後**才合併（預設 `gh pr merge --squash --delete-branch`）。
+6. 使用者要修改就在同一分支繼續。**使用者明確同意發布後**才合併，用一般 merge commit（`gh pr merge --merge --delete-branch`），不用 squash、rebase 或強制推送。
 
 Commit 只在功能分支。不直接推 `master`，不強制推送。專案指令前加 `export PATH=$HOME/.local/node/current/bin:$PATH;`（這台電腦預設的 Node 版本太舊）。長時間測試用 `caffeinate -i`，闔上筆電會造成假失敗。
 
@@ -70,7 +70,8 @@ Supabase Free 沒有自動備份。JSON 還原會匯入成新副本，不會覆�
 
 ## 發布與回復
 
-- **發布：** 合併到 `master`，Vercel 自動部署正式站。之後確認部署成功，並提醒使用者開網站看一眼。
+- **發布：** 合併到 `master`，Vercel 自動部署正式站 <https://cairn-omega-blue.vercel.app>。之後確認部署成功、建置紀錄的 Supabase ref 是 Production，並提醒使用者開網站看一眼。
+- **新的 Vercel 專案：** 第一個 Git 部署不論分支都會成為正式部署。重建或新增專案時，不得假設連接 Git 或推送分支不會部署。
 - **回復網站：** Vercel → Instant Rollback（Hobby 只能回到上一個部署）。回復後自動部署會暫停，修好時要按 **Undo Rollback** 才恢復。接著用 `git revert` 開 PR 修正 `master`。
 - **回復資料：** migration 沒有自動復原。依回復前的 JSON 備份匯入，或另外寫修正 migration。
 

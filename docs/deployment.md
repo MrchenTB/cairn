@@ -10,6 +10,8 @@
 
 Vercel Hobby 限個人非商業使用，符合 Cairn 的用途。
 
+**目前狀態（2026-11-07）：** 已正式部署，網址 <https://cairn-omega-blue.vercel.app>。Vercel 專案 `cairn`（帳號範圍 `zhao-xuan-chen-s-projects`），正式分支 `master`，資料在 `cairn-production`。下面的首次設定是紀錄，重建環境時照做。
+
 ## 首次設定
 
 依序進行，每個階段確認成功才做下一個。第一次合併之前，`master` 不會有任何改動。
@@ -32,7 +34,9 @@ Vercel Hobby 限個人非商業使用，符合 Cairn 的用途。
 
 ### 階段 3：建立 Vercel 專案
 
-**不要用 Dashboard 的 Import。** 它匯入後會立刻部署 `master`。第一次合併之前的 `master` 沒有 `vercel.json`：沒填變數就是公開的本機模式網站；填了變數則是沒有 CSP、沒有 SPA 路由、沒有環境防護的舊版連到真實資料庫。下面的順序在第一次合併前不會產生正式部署。
+**新的 Vercel 專案，第一個 Git 部署一定會成為正式部署，不論是哪個分支。** 2026-11-07 實際發生：正式分支已設為 `master`，推送 PR 分支後，Vercel 仍把它部署成正式站。所以任何新專案都不得假設連接 Git 或推送分支不會部署：連接前先設好 Production 變數，並確認第一個會被推送的分支可以直接上線。
+
+也不要用 Dashboard 的 Import：它會立刻部署 `master`，而當時的 `master` 沒有 `vercel.json`，會變成沒有安全標頭與環境防護的網站。
 
 1. 到 <https://vercel.com/signup> 用 GitHub 帳號註冊（Hobby），停在匯入頁面，不要按 Import 或 Deploy。
 2. 登入 CLI 並建立空專案，只建立設定，不部署：`npx vercel@latest login`、`npx vercel@latest project create cairn`。
@@ -66,6 +70,8 @@ Node 版本由 `package.json` 的 `engines`（24.x）決定，建置設定由 `v
 
 ### 階段 5：第一次 Preview 與發布
 
+2026-11-07 的實際經過：第一次發布沒有走 Preview。推送 PR #1 的分支（`1f805d2`）時，Vercel 直接部署成正式站。使用者驗收後才以 merge commit 合併到 `master`，之後正式站改由 `master` 部署。Preview 變數與階段 4 留到下一次修改前補上。
+
 1. 第一個 PR 重新建置後，從 PR 頁面打開 Preview 網址，用驗收帳號登入，走過「上線後手動驗收清單」的 B、E 兩組。建置紀錄應顯示 `Vercel preview build uses Supabase project …`，那是 Staging 的 ref。
 2. 通過後，由你同意，Claude 合併 PR，Vercel 部署正式站。確認建置紀錄有 `Vercel production build uses Supabase project …`，且那是 Production 的 ref。
 3. Production 的 **Authentication → URL Configuration**：Site URL 與 Redirect URLs 都設成正式網址（結尾不加 `/`）。不要加入 localhost。
@@ -76,7 +82,7 @@ Node 版本由 `package.json` 的 `engines`（24.x）決定，建置設定由 `v
 
 ## 部署被 Vercel 阻擋時
 
-[官方文件](https://vercel.com/docs/git#deploying-private-git-repositories)說，Hobby 的 private repo 只部署專案擁有者的 commit，靠 commit 作者與 Vercel 登入連結比對。[社群也有人回報](https://community.vercel.com/t/hobby-account-private-repo-collaborators-deployment-blocked/1030)訊息為「commit author 沒有 contributing access」的阻擋，並懷疑 `Co-Authored-By` 署名也會觸發。官方沒有說明署名的影響，Cairn 還沒實測。遇到時依序處理：
+[官方文件](https://vercel.com/docs/git#deploying-private-git-repositories)說，Hobby 的 private repo 只部署專案擁有者的 commit，靠 commit 作者與 Vercel 登入連結比對。[社群也有人回報](https://community.vercel.com/t/hobby-account-private-repo-collaborators-deployment-blocked/1030)訊息為「commit author 沒有 contributing access」的阻擋，並懷疑 `Co-Authored-By` 署名也會觸發。官方沒有說明署名的影響。實測（2026-11-07）：帶 `Co-Authored-By` 署名的 commit 可以正常部署。若之後仍被阻擋，依序處理：
 
 1. 確認 commit email 已加入 GitHub 帳號，且 Vercel 是用同一個 GitHub 帳號登入。
 2. 仍被阻擋，就請 Claude 在之後的 commit 拿掉署名（`.claude/settings.json` 的 `attribution`），並重推最新一個 commit。

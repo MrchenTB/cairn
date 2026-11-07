@@ -4,7 +4,7 @@
 加上 Overview、My Tasks、跨專案 Timeline 與全域搜尋。介面受 Linear 啟發（原創設計），
 資料透過 **Supabase（Auth + Postgres + RLS）** 在不同電腦間同步，前端可免費部署在 **Vercel**。
 
-> 狀態：版本 1.0.0，功能已完成，並以本機自動化測試驗證；真實 Supabase Staging 驗收已通過；**Production 尚未建立**（見 [`docs/production-readiness.md`](docs/production-readiness.md) 第 7 節）。
+> 狀態：版本 1.0.0，**已正式部署**：<https://cairn-omega-blue.vercel.app>（Vercel ＋ Supabase Production，2026-11-07）。真實 Staging 驗收已通過；已知問題與尚未驗證的項目見 [`docs/production-readiness.md`](docs/production-readiness.md) 第 8 節。
 > 已完成／待你操作／尚未完成的清單、驗收結果與已知限制見 [`docs/progress.md`](docs/progress.md)。
 
 ## 快速開始（本機）
