@@ -45,7 +45,7 @@ npx supabase@3.0.0 db push --remote
 
 **通過條件**：每一列 `pass = true`。失敗會排在最上面。
 
-> 如果有失敗項目提到不是 Cairn 的函式或資料表（例如 Supabase 預設建立的物件），先不要處理，把那一列結果告訴我。這份腳本還沒在真實專案上跑過，可能需要調整判斷。
+> 如果有失敗項目提到不是 Cairn 的函式或資料表（例如 Supabase 預設建立的物件），先不要處理，把那一列結果告訴我。（這份腳本已在全新的 cairn-staging 上跑過，18 列全部通過。）
 
 再到 Dashboard 的 **Security Advisor** 看有沒有 RLS 相關錯誤。
 

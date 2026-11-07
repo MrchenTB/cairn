@@ -86,7 +86,7 @@ npx supabase@3.0.0 db push --remote                  # 正式套用；出現確�
 
 **預期：每一列 `pass = true`。** 失敗會排在最上面，`detail` 欄會說是哪個物件。
 
-涵蓋：PostgreSQL 版本、6 張表與兩個 migration 是否都套用、每張表的 RLS 與 4 條只限本人的 policy、`anon` 與 `PUBLIC` 沒有任何權限、`authenticated` 只有增刪改查、沒有 `SECURITY DEFINER`、函式都固定 `search_path`、只有 3 個 RPC 可由登入使用者執行、沒有能繞過 RLS 的 view、複合外鍵、排序規則、trigger。`tests/db/verify.test.ts` 逐項拿掉保護，確認對應的檢查真的會失敗。這份腳本還沒在真實 Supabase 專案上跑過。
+涵蓋：PostgreSQL 版本、6 張表與兩個 migration 是否都套用、每張表的 RLS 與 4 條只限本人的 policy、`anon` 與 `PUBLIC` 沒有任何權限、`authenticated` 只有增刪改查、沒有 `SECURITY DEFINER`、函式都固定 `search_path`、只有 3 個 RPC 可由登入使用者執行、沒有能繞過 RLS 的 view、複合外鍵、排序規則、trigger。`tests/db/verify.test.ts` 逐項拿掉保護，確認對應的檢查真的會失敗。已在全新的 Supabase 專案（PostgreSQL 17.11）上實際執行，18 列全部通過。
 
 其他檢查方式：
 
