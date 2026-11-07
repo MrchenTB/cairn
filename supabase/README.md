@@ -11,7 +11,7 @@
 
 資料模型以 `docs/architecture.md` §4 為準；平台事實（CLI v3、2026 年權限預設變更、Free 方案限制）見 `docs/platform-notes.md` 的 A 節。
 
-> 前端（Cloudflare）部署完成**不代表**資料庫已設定好。下面的步驟需要你登入自己的 Supabase 帳號親自完成。
+> 前端（Vercel）部署完成**不代表**資料庫已設定好。下面的步驟需要你登入自己的 Supabase 帳號親自完成。
 
 ---
 

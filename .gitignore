@@ -9,7 +9,6 @@ lerna-debug.log*
 
 node_modules
 dist
-dist-staging
 dist-ssr
 *.local
 
@@ -41,9 +40,8 @@ blob-report
 supabase/.temp
 supabase/.branches
 
-# Cloudflare Wrangler local state and secrets
-.wrangler
-.dev.vars*
+# Vercel CLI local state
+.vercel
 
 # Claude Code machine-specific state
 .claude/scheduled_tasks.lock

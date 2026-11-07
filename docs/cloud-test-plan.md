@@ -55,7 +55,7 @@ Dashboard → Authentication：
 
 | 設定                       | 值                                                           |
 | -------------------------- | ------------------------------------------------------------ |
-| Site URL                   | `http://localhost:5183`（之後部署 Staging 網站時改成該網址） |
+| Site URL                   | `http://localhost:5183`（之後用 Preview 網址時再加入該網址） |
 | Redirect URLs              | `http://localhost:5183`                                      |
 | Allow new users to sign up | 建好測試帳號後**關閉**                                       |
 | Confirm email              | 保持開啟（預設）                                             |
@@ -195,28 +195,20 @@ npm run test:staging:core  # 日常驗收，略過大型資料量測試（B5、P
 | P2   | 冷啟動載入 2,000 個任務 | 自動 | 記錄耗時，超過 5 秒要回報。自動化跑在開發伺服器上，數字偏高（模擬器上約 6.4 秒），部署後要再量一次才算數 |
 | P3   | 單筆寫入延遲            | 自動 | 記錄中位數與最大值，作為之後比較基準                                                                     |
 
-### W. 部署後（階段 3 才做）
+### W. 部署後（在 Preview 網址上做，見階段 3）
 
 | 編號 | 項目                                    | 通過條件                          |
 | ---- | --------------------------------------- | --------------------------------- |
-| W1   | Staging 網站載入，Console 沒有 CSP 錯誤 | 沒有 `connect-src` 被擋           |
+| W1   | Preview 網址載入，Console 沒有 CSP 錯誤 | 沒有 `connect-src` 被擋           |
 | W2   | 深層網址重新整理                        | 正常顯示                          |
 | W3   | Email 連結導回 Staging 網址             | 不會導向 localhost                |
 | W4   | Safari、Firefox、Windows（若會用到）    | `docs/deployment.md` 清單全部通過 |
 
 ---
 
-## 階段 3：部署 Staging 網站（需要你登入 Cloudflare）
+## 階段 3：Preview Deployment 就是 Staging 網站
 
-跨裝置測試（D5、D6、D7）與 W 組需要網址。
-
-```bash
-npm run build:staging
-npx wrangler@4.156.1 login
-npx wrangler@4.156.1 deploy --env staging
-```
-
-部署後把網址（`https://cairn-staging.<帳號>.workers.dev`）加進 Staging 的 Site URL 與 Redirect URLs。Staging 維持關閉註冊。
+不另外部署獨立的 Staging 網站。PR 的 Vercel Preview Deployment 就是 Staging 網站（使用 Staging 的 Supabase 專案），跨裝置測試（D5、D6、D7）與 W 組都在 Preview 網址上做，做法見 [`deployment.md`](deployment.md)。
 
 ---
 
@@ -229,6 +221,6 @@ npx wrangler@4.156.1 deploy --env staging
 - [ ] 程式碼已推到私有遠端（目前只存在這台電腦）
 - [ ] 備份流程已決定（見 `docs/production-readiness.md`）
 
-Production 步驟與 Staging 相同，差別是：Site URL 與 Redirect URLs 用正式網址、建好自己的帳號後立刻關閉註冊、不放任何測試帳號。把 Production 的 ref 填進 `.env.staging.local` 的 `CAIRN_PRODUCTION_PROJECT_REF`，測試就不可能連到它。
+Production 步驟與 Staging 相同，差別是：Site URL 與 Redirect URLs 用正式網址、建好自己的帳號後立刻關閉註冊、不放任何測試帳號。把 Production 的 ref 填進 `src/data/supabaseProjects.ts` 的 `PRODUCTION_PROJECT_REF`，測試、開發伺服器與建置就都拒絕連到它。
 
 **資料搬遷**：本機模式的資料在瀏覽器 localStorage，設定雲端金鑰後不會自動上傳，也不會被刪除。要搬上去，先在本機模式 Settings → Data 匯出 JSON，再於雲端模式匯入。

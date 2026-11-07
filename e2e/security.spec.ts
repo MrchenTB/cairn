@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 /**
  * PRD §6.1 / AC-16: user text is always rendered as text, and unknown or hostile ids in URLs are
- * handled. The dev server applies no CSP (public/_headers belongs to the host), so a payload that
+ * handled. The dev server applies no CSP (vercel.json belongs to the host), so a payload that
  * became markup would really run here. Formulas in CSV exports: src/data/backup.test.ts. The same
  * app behind the real CSP: e2e-prod/. Cross-account access: tests/db and e2e-cloud/isolation.spec.ts.
  */

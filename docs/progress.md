@@ -21,14 +21,14 @@
 - 寫入失敗時畫面回復並出現 Retry；不會虛報「已儲存」。備份可匯出 JSON／CSV 並匯入還原。
 - 本機模式（不設定 Supabase 時使用，資料只存在這個瀏覽器，介面明確標示 **Local only — not synced**）。
 - 雲端模式的程式與資料庫：6 張表、RLS、trigger、3 個 RPC 的 migration，用真實 Postgres 引擎（PGlite）測試通過。
-- 部署用檔案：`.env.example`、`wrangler.jsonc`、`public/_headers`（CSP 與安全標頭）、`docs/deployment.md`。
+- 部署用檔案：`.env.example`、`vercel.json`（CSP 與安全標頭、SPA fallback）、`docs/deployment.md`。
 - 版本號 1.0.0（Settings › About 顯示）。
 
 ### 1.2 待使用者操作（需要你的帳號或你的裝置，我沒辦法代做）
 
 1. 建立 Supabase 專案、執行 migration、執行 `supabase/README.md` 第 2 節的檢查查詢。
 2. 填入 `.env.local`、建立自己的帳號、關閉新使用者註冊。
-3. 部署到 Cloudflare，並在 Supabase 設定 Site URL 與 Redirect URL。
+3. 部署到 Vercel，並在 Supabase 設定 Site URL 與 Redirect URL。
 4. 上線後做 `docs/deployment.md` 最後面的「上線後手動驗收清單」：真實 email 連結、第二台電腦看到相同資料（驗收 13）、第二個帳號看不到資料（驗收 16）、真實中文輸入法、Safari 與 Firefox、Windows（如果會用到）。
 5. 定期匯出備份（Supabase Free 沒有自動備份）。
 
@@ -76,16 +76,16 @@
 
 在專案資料夾執行。每個指令都在 `package.json` 中。
 
-| 指令                                                                        | 測什麼                                                                                                              | 最新結果（日期）                                                                      |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `npx tsc -b`（等同 `npm run typecheck`）                                    | 全專案型別檢查                                                                                                      | 0 錯誤（2026-11-06）                                                                  |
-| `npx oxlint src e2e e2e-cloud e2e-prod tests`（`npm run lint` 即 `oxlint`） | 程式碼靜態檢查                                                                                                      | 無問題（2026-11-06）                                                                  |
-| `npx vitest run`（`npm test`）                                              | 單元測試（商業規則、日期、排程）、元件測試、資料庫測試（含 RLS，用 PGlite 真實 Postgres 引擎）                      | 1,590 項全過（2026-11-06）。其中資料庫部分 `npm run test:db` 為 300 項（QA 最終紀錄） |
-| `npm run test:e2e`（即 `npx playwright test`）                              | 在 Chromium 以本機模式走完整的使用流程：驗收 2–12、14、15、時區、中文輸入（模擬）、無障礙、安全                     | 453 項全過（2026-11-06）                                                              |
-| `npm run test:cloud`                                                        | 在 Chromium 以雲端模式、對本機模擬的 Supabase 測試：註冊登入、讀寫、兩分頁同步、斷線與失敗、帳號隔離                | 100 項全過（2026-11-06）                                                              |
-| `npm run test:prod`                                                         | 用正式版 build 與真實的 `public/_headers` 測：CSP、深層網址重新整理、延遲載入、不外洩測試程式碼與金鑰、雲端模式登入 | 17 項全過（2026-11-06）                                                               |
-| `npm run build`                                                             | 型別檢查加正式版建置                                                                                                | 成功；`dist` 約 1.8 MB，不含測試掛鉤與 source map（2026-11-06）                       |
-| `npx playwright test -c playwright.crossbrowser.config.ts`                  | Safari（WebKit）與 Firefox 的驗收流程                                                                               | **從未執行**（需先 `npx playwright install webkit firefox`，約 250 MB 每個瀏覽器）    |
+| 指令                                                                        | 測什麼                                                                                                          | 最新結果（日期）                                                                      |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `npx tsc -b`（等同 `npm run typecheck`）                                    | 全專案型別檢查                                                                                                  | 0 錯誤（2026-11-06）                                                                  |
+| `npx oxlint src e2e e2e-cloud e2e-prod tests`（`npm run lint` 即 `oxlint`） | 程式碼靜態檢查                                                                                                  | 無問題（2026-11-06）                                                                  |
+| `npx vitest run`（`npm test`）                                              | 單元測試（商業規則、日期、排程）、元件測試、資料庫測試（含 RLS，用 PGlite 真實 Postgres 引擎）                  | 1,590 項全過（2026-11-06）。其中資料庫部分 `npm run test:db` 為 300 項（QA 最終紀錄） |
+| `npm run test:e2e`（即 `npx playwright test`）                              | 在 Chromium 以本機模式走完整的使用流程：驗收 2–12、14、15、時區、中文輸入（模擬）、無障礙、安全                 | 453 項全過（2026-11-06）                                                              |
+| `npm run test:cloud`                                                        | 在 Chromium 以雲端模式、對本機模擬的 Supabase 測試：註冊登入、讀寫、兩分頁同步、斷線與失敗、帳號隔離            | 100 項全過（2026-11-06）                                                              |
+| `npm run test:prod`                                                         | 用正式版 build 與真實的 `vercel.json` 測：CSP、深層網址重新整理、延遲載入、不外洩測試程式碼與金鑰、雲端模式登入 | 17 項全過（2026-11-06）                                                               |
+| `npm run build`                                                             | 型別檢查加正式版建置                                                                                            | 成功；`dist` 約 1.8 MB，不含測試掛鉤與 source map（2026-11-06）                       |
+| `npx playwright test -c playwright.crossbrowser.config.ts`                  | Safari（WebKit）與 Firefox 的驗收流程                                                                           | **從未執行**（需先 `npx playwright install webkit firefox`，約 250 MB 每個瀏覽器）    |
 
 另外用 5 個 worker 加壓跑了一次本機模式瀏覽器測試（`npx playwright test --workers=5`），453 項全過，用來找只在電腦忙碌時才出現的時序問題。雲端測試共用一個模擬伺服器，必須依設定一次只跑一個，不要用 `--workers` 覆寫。
 
@@ -218,6 +218,6 @@ QA 分多個範圍反覆測試（資料、雲端、輸入法、時區、甘特�
 | `tests/cloud-sim/`    | 本機模擬的 Supabase（只給測試用，`src/` 不得引用） |
 | `e2e/`                | 本機模式的端對端測試                               |
 | `e2e-cloud/`          | 雲端模式的端對端測試（對模擬器）                   |
-| `e2e-prod/`           | 正式版 build 的端對端測試（含真實 `_headers`）     |
+| `e2e-prod/`           | 正式版 build 的端對端測試（含真實 `vercel.json`）  |
 
 給你的下一步：照 `docs/deployment.md` 部署並完成最後的手動驗收清單。清單的每一項完成後，才能把驗收 13、1、16 改寫成「通過」。

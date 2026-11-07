@@ -5,6 +5,7 @@
  * errs on the side of refusing.
  */
 import { isSecretSupabaseKey } from '../../src/data/secretKeys.ts'
+import { PRODUCTION_PROJECT_REF } from '../../src/data/supabaseProjects.ts'
 
 /** Every project the suite creates starts with this; it is the only kind it ever deletes. */
 export const TEST_PROJECT_PREFIX = '[e2e] '
@@ -81,7 +82,7 @@ export function checkStagingEnv(env: Env, options: { dryRun: boolean }): Staging
   // 2. The project: URL, its ref, and the two refs that name the staging and production projects.
   const rawUrl = value(env, 'VITE_SUPABASE_URL')
   const stagingRef = value(env, 'CAIRN_STAGING_PROJECT_REF')
-  const productionRef = value(env, 'CAIRN_PRODUCTION_PROJECT_REF')
+  const productionRef = value(env, 'CAIRN_PRODUCTION_PROJECT_REF') || PRODUCTION_PROJECT_REF
   let url = ''
   let urlRef: string | null = null
 

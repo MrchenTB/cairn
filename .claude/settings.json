@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push origin *)",
+      "Bash(git push -u origin *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr diff *)"
+    ],
+    "ask": [
+      "Bash(gh pr merge *)",
+      "Bash(git push * master*)",
+      "Bash(git push *:master*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(gh repo edit *)",
+      "Bash(gh repo delete *)",
+      "Bash(vercel *)",
+      "Bash(npx vercel*)",
+      "Bash(supabase *)",
+      "Bash(npx supabase*)"
+    ],
+    "deny": ["Read(./.env.local)", "Read(./.env.staging.local)", "Read(./.env.production*)"]
+  }
+}

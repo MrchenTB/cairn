@@ -37,7 +37,7 @@ export function findSecretEnvVars(env: Readonly<Record<string, unknown>>): strin
 
 /**
  * What is wrong with this VITE_SUPABASE_URL on a deployed site (null = nothing): config.ts falls
- * back to local mode on an invalid URL, connect-src in public/_headers only allows hosted projects
+ * back to local mode on an invalid URL, connect-src in vercel.json only allows hosted projects
  * over https, and supabase-js appends its own paths. Worded to follow the variable's name.
  */
 export function supabaseUrlProblem(value: string): string | null {
@@ -51,7 +51,7 @@ export function supabaseUrlProblem(value: string): string | null {
     return 'is not a valid http(s) URL, so this build runs in local mode'
   }
   if (url.protocol !== 'https:' || !url.hostname.endsWith('.supabase.co')) {
-    return 'is not https://<project-ref>.supabase.co, so connect-src in public/_headers blocks it on a deployed site'
+    return 'is not https://<project-ref>.supabase.co, so connect-src in vercel.json blocks it on a deployed site'
   }
   if (url.pathname !== '/') {
     return 'must be the project URL without a path, or every request goes to the wrong address'

@@ -7,8 +7,8 @@
     "dev": "vite",
     "dev:staging": "vite --mode staging --port 5183 --strictPort",
     "build": "tsc -b && vite build",
-    "build:staging": "tsc -b && vite build --mode staging --outDir dist-staging",
     "typecheck": "tsc -b",
+    "verify": "prettier --check . && oxlint && npm run build && vitest run",
     "lint": "oxlint",
     "format": "prettier --write .",
     "test": "vitest run",
@@ -72,6 +72,6 @@
     "vitest": "^5.0.5"
   },
   "engines": {
-    "node": ">=22.22"
+    "node": "24.x"
   }
 }

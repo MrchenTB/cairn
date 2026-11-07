@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 import { findSecretEnvVars, supabaseUrlProblem } from './src/data/secretKeys.ts'
+import { projectRefOf, supabaseTargetProblem } from './src/data/supabaseProjects.ts'
 
 /**
  * Build-time checks on the VITE_ variables (all of them public). A secret key stops the build: at
@@ -42,9 +43,35 @@ function checkPublicEnv(): Plugin {
   }
 }
 
+/**
+ * Real data stays out of everything but the production site: refuses a dev server or build on this
+ * computer that points at production, and a Vercel build whose variables have the wrong scope.
+ */
+function checkSupabaseTarget(): Plugin {
+  return {
+    name: 'cairn:check-supabase-target',
+    configResolved(config) {
+      const vercelEnv = process.env.VERCEL_ENV
+      const { VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY, VITE_SUPABASE_ANON_KEY } =
+        config.env
+      const problem = supabaseTargetProblem({
+        vercelEnv,
+        url: VITE_SUPABASE_URL,
+        hasKey: Boolean(VITE_SUPABASE_PUBLISHABLE_KEY || VITE_SUPABASE_ANON_KEY),
+      })
+      if (problem) throw new Error(`Refusing to start: ${problem}`)
+      if (vercelEnv) {
+        config.logger.info(
+          `Vercel ${vercelEnv} build uses Supabase project ${projectRefOf(VITE_SUPABASE_URL)}.`,
+        )
+      }
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), checkPublicEnv()],
+  plugins: [react(), tailwindcss(), checkPublicEnv(), checkSupabaseTarget()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

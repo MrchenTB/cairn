@@ -5,6 +5,7 @@
  */
 import { existsSync } from 'node:fs'
 import { loadEnv } from 'vite'
+import { PRODUCTION_PROJECT_REF } from '../../src/data/supabaseProjects.ts'
 import { checkStagingEnv } from './guard.ts'
 
 // Vite reads these too when it loads the staging mode. They are not wrong, but a stale one can
@@ -22,10 +23,10 @@ try {
         '.env.staging.local can come from there.',
     )
   }
-  if (!env.CAIRN_PRODUCTION_PROJECT_REF?.trim()) {
+  if (!PRODUCTION_PROJECT_REF && !env.CAIRN_PRODUCTION_PROJECT_REF?.trim()) {
     console.log(
-      'Note: CAIRN_PRODUCTION_PROJECT_REF is empty. Fill it in as soon as the production project exists: ' +
-        'then the tests refuse to run against it.',
+      'Note: PRODUCTION_PROJECT_REF in src/data/supabaseProjects.ts is empty. Fill it in as soon as ' +
+        'the production project exists: then the tests and the dev server refuse to use it.',
     )
   }
 } catch (error) {
