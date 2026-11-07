@@ -7,8 +7,7 @@
 
 export const STAGING_PROJECT_REF = 'bvaydvvqtuykoznoljux'
 
-/** Empty until the production project exists. Fill it in the moment it does. */
-export const PRODUCTION_PROJECT_REF = ''
+export const PRODUCTION_PROJECT_REF: string = 'jwonoholnttckednwfwb'
 
 const PROJECT_URL = /^https:\/\/([a-z0-9]+)\.supabase\.co\/?$/
 

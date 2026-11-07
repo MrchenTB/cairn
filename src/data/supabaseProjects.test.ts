@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { projectRefOf, STAGING_PROJECT_REF, supabaseTargetProblem } from './supabaseProjects.ts'
+import {
+  PRODUCTION_PROJECT_REF,
+  projectRefOf,
+  STAGING_PROJECT_REF,
+  supabaseTargetProblem,
+} from './supabaseProjects.ts'
 
 const PRODUCTION = 'productionproject000'
 const url = (ref: string) => `https://${ref}.supabase.co`
@@ -17,6 +22,24 @@ describe('projectRefOf', () => {
     expect(projectRefOf('https://abc123.supabase.co.evil.example')).toBeNull()
     expect(projectRefOf('http://127.0.0.1:54321')).toBeNull()
     expect(projectRefOf('')).toBeNull()
+  })
+})
+
+describe('the recorded projects', () => {
+  const real = (vercelEnv: string | undefined, ref: string) =>
+    supabaseTargetProblem({ vercelEnv, url: url(ref), hasKey: true })
+
+  it('are two different projects', () => {
+    expect(projectRefOf(url(PRODUCTION_PROJECT_REF))).toBe(PRODUCTION_PROJECT_REF)
+    expect(PRODUCTION_PROJECT_REF).not.toBe(STAGING_PROJECT_REF)
+  })
+
+  it('keep the real production project out of this computer and out of previews', () => {
+    expect(real(undefined, PRODUCTION_PROJECT_REF)).toMatch(/only the production site/)
+    expect(real('preview', PRODUCTION_PROJECT_REF)).toMatch(/must use the staging project/)
+    expect(real('production', PRODUCTION_PROJECT_REF)).toBeNull()
+    expect(real('preview', STAGING_PROJECT_REF)).toBeNull()
+    expect(real('production', STAGING_PROJECT_REF)).toMatch(/points at the staging project/)
   })
 })
 
