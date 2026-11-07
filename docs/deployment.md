@@ -52,6 +52,8 @@ Vercel Hobby 限個人非商業使用，符合 Cairn 的用途。
    | `VITE_SUPABASE_URL`             | Production | Production 的 Project URL     |
    | `VITE_SUPABASE_PUBLISHABLE_KEY` | Production | Production 的 publishable key |
 
+   Dashboard 的 Preview 選項可能只列出個別分支。要套用到所有 Preview 分支，改用 CLI 且不指定分支：`npx vercel@latest env add <名稱> preview --no-sensitive`（URL 可加 `--value`；key 由你在自己的終端機輸入）。
+
    不要勾 Development。範圍設錯時建置會失敗並說明原因（`src/data/supabaseProjects.ts`），不會連到錯的資料庫。但同一專案內 URL 和 key 配錯對時防護抓不到，請仔細核對。
 
 7. **Settings → Deployment Protection**：確認 Vercel Authentication 為 **Standard Protection**，只有你登入 Vercel 後才能開 Preview。
@@ -70,7 +72,7 @@ Node 版本由 `package.json` 的 `engines`（24.x）決定，建置設定由 `v
 
 ### 階段 5：第一次 Preview 與發布
 
-2026-11-07 的實際經過：第一次發布沒有走 Preview。推送 PR #1 的分支（`1f805d2`）時，Vercel 直接部署成正式站。使用者驗收後才以 merge commit 合併到 `master`，之後正式站改由 `master` 部署。Preview 變數與階段 4 留到下一次修改前補上。
+2026-11-07 的實際經過：第一次發布沒有走 Preview。推送 PR #1 的分支（`1f805d2`）時，Vercel 直接部署成正式站。使用者驗收後才以 merge commit 合併到 `master`，之後正式站改由 `master` 部署。Preview 變數與階段 4 在同一天補上。
 
 1. 第一個 PR 重新建置後，從 PR 頁面打開 Preview 網址，用驗收帳號登入，走過「上線後手動驗收清單」的 B、E 兩組。建置紀錄應顯示 `Vercel preview build uses Supabase project …`，那是 Staging 的 ref。
 2. 通過後，由你同意，Claude 合併 PR，Vercel 部署正式站。確認建置紀錄有 `Vercel production build uses Supabase project …`，且那是 Production 的 ref。
