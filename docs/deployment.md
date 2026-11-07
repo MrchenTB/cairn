@@ -30,24 +30,29 @@ Vercel Hobby 限個人非商業使用，符合 Cairn 的用途。
 4. **Authentication → Sign In / Providers**，關閉 **Allow new users to sign up**。不要關閉 Email provider。
 5. 把 Project ref 告訴 Claude，由它填入 `src/data/supabaseProjects.ts` 的 `PRODUCTION_PROJECT_REF`。Project ref 與 publishable key 都不是機密，但 publishable key 不需要給 Claude，下一階段直接填在 Vercel。
 
-### 階段 3：Vercel 連接 GitHub
+### 階段 3：建立 Vercel 專案
 
-1. 用 GitHub 帳號登入 <https://vercel.com>，**Add New → Project**，只授權 `cairn` 這個 repo 並匯入。
-2. 匯入畫面**不要填環境變數**，那裡預設套用到所有環境。直接 Deploy。這第一次部署的是尚未合併的舊版 `master`，以本機模式執行，不要在裡面輸入資料。
-3. **Settings → Environments → Production → Branch Tracking**：確認正式分支是 `master`。
-4. **Settings → Environment Variables**，新增四筆，每筆只勾一個環境：
+**不要用 Dashboard 的 Import。** 它匯入後會立刻部署 `master`。第一次合併之前的 `master` 沒有 `vercel.json`：沒填變數就是公開的本機模式網站；填了變數則是沒有 CSP、沒有 SPA 路由、沒有環境防護的舊版連到真實資料庫。下面的順序在第一次合併前不會產生正式部署。
+
+1. 到 <https://vercel.com/signup> 用 GitHub 帳號註冊（Hobby），停在匯入頁面，不要按 Import 或 Deploy。
+2. 登入 CLI 並建立空專案，只建立設定，不部署：`npx vercel@latest login`、`npx vercel@latest project create cairn`。
+3. 連接 GitHub，授權時只選 `cairn` 這個 repo。連接後確認 **Deployments** 是空的。
+4. **Settings → Environments → Production → Branch Tracking**：確認正式分支是 `master`。
+5. **Settings → Environment Variables**：勾選 **Enable access to System Environment Variables**。環境防護靠 `VERCEL_ENV` 判斷環境。
+6. 同一頁先新增 Preview 的兩筆，再新增 Production 的兩筆，每筆只勾一個環境：
 
    | 變數                            | 環境       | 值                            |
    | ------------------------------- | ---------- | ----------------------------- |
-   | `VITE_SUPABASE_URL`             | Production | Production 的 Project URL     |
-   | `VITE_SUPABASE_PUBLISHABLE_KEY` | Production | Production 的 publishable key |
    | `VITE_SUPABASE_URL`             | Preview    | Staging 的 Project URL        |
    | `VITE_SUPABASE_PUBLISHABLE_KEY` | Preview    | Staging 的 publishable key    |
+   | `VITE_SUPABASE_URL`             | Production | Production 的 Project URL     |
+   | `VITE_SUPABASE_PUBLISHABLE_KEY` | Production | Production 的 publishable key |
 
-   不要勾 Development。範圍設錯時建置會失敗並說明原因（`src/data/supabaseProjects.ts`），不會連到錯的資料庫。
+   不要勾 Development。範圍設錯時建置會失敗並說明原因（`src/data/supabaseProjects.ts`），不會連到錯的資料庫。但同一專案內 URL 和 key 配錯對時防護抓不到，請仔細核對。
 
-5. **Settings → Deployment Protection**：確認 Vercel Authentication 為 **Standard Protection**，只有你登入 Vercel 後才能開 Preview。
-6. **Settings → General → Vercel Toolbar**：Preview 設為 Off。工具列的腳本會被 CSP 擋下，留著會在 Console 產生無關的錯誤。
+7. **Settings → Deployment Protection**：確認 Vercel Authentication 為 **Standard Protection**，只有你登入 Vercel 後才能開 Preview。
+8. **Settings → General → Vercel Toolbar**：Preview 設為 Off。工具列的腳本會被 CSP 擋下，留著會在 Console 產生無關的錯誤。
+9. 全部設定完成後執行 `npx vercel@latest logout`。日常流程不需要 CLI，Preview 網址可從 PR 取得。
 
 Node 版本由 `package.json` 的 `engines`（24.x）決定，建置設定由 `vercel.json` 決定，兩者都不用在 Vercel 設定。
 
@@ -62,8 +67,8 @@ Node 版本由 `package.json` 的 `engines`（24.x）決定，建置設定由 `v
 ### 階段 5：第一次 Preview 與發布
 
 1. 第一個 PR 重新建置後，從 PR 頁面打開 Preview 網址，用驗收帳號登入，走過「上線後手動驗收清單」的 B、E 兩組。建置紀錄應顯示 `Vercel preview build uses Supabase project …`，那是 Staging 的 ref。
-2. 通過後，由你同意，Claude 合併 PR，Vercel 部署正式站。
-3. Production 的 **Authentication → URL Configuration**：Site URL 與 Redirect URLs 都設成正式網址（結尾不加 `/`）。正式網址才有效。不要加入 localhost。
+2. 通過後，由你同意，Claude 合併 PR，Vercel 部署正式站。確認建置紀錄有 `Vercel production build uses Supabase project …`，且那是 Production 的 ref。
+3. Production 的 **Authentication → URL Configuration**：Site URL 與 Redirect URLs 都設成正式網址（結尾不加 `/`）。不要加入 localhost。
 4. 用自己的帳號登入正式站，建一個專案，確認側邊欄是 Saved，到 Production 的 Table Editor 看得到資料。
 5. **Settings → Data → Export JSON backup** 匯出一次，確認備份流程可用。
 
