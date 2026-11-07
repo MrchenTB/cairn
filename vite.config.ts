@@ -27,13 +27,14 @@ function checkPublicEnv(): Plugin {
         config.env
       const hasSupabase =
         VITE_SUPABASE_URL && (VITE_SUPABASE_PUBLISHABLE_KEY || VITE_SUPABASE_ANON_KEY)
-      if (config.mode === 'production' && !hasSupabase) {
+      const deployed = config.mode === 'production' || config.mode === 'staging'
+      if (deployed && !hasSupabase) {
         config.logger.warn(
           'Supabase is not configured: this build runs in local mode, with data only in each ' +
             'browser and no sign-in or sync ("Local only — not synced").',
         )
       }
-      if (config.mode === 'production' && hasSupabase) {
+      if (deployed && hasSupabase) {
         const problem = supabaseUrlProblem(VITE_SUPABASE_URL.trim())
         if (problem) config.logger.warn(`VITE_SUPABASE_URL ${problem}.`)
       }
@@ -59,7 +60,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'unit',
-          include: ['src/**/*.test.ts'],
+          include: ['src/**/*.test.ts', 'tests/staging/**/*.test.ts'],
           environment: 'node',
         },
       },

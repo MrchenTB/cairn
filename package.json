@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:staging": "vite --mode staging --port 5183 --strictPort",
     "build": "tsc -b && vite build",
+    "build:staging": "tsc -b && vite build --mode staging --outDir dist-staging",
     "typecheck": "tsc -b",
     "lint": "oxlint",
     "format": "prettier --write .",
@@ -15,6 +17,8 @@
     "test:db": "vitest run --project db",
     "test:e2e": "playwright test",
     "test:cloud": "playwright test --config=playwright.cloud.config.ts",
+    "test:staging": "playwright test --config=playwright.staging.config.ts",
+    "test:staging:dry-run": "CAIRN_STAGING_DRY_RUN=1 playwright test --config=playwright.staging.config.ts",
     "test:prod": "playwright test --config=playwright.prod.config.ts",
     "preview": "vite preview"
   },
