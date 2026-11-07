@@ -1,129 +1,101 @@
-# 部署指南：Supabase（資料）＋ Cloudflare（網站）
+# 部署指南：GitHub ＋ Vercel（網站）＋ Supabase（資料）
 
-Cairn 由兩個彼此獨立的部分組成，**兩者都要完成才算「雲端同步可用」**：
+| 部分   | 服務                     | 負責                                          |
+| ------ | ------------------------ | --------------------------------------------- |
+| 程式碼 | GitHub Private           | 版本紀錄、Pull Request                        |
+| 網站   | Vercel（Hobby）          | PR 產生 Preview，`master` 產生正式站          |
+| 資料   | Supabase（Free），兩專案 | Staging 給測試與 Preview，Production 放真資料 |
 
-| 部分       | 服務                                      | 負責                                       | 需要你親自操作的事                              |
-| ---------- | ----------------------------------------- | ------------------------------------------ | ----------------------------------------------- |
-| 資料與登入 | Supabase（Free）                          | Postgres 資料庫、RLS 權限、Email／密碼登入 | 建立專案、執行 SQL、複製 URL 與 publishable key |
-| 網站       | Cloudflare（Free，Workers Static Assets） | 提供 `dist/` 靜態檔案                      | 登入 Cloudflare、執行部署（或連接 GitHub）      |
+日常開發與發布流程見根目錄的 [`CLAUDE.md`](../CLAUDE.md)。真實 Staging 的驗收結果見 [`production-readiness.md`](production-readiness.md) 第 7 節。
 
-> 「網站部署完成」不等於「雲端資料庫已設定完成」。只部署網站而沒有設定 Supabase 時，App 會以本機模式執行，
-> 側邊欄顯示 **Local only — not synced**，資料不會跨裝置同步。
+Vercel Hobby 限個人非商業使用，符合 Cairn 的用途。
 
-**重要**：到目前為止，雲端部分只在本機模擬環境測試過（詳見 [`docs/progress.md`](progress.md) 第 5 節）。
-照下面步驟做完、並完成最後的「上線後手動驗收清單」之前，不能說雲端同步已經驗證完成。
+**目前狀態（2026-11-07）：** 已正式部署，網址 <https://cairn-omega-blue.vercel.app>。Vercel 專案 `cairn`（帳號範圍 `zhao-xuan-chen-s-projects`），正式分支 `master`，資料在 `cairn-production`。下面的首次設定是紀錄，重建環境時照做。
 
-建議順序：步驟 1 → 2 → 3（先拿到網站網址）→ 4（把網址告訴 Supabase）→ 5（關閉註冊）→ 驗收清單。
+## 首次設定
 
----
+依序進行，每個階段確認成功才做下一個。第一次合併之前，`master` 不會有任何改動。
 
-## 事前準備
+### 階段 1：GitHub Private Repository
 
-- Node.js 22.22 以上（建議 24 LTS；專案的 `.node-version` 指定 24）與 npm，在專案資料夾執行 `npm install`。
-- 一個 Supabase 帳號與一個 Cloudflare 帳號（兩者都有免費方案）。
+1. 在專案資料夾執行 `gh auth login`，選 GitHub.com、HTTPS，用瀏覽器授權。
+2. 確認 git 的 commit email（`git config user.email`）在 GitHub **Settings → Emails** 中，Vercel 靠它辨認作者。
+3. 由 Claude 建立私有 repo，推送 `master` 與工作分支，並開第一個 PR。Repo 要放在**個人帳號**下：Vercel Hobby 不能部署 GitHub 組織底下的 private repo。
 
----
+### 階段 2：Supabase Production
 
-## 步驟 1 — 建立 Supabase 專案並套用資料庫結構
+流程與 Staging 相同，詳細步驟見 [`supabase/README.md`](../supabase/README.md)。
 
-完整說明與驗證方式：[`supabase/README.md`](../supabase/README.md)。最短流程：
+1. 建立新專案（建議與 Staging 同區域）。資料庫密碼存入密碼管理工具。
+2. **SQL Editor** 依檔名順序執行 `supabase/migrations/` 的每個檔案，再執行 `supabase/verify.sql`，確認全部 `pass = true`。
+3. **Authentication → Users → Add user**，建立自己的帳號並勾選 Auto Confirm。密碼不要與測試帳號相同。
+4. **Authentication → Sign In / Providers**，關閉 **Allow new users to sign up**。不要關閉 Email provider。
+5. 把 Project ref 告訴 Claude，由它填入 `src/data/supabaseProjects.ts` 的 `PRODUCTION_PROJECT_REF`。Project ref 與 publishable key 都不是機密，但 publishable key 不需要給 Claude，下一階段直接填在 Vercel。
 
-1. 到 <https://supabase.com/dashboard> 建立免費專案（Region 建議選 Northeast Asia (Tokyo) 或 Singapore）。需要 PostgreSQL 15 以上（新專案預設即可）。
-2. 左側 **SQL Editor** → New query → 貼上 `supabase/migrations/20261102000000_init.sql` **全部內容** → **Run**。
-   這份 migration 只能用在全新的空專案，重跑會因「物件已存在」而失敗。
-3. 在同一個 SQL Editor 執行 `supabase/README.md` 第 2 節的兩段檢查查詢，確認：
-   6 張表都啟用 RLS、每張 4 條 policy、`anon` 沒有任何權限、只有 3 個 RPC 可由登入使用者執行、沒有 `SECURITY DEFINER`。
-4. **Project Settings → Data API**：複製 Project URL；**Project Settings → API Keys**：複製 **publishable key**（`sb_publishable_…`）。
-   **不要**使用 `service_role`／`sb_secret_…` key。
+### 階段 3：建立 Vercel 專案
 
-## 步驟 2 — 建立你自己的帳號，並在本機連上雲端測試
+**新的 Vercel 專案，第一個 Git 部署一定會成為正式部署，不論是哪個分支。** 2026-11-07 實際發生：正式分支已設為 `master`，推送 PR 分支後，Vercel 仍把它部署成正式站。所以任何新專案都不得假設連接 Git 或推送分支不會部署：連接前先設好 Production 變數，並確認第一個會被推送的分支可以直接上線。
 
-1. 建立帳號（建議這個方法）：Supabase Dashboard → **Authentication → Users → Add user → Create new user**，輸入 email 與密碼，勾選 **Auto Confirm User**（選項名稱以實際畫面為準）。
-   這樣不需要收確認信。若改在 App 的登入頁按「Create an account」，Supabase 預設會寄確認信，但內建寄信服務只寄給專案團隊成員的信箱、每小時 2 封，你的信箱不是團隊成員時會收不到。
-2. 複製環境變數範本並填入兩個值：
+也不要用 Dashboard 的 Import：它會立刻部署 `master`，而當時的 `master` 沒有 `vercel.json`，會變成沒有安全標頭與環境防護的網站。
 
-```bash
-cp .env.example .env.local
-```
+1. 到 <https://vercel.com/signup> 用 GitHub 帳號註冊（Hobby），停在匯入頁面，不要按 Import 或 Deploy。
+2. 登入 CLI 並建立空專案，只建立設定，不部署：`npx vercel@latest login`、`npx vercel@latest project create cairn`。
+3. 連接 GitHub：`npx vercel@latest link --yes --project cairn`、`npx vercel@latest git connect --yes`。`link` 會自動產生含暫時憑證的 `.env.local` 並修改 `.gitignore`，Cairn 用不到，請刪除該檔並還原 `.gitignore`。連接後確認 **Deployments** 是空的。
+4. **Settings → Environments → Production → Branch Tracking**：確認正式分支是 `master`。
+5. **Settings → Environment Variables**：勾選 **Enable access to System Environment Variables**。環境防護靠 `VERCEL_ENV` 判斷環境。
+6. 同一頁先新增 Preview 的兩筆，再新增 Production 的兩筆，每筆只勾一個環境：
 
-在 `.env.local` 填入 `VITE_SUPABASE_URL`（Project URL）與 `VITE_SUPABASE_PUBLISHABLE_KEY`（publishable key）。其他變數留空。
+   | 變數                            | 環境       | 值                            |
+   | ------------------------------- | ---------- | ----------------------------- |
+   | `VITE_SUPABASE_URL`             | Preview    | Staging 的 Project URL        |
+   | `VITE_SUPABASE_PUBLISHABLE_KEY` | Preview    | Staging 的 publishable key    |
+   | `VITE_SUPABASE_URL`             | Production | Production 的 Project URL     |
+   | `VITE_SUPABASE_PUBLISHABLE_KEY` | Production | Production 的 publishable key |
 
-3. 啟動並登入：
+   不要勾 Development。範圍設錯時建置會失敗並說明原因（`src/data/supabaseProjects.ts`），不會連到錯的資料庫。但同一專案內 URL 和 key 配錯對時防護抓不到，請仔細核對。
 
-```bash
-npm run dev
-```
+7. **Settings → Deployment Protection**：確認 Vercel Authentication 為 **Standard Protection**，只有你登入 Vercel 後才能開 Preview。
+8. **Settings → General → Vercel Toolbar**：Preview 設為 Off。工具列的腳本會被 CSP 擋下，留著會在 Console 產生無關的錯誤。
+9. 全部設定完成後刪除本機的 `.vercel/`，並執行 `npx vercel@latest logout`。日常流程不需要 CLI，Preview 網址可從 PR 取得。
 
-打開 http://localhost:5173 ，用步驟 1 建立的帳號登入。建立一個專案，到 Supabase **Table Editor** 的 `projects` 表應可看到那筆資料。
+Node 版本由 `package.json` 的 `engines`（24.x）決定，建置設定由 `vercel.json` 決定，兩者都不用在 Vercel 設定。
 
-## 步驟 3 — 部署網站到 Cloudflare
+### 階段 4：Staging 接受 Preview 網址
 
-`VITE_*` 變數是在 **build 時** 寫進 JavaScript 的，所以要在 build 之前設定好。它們是公開的，只能放 URL 與 publishable key。
+1. Staging 的 **Authentication → Users → Add user**，建立 Preview 驗收帳號（勾 Auto Confirm）。不要沿用測試帳號 A、B，自動測試遇到其中有非測試專案就會停止。
+2. Staging 的 **Authentication → URL Configuration → Redirect URLs** 加入下面兩筆，`<slug>` 是 Vercel 帳號代稱，可在 Preview 網址的結尾看到：
+   - `https://*-<slug>.vercel.app`
+   - `https://*-<slug>.vercel.app/**`
+3. Staging 的註冊可以在此時關閉。
 
-`npm run build` 會檢查這些變數：
+### 階段 5：第一次 Preview 與發布
 
-- 任何 `VITE_*` 變數含有 secret／service role key 時**直接中止**。
-- 若印出 `Supabase is not configured` 或 `VITE_SUPABASE_URL …` 的警告，代表這個 build 不會同步（本機模式，或連線會被 CSP 擋下），請先修正再部署。
-- 想在部署前確認正式版，可以執行 `npm run test:prod`（不會動到 `dist/`，也不需要 Supabase 帳號）。
+2026-11-07 的實際經過：第一次發布沒有走 Preview。推送 PR #1 的分支（`1f805d2`）時，Vercel 直接部署成正式站。使用者驗收後才以 merge commit 合併到 `master`，之後正式站改由 `master` 部署。Preview 變數與階段 4 留到下一次修改前補上。
 
-> 安全標頭（`public/_headers`）的 CSP 只允許連線到 `*.supabase.co`。如果你使用 Supabase 的自訂網域，
-> 必須先修改 `public/_headers` 的 `connect-src` 並重新建置，否則瀏覽器會擋下所有雲端請求。
+1. 第一個 PR 重新建置後，從 PR 頁面打開 Preview 網址，用驗收帳號登入，走過「上線後手動驗收清單」的 B、E 兩組。建置紀錄應顯示 `Vercel preview build uses Supabase project …`，那是 Staging 的 ref。
+2. 通過後，由你同意，Claude 合併 PR，Vercel 部署正式站。確認建置紀錄有 `Vercel production build uses Supabase project …`，且那是 Production 的 ref。
+3. Production 的 **Authentication → URL Configuration**：Site URL 與 Redirect URLs 都設成正式網址（結尾不加 `/`）。不要加入 localhost。
+4. 用自己的帳號登入正式站，建一個專案，確認側邊欄是 Saved，到 Production 的 Table Editor 看得到資料。
+5. **Settings → Data → Export JSON backup** 匯出一次，確認備份流程可用。
 
-### 方法 A：本機指令部署（最短）
+本機模式的舊資料要搬上來時，先在本機模式匯出 JSON，再於正式站匯入。
 
-1. `.env.local` 已在步驟 2 填好，`npm run build` 會自動讀取它（不需要另外建檔）。
-2. 建置並部署：
+## 部署被 Vercel 阻擋時
 
-```bash
-npm run build
-```
+[官方文件](https://vercel.com/docs/git#deploying-private-git-repositories)說，Hobby 的 private repo 只部署專案擁有者的 commit，靠 commit 作者與 Vercel 登入連結比對。[社群也有人回報](https://community.vercel.com/t/hobby-account-private-repo-collaborators-deployment-blocked/1030)訊息為「commit author 沒有 contributing access」的阻擋，並懷疑 `Co-Authored-By` 署名也會觸發。官方沒有說明署名的影響。實測（2026-11-07）：帶 `Co-Authored-By` 署名的 commit 可以正常部署。若之後仍被阻擋，依序處理：
 
-```bash
-npx wrangler@4.156.1 login
-```
-
-```bash
-npx wrangler@4.156.1 deploy
-```
-
-`login` 會開瀏覽器請你授權 Cloudflare；`deploy` 讀取 `wrangler.jsonc`，上傳 `dist/`，完成後會顯示網址（例如 `https://cairn.<你的帳號>.workers.dev`）。
-之後每次更新程式，重新 `npm run build` 與 `deploy` 即可。
-
-### 方法 B：連接 GitHub 自動部署（Workers Builds）
-
-1. 把專案推到你自己的 GitHub repository（`.env*` 已被忽略，不會上傳金鑰）。
-2. Cloudflare Dashboard → **Workers & Pages → Create → Import a repository**，選擇該 repo。
-3. Build command：`npm run build`；Deploy command：`npx wrangler deploy`（預設）。
-4. **Settings → Build → Build variables and secrets** 新增 `VITE_SUPABASE_URL`、`VITE_SUPABASE_PUBLISHABLE_KEY`
-   （是 _build_ 變數，不是 runtime vars）。Node 版本會讀取 repo 內的 `.node-version`（24）。
-5. 之後每次 push 都會自動重新部署。
-
-## 步驟 4 — 讓 Supabase 認得你的正式網址
-
-Supabase Dashboard → **Authentication → URL Configuration**：
-
-- **Site URL**：你的正式網址（例如 `https://cairn.<帳號>.workers.dev`）。預設值 `http://localhost:3000` 一定要改。
-- **Redirect URLs**：加入正式網址本身（只有網域，結尾不要加 `/login` 之類的路徑，也不要加 `/`）與 `http://localhost:5173`（本機開發用）。
-
-原因：App 寄出確認信與重設密碼信時，要求導回的是「目前開啟 App 的網址」（只有網域部分）。
-這個網址不在 Redirect URLs 清單內時，信裡的連結會退回 Site URL。
-（`supabase/README.md` 第 3 節建議的 `/login` 寫法與目前程式不一致，請以本文件為準。）
-
-## 步驟 5 — 關閉新使用者註冊
-
-確認你的帳號可以登入之後：Supabase Dashboard → **Authentication → Sign In / Providers** → 關閉 **Allow new users to sign up**。
-
-- 既有帳號仍可登入，其他人無法再註冊（App 會顯示 “New sign-ups are disabled for this app.”）。
-- **不要**關閉整個 Email provider，否則你自己也無法登入。
+1. 確認 commit email 已加入 GitHub 帳號，且 Vercel 是用同一個 GitHub 帳號登入。
+2. 仍被阻擋，就請 Claude 在之後的 commit 拿掉署名（`.claude/settings.json` 的 `attribution`），並重推最新一個 commit。
+3. 還是不行，再考慮把 repo 改為公開或升級 Pro，這兩項都由你決定。
 
 ---
 
 ## 免費方案限制與風險（請務必知道）
 
-- **Supabase Free 沒有自動備份**，也沒有時間點還原。請定期在 App 的 **Settings → Data → Export JSON backup** 下載備份。
+- **Supabase Free 沒有自動備份**，也沒有時間點還原。請定期在 App 的 **Settings → Data → Export JSON backup** 下載備份。還原是把備份匯入成**新的副本**，不會覆蓋或合併既有資料。
 - **Supabase Free 專案閒置約 7 天會被暫停**；到 Dashboard 按 Restore 即可恢復（資料保留，但暫停期間 App 無法讀寫）。
 - Free 方案最多 2 個進行中的專案；資料庫容量與流量對個人使用綽綽有餘，詳見 `docs/platform-notes.md` A1。
-- Cloudflare 靜態檔案請求免費且不限次數；Git 自動建置每月有分鐘數上限（個人使用不會碰到）。
+- Vercel Hobby 的流量與建置額度對個人使用綽綽有餘；Instant Rollback 只能回到上一個部署。
 - 免費額度與政策可能變動，請以官方頁面為準；本專案不保證永久免費或永不停機。
 - 忘記密碼的信件同樣受內建寄信限制；需要寄到其他信箱時要自行設定 custom SMTP（可能產生費用）。
 
@@ -136,13 +108,12 @@ Supabase Dashboard → **Authentication → URL Configuration**：
 
 ## 上線後手動驗收清單
 
-**下面每一項都還沒有人做過。** 自動化測試只在 Chromium 與本機模擬環境跑過（見 [`docs/progress.md`](progress.md)），
-不能代替這份清單。請做完一項，就自己在旁邊記下日期與結果；全部完成之前，不要把雲端同步、驗收 13、驗收 16 當成已完成。
+自動化測試已在真實 Staging 上通過（`production-readiness.md` 第 7 節），但只有 Chromium、同一台電腦，不能代替這份清單。除了標註的項目，都可以在 Preview 用驗收帳號做，不必動到正式資料。請做完一項，就自己記下日期與結果。
 
 ### A. 真實 email 連結（驗收 1）
 
 - [ ] 在登入頁點 **Forgot password?**，收到重設密碼的信，點信中連結會回到你的網站並能設定新密碼。
-- [ ] 連結沒有導向 `localhost` 或錯誤網址（若有，回頭檢查步驟 4）。
+- [ ] 連結沒有導向 `localhost` 或錯誤網址（若有，回頭檢查階段 4 或階段 5 的 Redirect URLs）。
 - [ ] 註冊確認信只有在開放註冊時才會寄出。若你是用 Auto Confirm 建立帳號，這封信不會出現，這一項請記為「未測」，不要當成通過。
 
 ### B. 第二台電腦看到相同資料（驗收 13）
@@ -162,7 +133,7 @@ Supabase Dashboard → **Authentication → URL Configuration**：
 - [ ] 用私密視窗以第二個帳號登入：看到的是空的，看不到第一個帳號的專案；在這個帳號建立一個專案，回第一個帳號看不到它。
 - [ ] 把第一個帳號某個專案的網址（含任務的 `?task=` 網址）貼到第二個帳號的視窗：顯示找不到，不會顯示內容。
 - [ ] 測完在 Dashboard 刪除第二個測試使用者（它的資料會一併刪除）。
-- [ ] 執行 `supabase/README.md` 第 2 節的查詢，結果符合預期；Dashboard 的 **Security Advisor** 沒有 RLS 相關錯誤。
+- [ ] 執行 `supabase/verify.sql`，每一列 `pass = true`；Dashboard 的 **Security Advisor** 沒有 RLS 相關錯誤。
 - [ ] 匿名 curl 檢查（`supabase/README.md` 第 2 節）回傳 `permission denied`，而不是資料。
 
 ### D. 真實中文輸入法
@@ -178,7 +149,7 @@ Supabase Dashboard → **Authentication → URL Configuration**：
 - [ ] List：用把手拖曳任務到新位置，重新整理，順序保持。
 - [ ] Board：把卡片拖到另一欄，也在同一欄內排序，重新整理。
 - [ ] Gantt：拖曳長條、拖曳左右邊緣、從結尾把手拉出依賴線，重新整理後日期正確；拖曳時不會選取到文字。
-- [ ] Task Modal：打開任務，在日期選擇器選開始與截止日，按 Cmd+Enter 儲存。
+- [ ] Task Modal：打開任務，選開始與截止日（選了就存），改標題按 Enter，打一段描述後按 Esc，重新開啟確認都存到。
 - [ ] Cmd+K 開啟搜尋，輸入、方向鍵、Enter 都正常；中文輸入法選字時 Enter 不會送出。
 - [ ] Board 的「Add task」：欄位為空時點它、再點 Add task，欄位保持開著。
 - [ ] Console 沒有 CSP 錯誤。

@@ -27,6 +27,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+!.env.staging.example
 
 # Test artifacts
 coverage
@@ -39,9 +40,8 @@ blob-report
 supabase/.temp
 supabase/.branches
 
-# Cloudflare Wrangler local state and secrets
-.wrangler
-.dev.vars*
+# Vercel CLI local state
+.vercel
 
 # Claude Code machine-specific state
 .claude/scheduled_tasks.lock
@@ -51,3 +51,8 @@ supabase/.branches
 
 # Internal hand-off notes between build and QA agents
 .agent-notes/
+
+# Screenshots of UX reviews: kept on the machine that made them, not in the repository
+docs/ui-ux-iteration-3-assets/
+docs/ui-ux-iteration-4-assets/
+docs/ux-audit-assets/

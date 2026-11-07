@@ -21,10 +21,12 @@
     "playwright.config.ts",
     "playwright.cloud.config.ts",
     "playwright.prod.config.ts",
+    "playwright.staging.config.ts",
     "tests",
     "e2e",
     "e2e-cloud",
-    "e2e-prod"
+    "e2e-prod",
+    "e2e-staging"
   ],
   "exclude": ["tests/db/supabaseRepository.sim.test.ts"]
 }

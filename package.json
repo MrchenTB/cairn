@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:staging": "vite --mode staging --port 5183 --strictPort",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
+    "verify": "prettier --check . && oxlint && npm run build && vitest run",
     "lint": "oxlint",
     "format": "prettier --write .",
     "test": "vitest run",
@@ -15,6 +17,10 @@
     "test:db": "vitest run --project db",
     "test:e2e": "playwright test",
     "test:cloud": "playwright test --config=playwright.cloud.config.ts",
+    "check:staging": "node tests/staging/check.ts",
+    "test:staging": "playwright test --config=playwright.staging.config.ts",
+    "test:staging:core": "playwright test --config=playwright.staging.config.ts --grep-invert \"B5:|P1:|P2:|P3:\"",
+    "test:staging:dry-run": "CAIRN_STAGING_DRY_RUN=1 playwright test --config=playwright.staging.config.ts",
     "test:prod": "playwright test --config=playwright.prod.config.ts",
     "preview": "vite preview"
   },
@@ -66,6 +72,6 @@
     "vitest": "^5.0.5"
   },
   "engines": {
-    "node": ">=22.22"
+    "node": "24.x"
   }
 }

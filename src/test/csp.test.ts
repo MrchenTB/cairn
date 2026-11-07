@@ -1,11 +1,20 @@
 /**
  * The inline theme script in index.html runs under a strict CSP (no 'unsafe-inline' for
- * scripts), so public/_headers must allow-list its exact sha256. Any edit to the script must
+ * scripts), so vercel.json must allow-list its exact sha256. Any edit to the script must
  * update the hash — this test recomputes it.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import headers from '../../public/_headers?raw'
+import vercelJson from '../../vercel.json?raw'
 import indexHtml from '../../index.html?raw'
+
+type HeaderRule = { source: string; headers: { key: string; value: string }[] }
+
+/** Header name (lower-cased) to value, from the catch-all `/(.*)` rule of vercel.json. */
+const headers = new Map(
+  (JSON.parse(vercelJson) as { headers: HeaderRule[] }).headers
+    .find((rule) => rule.source === '/(.*)')
+    ?.headers.map(({ key, value }) => [key.toLowerCase(), value] as const),
+)
 
 async function sha256Base64(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
@@ -17,11 +26,10 @@ function inlineScripts(html: string): string[] {
 }
 
 function cspDirectives(): Map<string, string> {
-  const line = headers.split('\n').find((l) => l.trim().startsWith('Content-Security-Policy:'))
-  expect(line, 'Content-Security-Policy header missing').toBeDefined()
-  const policy = (line as string).split('Content-Security-Policy:')[1]
+  const policy = headers.get('content-security-policy')
+  expect(policy, 'Content-Security-Policy header missing').toBeDefined()
   return new Map(
-    policy
+    (policy as string)
       .split(';')
       .map((part) => part.trim())
       .filter(Boolean)
@@ -57,10 +65,12 @@ describe('Content-Security-Policy', () => {
   })
 
   it('sends the other security headers', () => {
-    expect(headers).toMatch(/X-Content-Type-Options: nosniff/)
-    expect(headers).toMatch(/Referrer-Policy: strict-origin-when-cross-origin/)
-    expect(headers).toMatch(/Permissions-Policy: camera=\(\), microphone=\(\), geolocation=\(\)/)
-    expect(headers).toMatch(/Strict-Transport-Security: max-age=31536000/)
+    expect(headers.get('x-content-type-options')).toBe('nosniff')
+    expect(headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin')
+    expect(headers.get('permissions-policy')).toMatch(
+      /^camera=\(\), microphone=\(\), geolocation=\(\)/,
+    )
+    expect(headers.get('strict-transport-security')).toMatch(/^max-age=31536000/)
   })
 })
 

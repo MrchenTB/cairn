@@ -27,12 +27,12 @@
 | Backend     | Supabase Auth + Postgres + RLS via `@supabase/supabase-js` 2                                                                                                                                                                 | no app server                                  |
 | Tests       | Vitest 5 (+ jsdom, Testing Library, jest-dom 7), PGlite (DB/RLS), Playwright 1.64 (E2E; Chromium only so far), local Supabase simulator (`tests/cloud-sim`)                                                                  |                                                |
 | Lint/format | oxlint, prettier (no semicolons, single quotes, width 100)                                                                                                                                                                   |                                                |
-| Hosting     | Cloudflare Workers Static Assets (static SPA, `wrangler.jsonc`, SPA fallback)                                                                                                                                                | see docs/platform-notes.md, docs/deployment.md |
+| Hosting     | Vercel (static SPA, `vercel.json`: security headers + SPA fallback that excludes `/assets/`)                                                                                                                                 | see docs/platform-notes.md, docs/deployment.md |
 
 **Several majors are newer than most training data** (react-router 8, react-day-picker 10, zod 4,
 immer 11, lucide-react 1.x, TypeScript 7, Vitest 5, jest-dom 7). Before using an API you are not
 sure about, read the installed package's `.d.ts` / README under `node_modules/`.
-Node: `package.json` `engines` is `>=22.22`; `.node-version` pins 24 (used by Cloudflare builds).
+Node: `package.json` `engines` is `24.x`; `.node-version` pins 24.
 
 ## 2. Repository layout & ownership
 
@@ -57,7 +57,7 @@ tests/db/         PGlite migration + RLS tests (vitest project "db")
 tests/cloud-sim/  local stand-in for a Supabase project (tests only; src/ must never import it), see its README
 e2e/              Playwright specs (local data mode)
 e2e-cloud/        Playwright specs (cloud mode against the local simulator in tests/cloud-sim)
-e2e-prod/         Playwright specs (production builds behind public/_headers)
+e2e-prod/         Playwright specs (production builds behind vercel.json)
 docs/             architecture.md (this), decisions.md, progress.md, deployment.md, design-research.md, gantt-evaluation.md, platform-notes.md
 ```
 
@@ -192,7 +192,7 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
 
 ## 7. App shell, routing, UI contracts
 
-Routes (react-router 8, browser history; Cloudflare SPA fallback):
+Routes (react-router 8, browser history; Vercel SPA fallback):
 
 ```
 /login                         sign-in / sign-up (Supabase mode; local mode redirects to /overview)
@@ -255,7 +255,7 @@ Tokens and rationale: `docs/design-research.md` → implemented as CSS custom pr
 Use semantic utilities (e.g. `bg-surface`, `text-fg-muted`, `border-subtle`) — never raw hex in components.
 Theme: `preferences.theme` (system/light/dark) → `.dark` on `<html>`; an inline script in
 `index.html` applies the cached theme before first paint (no flash). The script's hash is listed in
-`public/_headers`; `src/test/csp.test.ts` recomputes it, so editing the script means updating the hash.
+`vercel.json`; `src/test/csp.test.ts` recomputes it, so editing the script means updating the hash.
 Gantt day width is 36 / 16 / 5 px for Day / Week / Month: `src/features/gantt/model/scale.ts` is the
 source and `--gantt-day-width-*` in `tokens.css` must match.
 
@@ -265,7 +265,7 @@ source and `--gantt-day-width-*` in `tokens.css` must match.
 - RLS is tested (tests/db) by impersonating two users through `request.jwt.claims` + `set role authenticated`.
 - `.env.example` documents variables; `.env*` ignored by git. App code reads `import.meta.env` by name only (reading it whole would inline every `VITE_` variable). `vite build` stops if any `VITE_` variable holds a secret or service-role key, and warns if the Supabase settings cannot sync on a deployed site.
 - Supabase Auth email/password; after creating your own account, disable new sign-ups in the dashboard.
-- Security headers for the static host in `public/_headers` (CSP allowing only self + hosted Supabase projects, HSTS). `npm run test:prod` runs a real production build behind them.
+- Security headers for the static host in `vercel.json` (CSP allowing only self + hosted Supabase projects, HSTS). `npm run test:prod` runs a real production build behind them.
 
 ## 10. Testing & verification
 
@@ -277,7 +277,7 @@ source and `--gantt-day-width-*` in `tokens.css` must match.
 | `npm run test:unit` / `npm run test:db`                    | the unit + dom projects only / the db project only (PGlite: migrations, constraints, triggers, RPCs, RLS)                       |
 | `npm run test:e2e`                                         | Playwright against `vite --mode e2e` (port 5180) in local data mode                                                             |
 | `npm run test:cloud`                                       | Playwright against `vite` in cloud mode (port 5181) and the local Supabase simulator (port 54399)                               |
-| `npm run test:prod`                                        | Playwright against production builds behind the real `public/_headers` (CSP, deep links, bundle contents)                       |
+| `npm run test:prod`                                        | Playwright against production builds behind the real `vercel.json` (CSP, deep links, bundle contents)                           |
 | `npx playwright test -c playwright.crossbrowser.config.ts` | opt-in Safari (WebKit) and Firefox run of the acceptance flows; needs `npx playwright install webkit firefox`; never run so far |
 | `npm run build`                                            | type check + production build                                                                                                   |
 

@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-/** The real production build behind the real public/_headers (see playwright.prod.config.ts). */
+/** The real production build behind the real vercel.json (see playwright.prod.config.ts). */
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
@@ -24,11 +24,16 @@ function builtFiles(dir = BUILD_DIR): string[] {
 }
 
 test.describe('the host', () => {
-  test('every response carries public/_headers; deep links get the app; assets are immutable', async ({
+  test('every response carries the vercel.json headers; deep links get the app; assets are immutable', async ({
     request,
   }) => {
-    const file = readFileSync('public/_headers', 'utf8')
-    const csp = /Content-Security-Policy: (.*)/.exec(file)?.[1]
+    const config = JSON.parse(readFileSync('vercel.json', 'utf8')) as {
+      headers: { source: string; headers: { key: string; value: string }[] }[]
+    }
+    const csp = config.headers
+      .find((rule) => rule.source === '/(.*)')
+      ?.headers.find((h) => h.key === 'Content-Security-Policy')?.value
+    expect(csp).toBeTruthy()
     for (const path of ['/', '/overview', '/projects/abc/gantt?task=x', '/nonsense/deep/path']) {
       const res = await request.get(path)
       expect(res.status(), path).toBe(200)
@@ -47,6 +52,13 @@ test.describe('the host', () => {
     const res = await request.get(asset)
     expect(res.headers()['cache-control']).toBe('public, max-age=31536000, immutable')
     expect(res.headers()['content-type']).toContain('javascript')
+  })
+
+  test('a missing asset is a 404, not the app', async ({ request }) => {
+    const res = await request.get('/assets/does-not-exist.js')
+    expect(res.status()).toBe(404)
+    expect(res.headers()['content-type']).not.toContain('text/html')
+    expect(await res.text()).not.toContain('<div id="root"></div>')
   })
 
   test('the built inline theme script matches the hash in the CSP', async ({ request }) => {
@@ -96,11 +108,11 @@ test.describe('the host', () => {
 })
 
 test.describe('what the bundle ships', () => {
-  test('no test hooks, no unused VITE_ variable, no source maps; _headers is deployed', async ({
+  test('no test hooks, no unused VITE_ variable, no source maps, no _headers file', async ({
     page,
   }) => {
     const files = builtFiles()
-    expect(files.some((path) => path.endsWith('_headers'))).toBe(true)
+    expect(files.filter((path) => path.endsWith('_headers'))).toEqual([])
     expect(files.filter((path) => path.endsWith('.map'))).toEqual([])
     const texts = files
       .filter((path) => /\.(js|css|html)$/.test(path))

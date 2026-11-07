@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 import { findSecretEnvVars, supabaseUrlProblem } from './src/data/secretKeys.ts'
+import { projectRefOf, supabaseTargetProblem } from './src/data/supabaseProjects.ts'
 
 /**
  * Build-time checks on the VITE_ variables (all of them public). A secret key stops the build: at
@@ -27,13 +28,14 @@ function checkPublicEnv(): Plugin {
         config.env
       const hasSupabase =
         VITE_SUPABASE_URL && (VITE_SUPABASE_PUBLISHABLE_KEY || VITE_SUPABASE_ANON_KEY)
-      if (config.mode === 'production' && !hasSupabase) {
+      const deployed = config.mode === 'production' || config.mode === 'staging'
+      if (deployed && !hasSupabase) {
         config.logger.warn(
           'Supabase is not configured: this build runs in local mode, with data only in each ' +
             'browser and no sign-in or sync ("Local only — not synced").',
         )
       }
-      if (config.mode === 'production' && hasSupabase) {
+      if (deployed && hasSupabase) {
         const problem = supabaseUrlProblem(VITE_SUPABASE_URL.trim())
         if (problem) config.logger.warn(`VITE_SUPABASE_URL ${problem}.`)
       }
@@ -41,9 +43,35 @@ function checkPublicEnv(): Plugin {
   }
 }
 
+/**
+ * Real data stays out of everything but the production site: refuses a dev server or build on this
+ * computer that points at production, and a Vercel build whose variables have the wrong scope.
+ */
+function checkSupabaseTarget(): Plugin {
+  return {
+    name: 'cairn:check-supabase-target',
+    configResolved(config) {
+      const vercelEnv = process.env.VERCEL_ENV
+      const { VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY, VITE_SUPABASE_ANON_KEY } =
+        config.env
+      const problem = supabaseTargetProblem({
+        vercelEnv,
+        url: VITE_SUPABASE_URL,
+        hasKey: Boolean(VITE_SUPABASE_PUBLISHABLE_KEY || VITE_SUPABASE_ANON_KEY),
+      })
+      if (problem) throw new Error(`Refusing to start: ${problem}`)
+      if (vercelEnv) {
+        config.logger.info(
+          `Vercel ${vercelEnv} build uses Supabase project ${projectRefOf(VITE_SUPABASE_URL)}.`,
+        )
+      }
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), checkPublicEnv()],
+  plugins: [react(), tailwindcss(), checkPublicEnv(), checkSupabaseTarget()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -59,7 +87,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'unit',
-          include: ['src/**/*.test.ts'],
+          include: ['src/**/*.test.ts', 'tests/staging/**/*.test.ts'],
           environment: 'node',
         },
       },

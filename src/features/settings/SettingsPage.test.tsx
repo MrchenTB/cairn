@@ -173,7 +173,9 @@ describe('SettingsPage: Account', () => {
   })
 })
 
-describe('SettingsPage: Appearance', () => {
+// The time zone menu renders hundreds of options under user-event: past the default 5 s on a loaded
+// machine (the whole suite in parallel), though it takes about 2 s alone.
+describe('SettingsPage: Appearance', { timeout: 20_000 }, () => {
   it('saves a theme change through updatePreferences', async () => {
     const update = vi.spyOn(actions(), 'updatePreferences')
     const { user } = renderSettings('appearance')

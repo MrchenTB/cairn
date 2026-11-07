@@ -1,6 +1,8 @@
-// Tiny static host that mimics Cloudflare Workers Static Assets for a Vite build: applies
-// <root>/_headers (every matching rule) and the SPA fallback (unknown path -> index.html, status
-// 200, also under /assets/). Usage: node e2e-prod/static-server.mjs <root> <port>
+// Tiny static host that mimics Vercel for a Vite build, driven by vercel.json (read from
+// process.cwd()). Filesystem first: an existing file is served as is. Otherwise the first
+// matching `rewrites` rule serves its destination file with status 200 (the SPA fallback, which
+// excludes /assets/). Otherwise 404. The `headers` of every matching rule are applied, also on the
+// 404. Usage: node e2e-prod/static-server.mjs <root> <port>
 import { createServer } from 'node:http'
 import { readFileSync, statSync } from 'node:fs'
 import { extname, join, resolve, sep } from 'node:path'
@@ -14,26 +16,10 @@ const MIME = {
   '.json': 'application/json',
 }
 
-function parseHeaders(text) {
-  const rules = []
-  let current = null
-  for (const raw of text.split('\n')) {
-    const line = raw.trimEnd()
-    if (!line.trim() || line.trimStart().startsWith('#')) continue
-    if (!/^\s/.test(line)) {
-      current = { pattern: line.trim(), headers: [] }
-      rules.push(current)
-    } else if (current) {
-      const at = line.indexOf(':')
-      current.headers.push([line.slice(0, at).trim(), line.slice(at + 1).trim()])
-    }
-  }
-  return rules
-}
-
-function matches(pattern, path) {
-  const escaped = pattern.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
-  return new RegExp(`^${escaped.join('.*')}$`).test(path)
+// Vercel's `source` patterns for the rules in vercel.json are valid JS regexes (path-to-regexp
+// syntax, but only plain groups and lookaheads are used), so anchoring them is enough.
+function matches(source, path) {
+  return new RegExp('^' + source + '$').test(path)
 }
 
 function isFile(path) {
@@ -46,7 +32,9 @@ function isFile(path) {
 
 const root = resolve(process.argv[2])
 const port = Number(process.argv[3])
-const rules = parseHeaders(readFileSync(join(root, '_headers'), 'utf8'))
+const config = JSON.parse(readFileSync(join(process.cwd(), 'vercel.json'), 'utf8'))
+const rewrites = config.rewrites ?? []
+const headerRules = config.headers ?? []
 
 createServer((req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname
@@ -58,14 +46,23 @@ createServer((req, res) => {
   }
   const candidate = resolve(root, `.${decoded}`)
   const inside = candidate === root || candidate.startsWith(root + sep)
-  const file =
-    inside && decoded !== '/_headers' && isFile(candidate) ? candidate : join(root, 'index.html')
-  const headers = { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' }
-  for (const rule of rules) {
-    if (matches(rule.pattern, path)) {
-      for (const [name, value] of rule.headers) headers[name.toLowerCase()] = value
+  let file = inside && isFile(candidate) ? candidate : null
+  if (!file) {
+    const rewrite = rewrites.find((rule) => matches(rule.source, path))
+    if (rewrite) file = join(root, rewrite.destination)
+  }
+  const headers = {}
+  for (const rule of headerRules) {
+    if (matches(rule.source, path)) {
+      for (const { key, value } of rule.headers) headers[key.toLowerCase()] = value
     }
   }
+  if (!file || !isFile(file)) {
+    res.writeHead(404, { ...headers, 'content-type': 'text/plain; charset=utf-8' })
+    res.end(req.method === 'HEAD' ? undefined : 'Not found')
+    return
+  }
+  headers['content-type'] = MIME[extname(file)] ?? 'application/octet-stream'
   res.writeHead(200, headers)
   res.end(req.method === 'HEAD' ? undefined : readFileSync(file))
 }).listen(port, 'localhost')

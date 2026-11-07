@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test'
 
 /**
- * Production-build E2E: normal `vite build`s served the way Cloudflare serves them, with
- * public/_headers applied and the SPA fallback. Only this setup can catch CSP violations, a wrong
+ * Production-build E2E: normal `vite build`s served the way Vercel serves them, with
+ * vercel.json applied and the SPA fallback. Only this setup can catch CSP violations, a wrong
  * theme-script hash, broken lazy chunks or deep-link reloads, and what the bundle really ships.
  * One build runs in local mode, one in cloud mode with a made-up Supabase project.
  * `npm run test:prod` builds, serves and stops by itself; dist/ is not touched.

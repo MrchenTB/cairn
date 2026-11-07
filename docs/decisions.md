@@ -183,3 +183,10 @@
 
 - **決定**：子任務是從父任務的 Modal 開啟時（history state 記錄來源），Esc、X、Done、遮罩、⌘↵ 都回到父任務；再關一次才離開 Modal。直接開啟的子任務（列表、深層連結）沒有父任務可回，照常關閉。從依賴晶片等其他路徑開啟的任務也照常關閉。
 - **理由**：ux-audit X-9。使用者是從父任務走進來的，應該走回去；但不該把使用者帶去一個從沒看過的父任務。
+
+## D33 — 網站平台改用 Vercel，以 Preview 驗收每次修改
+
+- **決定**：正式部署從 Cloudflare 改為 Vercel，程式碼放 GitHub Private。每個 PR 有 Preview（連 Staging），合併到 `master` 才部署正式站（連 Production）。安全標頭從 `public/_headers` 移到 `vercel.json`，移除 `wrangler.jsonc`，不部署獨立的 Staging 網站。
+- **理由**：使用者要能用預覽網址驗收每次修改，再決定是否發布。Vercel 的 PR Preview 不用額外設定就符合這個流程。前端是靜態 SPA，只換設定，不需重構。
+- **防護**：`src/data/supabaseProjects.ts` 在每次建置與啟動時檢查專案：Preview 只能連 Staging，Production 不能連 Staging 也不能沒有設定（否則會靜默變成本機模式），本機不能連 Production。私有 repo 在免費 GitHub 方案沒有分支保護，所以合併的關卡是 `CLAUDE.md` 的規則與 `.claude/settings.json` 的確認提示。
+- **取捨**：`/assets/` 不走 SPA fallback，缺少的檔案回 404 而不是 HTML，避免把 HTML 當成永久快取的腳本。舊分頁載入已不存在的 chunk 時，由 `RouteErrorBoundary` 處理。Hobby 的 Instant Rollback 只能回到上一個部署。

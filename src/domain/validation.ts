@@ -21,7 +21,7 @@ import {
 } from './types'
 import type { AppError, BackupData, BackupFile, ISODate, Result } from './types'
 
-// The production CSP has no 'unsafe-eval' (public/_headers). Without this, zod's first schema
+// The production CSP has no 'unsafe-eval' (vercel.json). Without this, zod's first schema
 // probes `new Function`, and the browser reports a CSP violation even though zod catches the error.
 z.config({ jitless: true })
 
