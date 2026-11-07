@@ -78,8 +78,11 @@ cp .env.staging.example .env.staging.local
 
 ```bash
 export PATH="$HOME/.local/node/current/bin:$PATH"
-npm run test:staging
+npm run check:staging      # 只檢查設定，不連網路，不印出任何密碼
+npm run test:staging:core  # 日常驗收，略過大型資料量測試（B5、P1、P2、P3）
 ```
+
+`npm run test:staging` 會連大型測試一起跑（2,000 個任務的匯入與載入），個人使用可以不跑。
 
 這組測試連到真實 Staging，涵蓋下表標「自動」的項目。它有四道防呆，任一不符就**拒絕執行**：
 
