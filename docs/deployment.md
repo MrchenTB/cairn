@@ -36,7 +36,7 @@ Vercel Hobby 限個人非商業使用，符合 Cairn 的用途。
 
 1. 到 <https://vercel.com/signup> 用 GitHub 帳號註冊（Hobby），停在匯入頁面，不要按 Import 或 Deploy。
 2. 登入 CLI 並建立空專案，只建立設定，不部署：`npx vercel@latest login`、`npx vercel@latest project create cairn`。
-3. 連接 GitHub，授權時只選 `cairn` 這個 repo。連接後確認 **Deployments** 是空的。
+3. 連接 GitHub：`npx vercel@latest link --yes --project cairn`、`npx vercel@latest git connect --yes`。`link` 會自動產生含暫時憑證的 `.env.local` 並修改 `.gitignore`，Cairn 用不到，請刪除該檔並還原 `.gitignore`。連接後確認 **Deployments** 是空的。
 4. **Settings → Environments → Production → Branch Tracking**：確認正式分支是 `master`。
 5. **Settings → Environment Variables**：勾選 **Enable access to System Environment Variables**。環境防護靠 `VERCEL_ENV` 判斷環境。
 6. 同一頁先新增 Preview 的兩筆，再新增 Production 的兩筆，每筆只勾一個環境：
@@ -52,7 +52,7 @@ Vercel Hobby 限個人非商業使用，符合 Cairn 的用途。
 
 7. **Settings → Deployment Protection**：確認 Vercel Authentication 為 **Standard Protection**，只有你登入 Vercel 後才能開 Preview。
 8. **Settings → General → Vercel Toolbar**：Preview 設為 Off。工具列的腳本會被 CSP 擋下，留著會在 Console 產生無關的錯誤。
-9. 全部設定完成後執行 `npx vercel@latest logout`。日常流程不需要 CLI，Preview 網址可從 PR 取得。
+9. 全部設定完成後刪除本機的 `.vercel/`，並執行 `npx vercel@latest logout`。日常流程不需要 CLI，Preview 網址可從 PR 取得。
 
 Node 版本由 `package.json` 的 `engines`（24.x）決定，建置設定由 `vercel.json` 決定，兩者都不用在 Vercel 設定。
 
