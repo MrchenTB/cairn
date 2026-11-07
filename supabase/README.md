@@ -2,10 +2,12 @@
 
 這個資料夾包含 Cairn 雲端模式需要的資料庫設定：
 
-| 檔案                                 | 內容                                                                                                |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `migrations/20261102000000_init.sql` | 完整 schema：6 張表、RLS policy、trigger、3 個 RPC、權限設定                                        |
-| `config.toml`                        | Supabase CLI 設定（由 CLI 3.0.0 的 `supabase init` 產生後調整），供 `supabase link`／`db push` 使用 |
+| 檔案                                        | 內容                                                                                                |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `migrations/20261102000000_init.sql`        | 基礎 schema：6 張表、RLS policy、trigger、3 個 RPC、權限設定                                        |
+| `migrations/20261106000000_phase_color.sql` | 階段顏色：`phases.color`，以及會保留顏色的 `import_workspace`                                       |
+| `verify.sql`                                | 只讀的檢查腳本：schema、RLS、權限是否都正確（第 2 節）                                              |
+| `config.toml`                               | Supabase CLI 設定（由 CLI 3.0.0 的 `supabase init` 產生後調整），供 `supabase link`／`db push` 使用 |
 
 資料模型以 `docs/architecture.md` §4 為準；平台事實（CLI v3、2026 年權限預設變更、Free 方案限制）見 `docs/platform-notes.md` 的 A 節。
 
@@ -20,7 +22,7 @@
    - **Project ref**：Dashboard 網址 `…/project/<project-ref>` 中的那一段。
    - **資料庫密碼**：建立專案時設定的密碼（忘記可在 Project Settings → Database 重設）。
 3. 需要 **PostgreSQL 15 以上**（`ON DELETE SET NULL (phase_id)` 是 PG15 的語法）。新專案預設是 17，可在 SQL Editor 執行 `show server_version;` 確認。
-4. 這個 migration 用於**全新的空專案**。對已經套用過的專案重跑會因「物件已存在」而失敗（不會刪除資料）。
+4. 第一次設定要**依檔名順序套用全部 migration**（目前 2 個）。`init` 只能用在全新的空專案，對已經套用過的專案重跑會因「物件已存在」而失敗（不會刪除資料）。
 
 ---
 
@@ -30,14 +32,15 @@
 
 1. Dashboard → 你的專案 → **SQL Editor** → 新增一個 query。
 2. 打開 `supabase/migrations/20261102000000_init.sql`，**整份**複製貼上，按 **Run**。
-3. 沒有出現錯誤就完成了，接著做第 2 節的檢查。
+3. 開新的 query，對 `supabase/migrations/20261106000000_phase_color.sql` 做一樣的事。順序不能反。
+4. 都沒有錯誤就完成了，接著做第 2 節的檢查。
 
 注意：
 
-- SQL Editor 不會記錄 migration 歷史。之後若改用 CLI（方法 B）管理 migration，要先把這個版本標記為「已套用」，否則 `db push` 會想再跑一次而失敗：
+- SQL Editor 不會記錄 migration 歷史。之後若改用 CLI（方法 B）管理 migration，要先把這些版本標記為「已套用」，否則 `db push` 會想再跑一次而失敗：
 
   ```bash
-  npx supabase@3.0.0 migration repair --status applied 20261102000000 --remote
+  npx supabase@3.0.0 migration repair --status applied 20261102000000 20261106000000 --remote
   ```
 
 - 如果執行失敗、而且專案是**剛建立、沒有任何資料**的，可以先執行下面這段清除 Cairn 的物件，修正問題後再重跑一次（已在測試環境驗證過可以清乾淨並重新套用）：
@@ -63,7 +66,7 @@
 ```bash
 npx supabase@3.0.0 login                             # 開瀏覽器授權（你本人操作）
 npx supabase@3.0.0 link --project-ref <project-ref>  # 連結雲端專案
-npx supabase@3.0.0 db push --remote --dry-run        # 先預覽：應該只列出 20261102000000_init.sql
+npx supabase@3.0.0 db push --remote --dry-run        # 先預覽：第一次應該列出 2 個 migration
 npx supabase@3.0.0 db push --remote                  # 正式套用；出現確認提示時輸入 y
 ```
 
@@ -79,30 +82,11 @@ npx supabase@3.0.0 db push --remote                  # 正式套用；出現確�
 
 ## 2. 確認 RLS 與權限都正確
 
-在 SQL Editor 執行：
+在 SQL Editor 貼上 [`verify.sql`](verify.sql) 整份執行。它只讀系統目錄，不會改動任何東西，也不會讀使用者資料。
 
-```sql
--- 預期 6 列：rls_enabled = true、policies = 4、anon_has_access = false、authenticated_has_crud = true
-select c.relname as table_name,
-       c.relrowsecurity as rls_enabled,
-       (select count(*) from pg_policies p
-         where p.schemaname = 'public' and p.tablename = c.relname) as policies,
-       has_table_privilege('anon', c.oid, 'select, insert, update, delete, truncate') as anon_has_access,
-       has_table_privilege('authenticated', c.oid, 'select, insert, update, delete') as authenticated_has_crud
-from pg_class c
-where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
-order by 1;
+**預期：每一列 `pass = true`。** 失敗會排在最上面，`detail` 欄會說是哪個物件。
 
--- 預期：security_definer 全部是 false；anon 全部不能執行；
--- authenticated 只能執行 apply_task_schedule、delete_task、import_workspace 三個 RPC
-select p.oid::regprocedure as function_name,
-       p.prosecdef as security_definer,
-       has_function_privilege('anon', p.oid, 'execute') as anon_can_execute,
-       has_function_privilege('authenticated', p.oid, 'execute') as authenticated_can_execute
-from pg_proc p
-where p.pronamespace = 'public'::regnamespace
-order by 1;
-```
+涵蓋：PostgreSQL 版本、6 張表與兩個 migration 是否都套用、每張表的 RLS 與 4 條只限本人的 policy、`anon` 與 `PUBLIC` 沒有任何權限、`authenticated` 只有增刪改查、沒有 `SECURITY DEFINER`、函式都固定 `search_path`、只有 3 個 RPC 可由登入使用者執行、沒有能繞過 RLS 的 view、複合外鍵、排序規則、trigger。`tests/db/verify.test.ts` 逐項拿掉保護，確認對應的檢查真的會失敗。這份腳本還沒在真實 Supabase 專案上跑過。
 
 其他檢查方式：
 
@@ -127,7 +111,7 @@ order by 1;
    - 不要關閉整個 Email provider（那會讓你自己也無法登入）。用 CLI 管理設定時對應的是 `[auth] enable_signup = false`，不是 `[auth.email]` 底下的設定。
 4. **URL Configuration**：
    - **Site URL**：改成部署後的網址，例如 `https://cairn.<account>.workers.dev` 或你的自訂網域（預設值 `http://localhost:3000` 一定要改）。
-   - **Redirect URLs**：加入正式網址本身（只有網域，結尾不要加 `/login` 之類的路徑，也不要加 `/`：App 送出的就是這個值，不在清單內時信裡的連結會退回 Site URL），以及本機開發用的 `http://localhost:5173/**`。
+   - **Redirect URLs**：加入正式網址本身（只有網域，結尾不要加 `/login` 之類的路徑，也不要加 `/`：App 送出的就是這個值，不在清單內時信裡的連結會退回 Site URL），以及本機開發用的 `http://localhost:5173`。
 5. **密碼**：建議至少 8 碼。
 6. **金鑰**：前端只放 Project URL 與 **publishable key**（`sb_publishable_…`；舊版 anon key 也可）到 `.env.local`。**secret key／service_role key 絕對不能放進前端或 Git**——它會繞過 RLS。
 7. 「忘記密碼」信件同樣受內建寄信限制。需要寄到其他信箱時，要自行設定 custom SMTP（需另外申請寄信服務，可能產生費用，請自行評估）。

@@ -13,6 +13,8 @@ Cairn 由兩個彼此獨立的部分組成，**兩者都要完成才算「雲端
 **重要**：到目前為止，雲端部分只在本機模擬環境測試過（詳見 [`docs/progress.md`](progress.md) 第 5 節）。
 照下面步驟做完、並完成最後的「上線後手動驗收清單」之前，不能說雲端同步已經驗證完成。
 
+**先上 Staging**：請先照 [`docs/cloud-test-plan.md`](cloud-test-plan.md) 在獨立的測試專案走完驗收，再用本文件建立正式環境。目前狀態與風險見 [`docs/production-readiness.md`](production-readiness.md)。
+
 建議順序：步驟 1 → 2 → 3（先拿到網站網址）→ 4（把網址告訴 Supabase）→ 5（關閉註冊）→ 驗收清單。
 
 ---
@@ -30,9 +32,9 @@ Cairn 由兩個彼此獨立的部分組成，**兩者都要完成才算「雲端
 
 1. 到 <https://supabase.com/dashboard> 建立免費專案（Region 建議選 Northeast Asia (Tokyo) 或 Singapore）。需要 PostgreSQL 15 以上（新專案預設即可）。
 2. 左側 **SQL Editor** → New query → 貼上 `supabase/migrations/20261102000000_init.sql` **全部內容** → **Run**。
-   這份 migration 只能用在全新的空專案，重跑會因「物件已存在」而失敗。
-3. 在同一個 SQL Editor 執行 `supabase/README.md` 第 2 節的兩段檢查查詢，確認：
-   6 張表都啟用 RLS、每張 4 條 policy、`anon` 沒有任何權限、只有 3 個 RPC 可由登入使用者執行、沒有 `SECURITY DEFINER`。
+   再開新的 query，對 `supabase/migrations/20261106000000_phase_color.sql` 做一樣的事。順序不能反。
+   `init` 只能用在全新的空專案，重跑會因「物件已存在」而失敗。
+3. 在同一個 SQL Editor 貼上 `supabase/verify.sql` 整份執行，確認每一列 `pass = true`（失敗會排在最上面）。
 4. **Project Settings → Data API**：複製 Project URL；**Project Settings → API Keys**：複製 **publishable key**（`sb_publishable_…`）。
    **不要**使用 `service_role`／`sb_secret_…` key。
 
@@ -83,17 +85,17 @@ npx wrangler@4.156.1 login
 ```
 
 ```bash
-npx wrangler@4.156.1 deploy
+npx wrangler@4.156.1 deploy --env=""
 ```
 
-`login` 會開瀏覽器請你授權 Cloudflare；`deploy` 讀取 `wrangler.jsonc`，上傳 `dist/`，完成後會顯示網址（例如 `https://cairn.<你的帳號>.workers.dev`）。
+`login` 會開瀏覽器請你授權 Cloudflare；`deploy` 讀取 `wrangler.jsonc`，上傳 `dist/`，完成後會顯示網址（例如 `https://cairn.<你的帳號>.workers.dev`）。`--env=""` 明確指定正式環境；設定檔另有 `staging` 環境，部署它要用 `--env staging`（見 [`cloud-test-plan.md`](cloud-test-plan.md)）。
 之後每次更新程式，重新 `npm run build` 與 `deploy` 即可。
 
 ### 方法 B：連接 GitHub 自動部署（Workers Builds）
 
 1. 把專案推到你自己的 GitHub repository（`.env*` 已被忽略，不會上傳金鑰）。
 2. Cloudflare Dashboard → **Workers & Pages → Create → Import a repository**，選擇該 repo。
-3. Build command：`npm run build`；Deploy command：`npx wrangler deploy`（預設）。
+3. Build command：`npm run build`；Deploy command：`npx wrangler deploy --env=""`（明確指定正式環境）。
 4. **Settings → Build → Build variables and secrets** 新增 `VITE_SUPABASE_URL`、`VITE_SUPABASE_PUBLISHABLE_KEY`
    （是 _build_ 變數，不是 runtime vars）。Node 版本會讀取 repo 內的 `.node-version`（24）。
 5. 之後每次 push 都會自動重新部署。
@@ -107,7 +109,6 @@ Supabase Dashboard → **Authentication → URL Configuration**：
 
 原因：App 寄出確認信與重設密碼信時，要求導回的是「目前開啟 App 的網址」（只有網域部分）。
 這個網址不在 Redirect URLs 清單內時，信裡的連結會退回 Site URL。
-（`supabase/README.md` 第 3 節建議的 `/login` 寫法與目前程式不一致，請以本文件為準。）
 
 ## 步驟 5 — 關閉新使用者註冊
 
@@ -120,7 +121,7 @@ Supabase Dashboard → **Authentication → URL Configuration**：
 
 ## 免費方案限制與風險（請務必知道）
 
-- **Supabase Free 沒有自動備份**，也沒有時間點還原。請定期在 App 的 **Settings → Data → Export JSON backup** 下載備份。
+- **Supabase Free 沒有自動備份**，也沒有時間點還原。請定期在 App 的 **Settings → Data → Export JSON backup** 下載備份。還原是把備份匯入成**新的副本**，不會覆蓋或合併既有資料。
 - **Supabase Free 專案閒置約 7 天會被暫停**；到 Dashboard 按 Restore 即可恢復（資料保留，但暫停期間 App 無法讀寫）。
 - Free 方案最多 2 個進行中的專案；資料庫容量與流量對個人使用綽綽有餘，詳見 `docs/platform-notes.md` A1。
 - Cloudflare 靜態檔案請求免費且不限次數；Git 自動建置每月有分鐘數上限（個人使用不會碰到）。
@@ -162,7 +163,7 @@ Supabase Dashboard → **Authentication → URL Configuration**：
 - [ ] 用私密視窗以第二個帳號登入：看到的是空的，看不到第一個帳號的專案；在這個帳號建立一個專案，回第一個帳號看不到它。
 - [ ] 把第一個帳號某個專案的網址（含任務的 `?task=` 網址）貼到第二個帳號的視窗：顯示找不到，不會顯示內容。
 - [ ] 測完在 Dashboard 刪除第二個測試使用者（它的資料會一併刪除）。
-- [ ] 執行 `supabase/README.md` 第 2 節的查詢，結果符合預期；Dashboard 的 **Security Advisor** 沒有 RLS 相關錯誤。
+- [ ] 執行 `supabase/verify.sql`，每一列 `pass = true`；Dashboard 的 **Security Advisor** 沒有 RLS 相關錯誤。
 - [ ] 匿名 curl 檢查（`supabase/README.md` 第 2 節）回傳 `permission denied`，而不是資料。
 
 ### D. 真實中文輸入法
@@ -178,7 +179,7 @@ Supabase Dashboard → **Authentication → URL Configuration**：
 - [ ] List：用把手拖曳任務到新位置，重新整理，順序保持。
 - [ ] Board：把卡片拖到另一欄，也在同一欄內排序，重新整理。
 - [ ] Gantt：拖曳長條、拖曳左右邊緣、從結尾把手拉出依賴線，重新整理後日期正確；拖曳時不會選取到文字。
-- [ ] Task Modal：打開任務，在日期選擇器選開始與截止日，按 Cmd+Enter 儲存。
+- [ ] Task Modal：打開任務，選開始與截止日（選了就存），改標題按 Enter，打一段描述後按 Esc，重新開啟確認都存到。
 - [ ] Cmd+K 開啟搜尋，輸入、方向鍵、Enter 都正常；中文輸入法選字時 Enter 不會送出。
 - [ ] Board 的「Add task」：欄位為空時點它、再點 Add task，欄位保持開著。
 - [ ] Console 沒有 CSP 錯誤。

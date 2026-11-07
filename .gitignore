@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-staging
 dist-ssr
 *.local
 
@@ -27,6 +28,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+!.env.staging.example
 
 # Test artifacts
 coverage
@@ -51,3 +53,8 @@ supabase/.branches
 
 # Internal hand-off notes between build and QA agents
 .agent-notes/
+
+# Screenshots of UX reviews: kept on the machine that made them, not in the repository
+docs/ui-ux-iteration-3-assets/
+docs/ui-ux-iteration-4-assets/
+docs/ux-audit-assets/

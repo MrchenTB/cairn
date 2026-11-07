@@ -30,7 +30,7 @@ npm run dev
 詳細步驟見 [`supabase/README.md`](supabase/README.md)。最短流程：
 
 1. 在 https://supabase.com 建立免費專案。
-2. 打開專案的 **SQL Editor**，貼上並執行 `supabase/migrations/` 內的 SQL（建立資料表、RLS 權限、RPC）。
+2. 打開專案的 **SQL Editor**，依檔名順序貼上並執行 `supabase/migrations/` 內的**每一個** SQL（目前 2 個），再執行 `supabase/verify.sql` 確認全部 `pass`。
 3. 在 **Project Settings → API** 複製 Project URL 與 **publishable（或 anon）key**。
 4. 複製 `.env.example` 為 `.env.local` 並填入：
    ```bash
@@ -63,6 +63,8 @@ E2E 測試需要 Playwright 的 Chromium（第一次執行前：`npx playwright 
 
 ## 文件
 
+- [`docs/production-readiness.md`](docs/production-readiness.md)：上線準備度：審查結果、風險、還缺什麼
+- [`docs/cloud-test-plan.md`](docs/cloud-test-plan.md)：Staging 環境建立步驟與真實雲端驗收清單
 - [`docs/deployment.md`](docs/deployment.md)：部署步驟（Supabase＋Cloudflare）與需要你親自完成的事項
 - [`docs/architecture.md`](docs/architecture.md)：架構、資料模型、規則與重要取捨
 - [`docs/decisions.md`](docs/decisions.md)：決策紀錄
