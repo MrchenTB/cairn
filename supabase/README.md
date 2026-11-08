@@ -9,7 +9,7 @@
 | `verify.sql`                                | 只讀的檢查腳本：schema、RLS、權限是否都正確（第 2 節）                                              |
 | `config.toml`                               | Supabase CLI 設定（由 CLI 3.0.0 的 `supabase init` 產生後調整），供 `supabase link`／`db push` 使用 |
 
-資料模型以 `docs/architecture.md` §4 為準；平台事實（CLI v3、2026 年權限預設變更、Free 方案限制）見 `docs/platform-notes.md` 的 A 節。
+資料模型以 `docs/architecture.md` §4 為準；平台事實（CLI v3、2026 年權限預設變更、Free 方案限制）見 `docs/archive/platform-notes.md` 的 A 節。
 
 > 前端（Vercel）部署完成**不代表**資料庫已設定好。下面的步驟需要你登入自己的 Supabase 帳號親自完成。
 
@@ -116,7 +116,7 @@ npx supabase@3.0.0 db push --remote                  # 正式套用；出現確�
 6. **金鑰**：前端只放 Project URL 與 **publishable key**（`sb_publishable_…`；舊版 anon key 也可）到 `.env.local`。**secret key／service_role key 絕對不能放進前端或 Git**——它會繞過 RLS。
 7. 「忘記密碼」信件同樣受內建寄信限制。需要寄到其他信箱時，要自行設定 custom SMTP（需另外申請寄信服務，可能產生費用，請自行評估）。
 
-Free 方案提醒：沒有自動備份；連續約 7 天沒有活動，專案會被暫停（可在 Dashboard 恢復）。請定期使用 App 的 Settings → Data 匯出 JSON 備份。細節見 `docs/platform-notes.md` A1–A3。
+Free 方案提醒：沒有自動備份；連續約 7 天沒有活動，專案會被暫停（可在 Dashboard 恢復）。請定期使用 App 的 Settings → Data 匯出 JSON 備份。細節見 `docs/archive/platform-notes.md` A1–A3。
 
 ---
 

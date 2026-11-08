@@ -1,7 +1,7 @@
 # Task Modal 自動儲存：實作與驗收報告
 
 > 分支：`feature/task-autosave`（由 `ux/iteration-3` 建立）｜還原點 tag：`pre-task-autosave`
-> 設計依據：[`task-autosave-design.md`](task-autosave-design.md)｜決策：[`decisions.md`](decisions.md) D26–D32
+> 設計依據：[`task-autosave-design.md`](task-autosave-design.md)｜決策：[`decisions.md`](../decisions.md) D26–D32
 
 ## 最終驗收結論
 

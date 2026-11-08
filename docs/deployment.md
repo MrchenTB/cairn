@@ -94,7 +94,7 @@ Node 版本由 `package.json` 的 `engines`（24.x）決定，建置設定由 `v
 
 - **Supabase Free 沒有自動備份**，也沒有時間點還原。請定期在 App 的 **Settings → Data → Export JSON backup** 下載備份。還原是把備份匯入成**新的副本**，不會覆蓋或合併既有資料。
 - **Supabase Free 專案閒置約 7 天會被暫停**；到 Dashboard 按 Restore 即可恢復（資料保留，但暫停期間 App 無法讀寫）。
-- Free 方案最多 2 個進行中的專案；資料庫容量與流量對個人使用綽綽有餘，詳見 `docs/platform-notes.md` A1。
+- Free 方案最多 2 個進行中的專案；資料庫容量與流量對個人使用綽綽有餘，詳見 `docs/archive/platform-notes.md` A1。
 - Vercel Hobby 的流量與建置額度對個人使用綽綽有餘；Instant Rollback 只能回到上一個部署。
 - 免費額度與政策可能變動，請以官方頁面為準；本專案不保證永久免費或永不停機。
 - 忘記密碼的信件同樣受內建寄信限制；需要寄到其他信箱時要自行設定 custom SMTP（可能產生費用）。
