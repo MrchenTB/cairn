@@ -45,6 +45,8 @@ supabase/.branches
 
 # Claude Code machine-specific state
 .claude/scheduled_tasks.lock
+.claude/settings.local.json
+.claude/launch.json
 
 # Playwright MCP / browser tool output
 .playwright-mcp/
@@ -53,6 +55,6 @@ supabase/.branches
 .agent-notes/
 
 # Screenshots of UX reviews: kept on the machine that made them, not in the repository
-docs/ui-ux-iteration-3-assets/
-docs/ui-ux-iteration-4-assets/
-docs/ux-audit-assets/
+docs/archive/ui-ux-iteration-3-assets/
+docs/archive/ui-ux-iteration-4-assets/
+docs/archive/ux-audit-assets/
