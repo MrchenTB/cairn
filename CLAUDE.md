@@ -3,21 +3,24 @@
 個人長期使用的專案管理工具，使用者只有擁有者一人，不做商業化與多人協作。同一份任務資料提供 List、Board、Gantt，加上 Overview、My Tasks、Timeline、全域搜尋。
 
 - **原則：** 簡單、穩定、不遺失資料，優先於功能數量與企業級流程。沿用現有架構，不加不必要的工具或服務。
-- **語言：** 回覆用繁體中文。App 介面文字一律英文。
+- **語言：** 回覆用繁體中文。App 介面文字與 `README.md` 用英文，其他文件用繁體中文。
 
 ## 技術與結構
 
 React 19、TypeScript 7、Vite 8、Tailwind 4、zustand + immer（FIFO 寫入佇列、樂觀更新、欄位層級回滾）、react-router 8、Radix、Supabase（Auth、Postgres、RLS）、Vercel（靜態 SPA）。多個套件的主版本比訓練資料新，不確定 API 時先讀 `node_modules/` 內的型別。
 
-| 位置                                 | 內容                                                                   |
-| ------------------------------------ | ---------------------------------------------------------------------- |
-| `src/domain/`                        | 純業務規則（排程、日期、驗證）                                         |
-| `src/data/`                          | 資料層、同步、Auth、環境防護（`supabaseProjects.ts`、`secretKeys.ts`） |
-| `src/features/`                      | 各畫面：list、board、gantt、task-modal、settings 等                    |
-| `src/app/`、`components/`、`styles/` | 路由與外殼、共用元件、design tokens                                    |
-| `supabase/`                          | `migrations/`、`verify.sql`（唯讀檢查）                                |
-| `vercel.json`                        | 安全標頭（CSP）、SPA fallback、建置設定                                |
-| `docs/`                              | `architecture.md`、`decisions.md`、`deployment.md`                     |
+| 位置                                 | 內容                                                                                   |
+| ------------------------------------ | -------------------------------------------------------------------------------------- |
+| `src/domain/`                        | 純業務規則（排程、日期、驗證）                                                         |
+| `src/data/`                          | 資料層、同步、Auth、環境防護（`supabaseProjects.ts`、`secretKeys.ts`）                 |
+| `src/features/`                      | 各畫面：list、board、gantt、task-modal、settings 等                                    |
+| `src/app/`、`components/`、`styles/` | 路由與外殼、共用元件、design tokens                                                    |
+| `supabase/`                          | `migrations/`、`verify.sql`（唯讀檢查）                                                |
+| `tests/`、`e2e*/`                    | DB／RLS、本機 Supabase 模擬器、Staging 檢查；各環境的 Playwright 測試                  |
+| `vercel.json`                        | 安全標頭（CSP）、SPA fallback、建置設定                                                |
+| `docs/`                              | `architecture.md`、`decisions.md`、`deployment.md` 等；`archive/` 為歷史報告，不再更新 |
+
+工程規則以 `docs/architecture.md` 為準，新的取捨記為 `docs/decisions.md` 的下一個編號。已知問題見 `docs/production-readiness.md` 第 8 節（F1–F4 待修），不要順手修改，除非任務就是修它。
 
 ## 開發流程
 

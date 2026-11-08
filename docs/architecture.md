@@ -2,32 +2,33 @@
 
 > Product: **Cairn** — "Plan clearly. Work simply." A desktop-first, single-user project manager
 > (List / Board / Gantt over one task model) with cloud sync via Supabase.
-> Source of truth for product requirements: the PRD (`Personal_Project_Manager_PRD_Claude_Code.md`).
+> Product requirements came from the original PRD (`Personal_Project_Manager_PRD_Claude_Code.md`,
+> kept outside the repository); "PRD §…" in code and docs refers to it.
 > This file is the **engineering contract** every contributor builds against. When code and this
 > file disagree, fix one of them deliberately — never silently drift.
 >
 > **Where decisions go.** This file states the rules as they are. Why a rule was chosen (and what was
 > given up) is recorded in `docs/decisions.md` as numbered entries (D1…D32 so far). A new trade-off
 > gets the next number (D33, …) with background → decision → reason/trade-off; if it changes a rule
-> described here, update this file in the same change and cite the number. Current completion,
-> test results and known limitations live in `docs/progress.md`.
+> described here, update this file in the same change and cite the number. Known issues live in
+> `docs/production-readiness.md` §8; dated reports and the 1.0.0 progress snapshot are in `docs/archive/`.
 
 ## 1. Stack (installed versions)
 
-| Concern     | Choice                                                                                                                                                                                                                       | Notes                                          |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Build       | Vite 8 (Rolldown/Oxc), `@vitejs/plugin-react` 6                                                                                                                                                                              | alias `@` → `src`                              |
-| Language    | TypeScript **7** (native compiler, `tsc -b`), strict                                                                                                                                                                         | no `baseUrl` (removed); `paths` only           |
-| UI          | React 19.3, Tailwind CSS 4.3 (`@tailwindcss/vite`), `radix-ui` 1.8 (unified package), shadcn-style components we own, `lucide-react` 1.x, `cmdk`, `sonner`, `react-day-picker` 10, `tw-animate-css`, `motion` 14 (sparingly) |                                                |
-| Routing     | `react-router` **8**                                                                                                                                                                                                         | import from `react-router`                     |
-| State       | `zustand` 5 + `immer` 11 (patches for rollback)                                                                                                                                                                              |                                                |
-| DnD         | `@dnd-kit/core` 6.3 + `@dnd-kit/sortable` 10 (List/Board); custom pointer events (Gantt)                                                                                                                                     |                                                |
-| Ordering    | `fractional-indexing` 4                                                                                                                                                                                                      | via `src/domain/ordering.ts` only              |
-| Validation  | `zod` 4                                                                                                                                                                                                                      | via `src/domain/validation.ts`                 |
-| Backend     | Supabase Auth + Postgres + RLS via `@supabase/supabase-js` 2                                                                                                                                                                 | no app server                                  |
-| Tests       | Vitest 5 (+ jsdom, Testing Library, jest-dom 7), PGlite (DB/RLS), Playwright 1.64 (E2E; Chromium only so far), local Supabase simulator (`tests/cloud-sim`)                                                                  |                                                |
-| Lint/format | oxlint, prettier (no semicolons, single quotes, width 100)                                                                                                                                                                   |                                                |
-| Hosting     | Vercel (static SPA, `vercel.json`: security headers + SPA fallback that excludes `/assets/`)                                                                                                                                 | see docs/platform-notes.md, docs/deployment.md |
+| Concern     | Choice                                                                                                                                                                                                                       | Notes                                |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Build       | Vite 8 (Rolldown/Oxc), `@vitejs/plugin-react` 6                                                                                                                                                                              | alias `@` → `src`                    |
+| Language    | TypeScript **7** (native compiler, `tsc -b`), strict                                                                                                                                                                         | no `baseUrl` (removed); `paths` only |
+| UI          | React 19.3, Tailwind CSS 4.3 (`@tailwindcss/vite`), `radix-ui` 1.8 (unified package), shadcn-style components we own, `lucide-react` 1.x, `cmdk`, `sonner`, `react-day-picker` 10, `tw-animate-css`, `motion` 14 (sparingly) |                                      |
+| Routing     | `react-router` **8**                                                                                                                                                                                                         | import from `react-router`           |
+| State       | `zustand` 5 + `immer` 11 (patches for rollback)                                                                                                                                                                              |                                      |
+| DnD         | `@dnd-kit/core` 6.3 + `@dnd-kit/sortable` 10 (List/Board); custom pointer events (Gantt)                                                                                                                                     |                                      |
+| Ordering    | `fractional-indexing` 4                                                                                                                                                                                                      | via `src/domain/ordering.ts` only    |
+| Validation  | `zod` 4                                                                                                                                                                                                                      | via `src/domain/validation.ts`       |
+| Backend     | Supabase Auth + Postgres + RLS via `@supabase/supabase-js` 2                                                                                                                                                                 | no app server                        |
+| Tests       | Vitest 5 (+ jsdom, Testing Library, jest-dom 7), PGlite (DB/RLS), Playwright 1.64 (E2E; Chromium only so far), local Supabase simulator (`tests/cloud-sim`)                                                                  |                                      |
+| Lint/format | oxlint, prettier (no semicolons, single quotes, width 100)                                                                                                                                                                   |                                      |
+| Hosting     | Vercel (static SPA, `vercel.json`: security headers + SPA fallback that excludes `/assets/`)                                                                                                                                 | see docs/deployment.md               |
 
 **Several majors are newer than most training data** (react-router 8, react-day-picker 10, zod 4,
 immer 11, lucide-react 1.x, TypeScript 7, Vitest 5, jest-dom 7). Before using an API you are not
@@ -43,7 +44,7 @@ src/
   components/
     ui/           generic primitives (Button, Dialog, DropdownMenu, Popover, Tooltip, Input, …)
     task/         task primitives (StatusIcon, PriorityIcon, StatusMenu, PriorityMenu, DateField, ProjectDot, ProgressBar, DueLabel)
-    layout/       PageHeader, EmptyState, etc.
+    layout/       PageContainer, PageHeader, LoadingState, ErrorState
     brand/        Logo
   domain/         PURE TypeScript (no React, no I/O) + unit tests (*.test.ts)
   data/           repositories, auth, store, hooks, backup/export
@@ -51,14 +52,18 @@ src/
     overview/ my-tasks/ projects/ list/ board/ gantt/ timeline/ task-modal/ milestones/ search/ settings/
   lib/            utils (cn), notify, keyboard helpers
   styles/         tokens.css and theme layers
-  test/           vitest setup
-supabase/         migrations/*.sql, config.toml
+  test/           vitest setup, render helper, CSP and env-exposure checks
+supabase/         migrations/*.sql, verify.sql (read-only checks), config.toml
 tests/db/         PGlite migration + RLS tests (vitest project "db")
 tests/cloud-sim/  local stand-in for a Supabase project (tests only; src/ must never import it), see its README
-e2e/              Playwright specs (local data mode)
-e2e-cloud/        Playwright specs (cloud mode against the local simulator in tests/cloud-sim)
-e2e-prod/         Playwright specs (production builds behind vercel.json)
-docs/             architecture.md (this), decisions.md, progress.md, deployment.md, design-research.md, gantt-evaluation.md, platform-notes.md
+tests/staging/    Staging guard and pre-flight check (`npm run check:staging`)
+e2e/              Playwright specs (local data mode)              playwright.config.ts
+e2e-cloud/        Playwright specs (cloud mode, local simulator)  playwright.cloud.config.ts
+e2e-prod/         Playwright specs (production build + vercel.json) playwright.prod.config.ts
+e2e-staging/      Playwright specs (real Staging project)          playwright.staging.config.ts
+docs/             architecture.md (this), decisions.md, deployment.md, cloud-test-plan.md,
+                  production-readiness.md, design-research.md, gantt-evaluation.md
+docs/archive/     dated reports kept for history (not updated), see its README
 ```
 
 Parallel work is split by **folder ownership**; each task brief states what you own. Outside your
@@ -71,7 +76,7 @@ Frozen contracts (change only if unavoidable, and report it): `src/domain/types.
 - Code style: prettier config in repo (no semicolons, single quotes). Named exports. Imports via `@/…`.
 - Comment density: short JSDoc on exported functions/types, comments only for non-obvious logic.
 - UI copy is **English** (matches PRD wireframes); content may be any language → font stack covers CJK.
-  User-facing docs (README, guides) are Traditional Chinese.
+  `README.md` is English; the other docs are Traditional Chinese.
 - Accessibility: every interactive element reachable by keyboard, visible focus ring
   (`--focus-ring`), Radix primitives for menus/dialogs/popovers (focus trap, Esc), `aria-label` on
   icon-only buttons, never convey status by color alone (icons + text/tooltip).
@@ -278,11 +283,13 @@ source and `--gantt-day-width-*` in `tokens.css` must match.
 | `npm run test:e2e`                                         | Playwright against `vite --mode e2e` (port 5180) in local data mode                                                             |
 | `npm run test:cloud`                                       | Playwright against `vite` in cloud mode (port 5181) and the local Supabase simulator (port 54399)                               |
 | `npm run test:prod`                                        | Playwright against production builds behind the real `vercel.json` (CSP, deep links, bundle contents)                           |
+| `npm run check:staging` / `npm run test:staging:core`      | pre-flight check, then Playwright against the real Staging project with test accounts A and B (`docs/cloud-test-plan.md`)       |
+| `npm run verify`                                           | prettier check + lint + build + all Vitest projects: the gate before every PR update                                            |
 | `npx playwright test -c playwright.crossbrowser.config.ts` | opt-in Safari (WebKit) and Firefox run of the acceptance flows; needs `npx playwright install webkit firefox`; never run so far |
 | `npm run build`                                            | type check + production build                                                                                                   |
 
 Everything above runs in Chromium (or Node) only. What the simulator proves and does not prove is in
-`tests/cloud-sim/README.md`; results, dates and known limitations are in `docs/progress.md`.
+`tests/cloud-sim/README.md`; real Staging results and known issues are in `docs/production-readiness.md`.
 
 Definition of done for any slice: typecheck + lint clean for your files, tests for logic you wrote,
 real data flowing through the store (no mock lists, no dead buttons), loading / empty / error states.
