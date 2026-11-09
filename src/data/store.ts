@@ -160,6 +160,8 @@ export interface WorkspaceStoreOptions {
   randomId?: () => string
   /** Aborting it removes the store's event listeners (HMR, tests). */
   signal?: AbortSignal
+  /** Longest wait for writes in flight before `exportSavedBackup` fails (default 15 s). */
+  savedBackupTimeoutMs?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +369,41 @@ function toWorkspaceData(snapshot: WorkspaceSnapshot): WorkspaceData {
     },
     true,
   )
+}
+
+/** The backup file for `data`: one fixed order and shape, shared by every way of exporting. */
+function backupFrom(data: WorkspaceData, preferences: Preferences, exportedAt: string): BackupFile {
+  const byProjectThenOrder = (
+    a: Ordered & { projectId: string },
+    b: Ordered & { projectId: string },
+  ) => (a.projectId < b.projectId ? -1 : a.projectId > b.projectId ? 1 : bySortOrder(a, b))
+  const backup: BackupData = {
+    projects: sortByOrder(Object.values(data.projects)),
+    phases: Object.values(data.phases).sort(byProjectThenOrder),
+    tasks: Object.values(data.tasks).sort(byProjectThenOrder),
+    milestones: Object.values(data.milestones).sort((a, b) =>
+      a.projectId !== b.projectId
+        ? a.projectId < b.projectId
+          ? -1
+          : 1
+        : a.date < b.date
+          ? -1
+          : a.date > b.date
+            ? 1
+            : 0,
+    ),
+    dependencies: Object.values(data.dependencies).sort((a, b) =>
+      a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+    ),
+  }
+  const file: BackupFile = {
+    app: 'cairn',
+    formatVersion: BACKUP_FORMAT_VERSION,
+    exportedAt,
+    data: backup,
+    preferences: { ...preferences },
+  }
+  return structuredClone(file)
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +669,9 @@ function keysUntied<T extends Ordered>(
 }
 
 /** Creates an independent workspace store (the app uses `useWorkspaceStore`; tests make their own). */
+/** Default longest wait for writes in flight before a saved backup is exported. */
+export const SAVED_BACKUP_TIMEOUT_MS = 15_000
+
 export function createWorkspaceStore(options: WorkspaceStoreOptions) {
   const notifier = options.notify ?? notify
   const now = options.now ?? (() => Date.now())
@@ -639,6 +679,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
   const storage = options.storage === undefined ? getBrowserStorage() : options.storage
   const environment = options.environment ?? null
   const signal = options.signal
+  const savedBackupTimeoutMs = options.savedBackupTimeoutMs ?? SAVED_BACKUP_TIMEOUT_MS
   const source = options.repository
   let repositoryInstance: Repository | null = typeof source === 'function' ? null : source
   const repository = (): Repository => (repositoryInstance ??= (source as () => Repository)())
@@ -2104,37 +2145,49 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
 
     function exportBackup(): BackupFile {
       const { data, preferences } = get()
-      const byProjectThenOrder = (
-        a: Ordered & { projectId: string },
-        b: Ordered & { projectId: string },
-      ) => (a.projectId < b.projectId ? -1 : a.projectId > b.projectId ? 1 : bySortOrder(a, b))
-      const backup: BackupData = {
-        projects: sortByOrder(Object.values(data.projects)),
-        phases: Object.values(data.phases).sort(byProjectThenOrder),
-        tasks: Object.values(data.tasks).sort(byProjectThenOrder),
-        milestones: Object.values(data.milestones).sort((a, b) =>
-          a.projectId !== b.projectId
-            ? a.projectId < b.projectId
-              ? -1
-              : 1
-            : a.date < b.date
-              ? -1
-              : a.date > b.date
-                ? 1
-                : 0,
-        ),
-        dependencies: Object.values(data.dependencies).sort((a, b) =>
-          a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
-        ),
+      return backupFrom(data, preferences, isoNow())
+    }
+
+    /** Resolves true once no write is pending, false after the export wait limit. */
+    function writesSaved(): Promise<boolean> {
+      if (get().sync.pending === 0) return Promise.resolve(true)
+      return new Promise((resolve) => {
+        let unsubscribe = () => {}
+        const done = (saved: boolean) => {
+          clearTimeout(timer)
+          unsubscribe()
+          resolve(saved)
+        }
+        const timer = setTimeout(() => done(false), savedBackupTimeoutMs)
+        unsubscribe = store.subscribe((state) => {
+          if (state.sync.pending === 0) done(true)
+        })
+      })
+    }
+
+    async function exportSavedBackup(): Promise<Result<BackupFile>> {
+      const startEpoch = epoch
+      const signedOut = () =>
+        failed({
+          kind: 'auth',
+          message: 'You were signed out before the backup was exported.',
+        })
+      if (!(await writesSaved())) {
+        return failed({
+          kind: 'network',
+          message: 'Changes are still being saved. Try again in a moment.',
+        })
       }
-      const file: BackupFile = {
-        app: 'cairn',
-        formatVersion: BACKUP_FORMAT_VERSION,
-        exportedAt: isoNow(),
-        data: backup,
-        preferences: { ...preferences },
+      if (startEpoch !== epoch) return signedOut()
+      try {
+        // Read behind the writes already sent (same queue), so the snapshot includes them.
+        const snapshot = await enqueue(() => repository().loadWorkspace())
+        if (startEpoch !== epoch) return signedOut()
+        const preferences = snapshot.preferences ?? get().preferences
+        return { ok: true, value: backupFrom(toWorkspaceData(snapshot), preferences, isoNow()) }
+      } catch (thrown) {
+        return failed(toAppError(thrown))
       }
-      return structuredClone(file)
     }
 
     /**
@@ -2299,6 +2352,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       applySchedule,
       updatePreferences,
       exportBackup,
+      exportSavedBackup,
       importBackup,
       retryLastFailed,
       withdrawFailedChanges,

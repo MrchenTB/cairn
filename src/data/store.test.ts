@@ -2290,3 +2290,152 @@ describe('Saved toast after Retry', () => {
     expect(h.notifier.success).not.toHaveBeenCalled()
   })
 })
+
+describe('exportSavedBackup', () => {
+  const net = () => new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+
+  /** A promise that settles from outside. */
+  function deferred() {
+    let release!: () => void
+    const promise = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return { promise, release }
+  }
+
+  const titleOf = (file: BackupFile, id: string) => file.data.tasks.find((t) => t.id === id)?.title
+
+  it('waits for writes in flight and includes them', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const gate = deferred()
+    const original = h.repo.updateTask.bind(h.repo)
+    vi.spyOn(h.repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await gate.promise
+      return original(id, patch)
+    })
+    const write = h.actions.updateTask('a', { title: 'Renamed' })
+    await vi.waitFor(() => expect(h.state().sync.pending).toBe(1))
+
+    let settled = false
+    const exported = h.actions.exportSavedBackup().then((result) => {
+      settled = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(settled).toBe(false)
+
+    gate.release()
+    expect((await write).ok).toBe(true)
+    const result = await exported
+    if (!result.ok) throw new Error(result.error.message)
+    expect(titleOf(result.value, 'a')).toBe('Renamed')
+  })
+
+  it('leaves out a failed write that was rolled back', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    vi.spyOn(h.repo, 'updateTask').mockRejectedValueOnce(net())
+    expect((await h.actions.updateTask('a', { title: 'Never saved' })).ok).toBe(false)
+    expect(h.state().sync.canRetry).toBe(true)
+
+    const result = await h.actions.exportSavedBackup()
+    if (!result.ok) throw new Error(result.error.message)
+    expect(titleOf(result.value, 'a')).toBe('A')
+  })
+
+  it("includes another device's update the screen has not refreshed to yet", async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const other = new LocalRepository({ storage: h.storage, now: serverClock })
+    await other.updateTask('b', { title: 'From another device' })
+    expect(h.state().data.tasks.b.title).toBe('B') // not refreshed
+
+    const result = await h.actions.exportSavedBackup()
+    if (!result.ok) throw new Error(result.error.message)
+    expect(titleOf(result.value, 'b')).toBe('From another device')
+    expect(h.state().data.tasks.b.title).toBe('B') // the screen is left alone
+  })
+
+  it('fails when the saved data cannot be read, and changes nothing', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const before = h.state()
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    const result = await h.actions.exportSavedBackup()
+
+    expect(result).toMatchObject({ ok: false, error: { kind: 'network' } })
+    expect(h.state().data).toBe(before.data)
+    expect(h.state().sync).toEqual(before.sync)
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    expect(h.notifier.success).not.toHaveBeenCalled()
+  })
+
+  it('fails instead of waiting forever for a write that never finishes', async () => {
+    const storage = createMemoryStorage()
+    const repo = new LocalRepository({ storage, now: serverClock })
+    await seed(repo, workspaceRows())
+    const store = createWorkspaceStore({
+      mode: 'local',
+      repository: repo,
+      notify: { error: vi.fn(), dismiss: vi.fn(), success: vi.fn() },
+      storage: null,
+      savedBackupTimeoutMs: 40,
+    })
+    await store.getState().actions.load()
+    const gate = deferred()
+    const original = repo.updateTask.bind(repo)
+    vi.spyOn(repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await gate.promise
+      return original(id, patch)
+    })
+    const write = store.getState().actions.updateTask('a', { title: 'Slow' })
+    await vi.waitFor(() => expect(store.getState().sync.pending).toBe(1))
+
+    const result = await store.getState().actions.exportSavedBackup()
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: 'network', message: expect.stringContaining('still being saved') },
+    })
+    gate.release()
+    await write
+  })
+
+  it('fails when the session ends while it reads, instead of exporting that data', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const gate = deferred()
+    const original = h.repo.loadWorkspace.bind(h.repo)
+    vi.spyOn(h.repo, 'loadWorkspace').mockImplementationOnce(async () => {
+      const snapshot = await original()
+      await gate.promise
+      return snapshot
+    })
+    const exported = h.actions.exportSavedBackup()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    h.actions.reset() // sign-out (or another account) while the read is under way
+    gate.release()
+
+    expect(await exported).toMatchObject({ ok: false, error: { kind: 'auth' } })
+  })
+
+  it('produces the same file as exportBackup when nothing differs, and it parses', async () => {
+    const h = await setup({
+      rows: {
+        ...workspaceRows(),
+        milestones: [makeMilestone({ id: 'm1', projectId: 'p1', date: '2030-03-01' })],
+        dependencies: [
+          makeDependency({ id: 'd1', projectId: 'p1', predecessorId: 'a', successorId: 'b' }),
+        ],
+      },
+    })
+    const result = await h.actions.exportSavedBackup()
+    if (!result.ok) throw new Error(result.error.message)
+    const local = h.actions.exportBackup()
+
+    expect(parseBackupFile(JSON.parse(JSON.stringify(result.value))).ok).toBe(true)
+    expect(Object.keys(result.value)).toEqual(Object.keys(local))
+    expect(result.value.app).toBe('cairn')
+    expect(result.value.formatVersion).toBe(local.formatVersion)
+    expect(result.value.data).toEqual(local.data)
+    expect(result.value.preferences).toEqual(local.preferences)
+  })
+})

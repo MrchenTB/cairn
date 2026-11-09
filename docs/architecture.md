@@ -189,6 +189,9 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
 - Test hooks (local mode; installed only when `import.meta.env.DEV` or Vite mode `e2e`, and absent from normal production bundles): `window.__cairnTest = { failNextWrites(n), setLatency(ms), reset() }`.
 - Backup: JSON export of everything (+ preferences), CSV export of tasks; import = validated
   (`parseBackupFile`), ids remapped, inserted atomically as new copies.
+  The JSON export is built from the saved data (`exportSavedBackup()`: waits for pending writes, then re-reads the
+  workspace through the write queue), never from unconfirmed screen state; Settings asks first when a failed write or
+  unsaved task text is waiting (D36).
 
 ## 7. App shell, routing, UI contracts
 

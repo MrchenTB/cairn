@@ -13,6 +13,7 @@ import {
   useWorkspaceStore,
 } from '@/data/store'
 import type { BackupFile } from '@/domain/types'
+import { taskDrafts } from '@/features/task-modal/autosave/taskDrafts'
 import { notify } from '@/lib/notify'
 import { APP_VERSION } from './about'
 import { SettingsPage } from './SettingsPage'
@@ -367,6 +368,152 @@ describe('SettingsPage: exports', () => {
       expect.objectContaining({ description: expect.stringContaining('1 project and 2 tasks') }),
     )
     expect(screen.getByText(/Last exported just now from this browser/)).toBeInTheDocument()
+  })
+
+  it('exports without asking anything when everything is saved', async () => {
+    await seedWorkspace()
+    const { anchors } = captureDownloads()
+    const { user } = renderSettings('data')
+
+    await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(anchors).toHaveLength(1)
+  })
+
+  it('exports what is saved, not the screen', async () => {
+    await seedWorkspace()
+    const { blobs } = captureDownloads()
+    const exportSaved = vi.spyOn(actions(), 'exportSavedBackup')
+    const exportScreen = vi.spyOn(actions(), 'exportBackup')
+    const { user } = renderSettings('data')
+
+    await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+
+    await waitFor(() => expect(blobs).toHaveLength(1))
+    expect(exportSaved).toHaveBeenCalledTimes(1)
+    expect(exportScreen).not.toHaveBeenCalled()
+  })
+
+  describe('with a change that could not be saved', () => {
+    async function failOneWrite() {
+      const project = await seedWorkspace()
+      const task = Object.values(useWorkspaceStore.getState().data.tasks)[0]
+      window.__cairnTest?.failNextWrites(1)
+      const result = await actions().updateTask(task.id, { title: 'Not saved' })
+      expect(result.ok).toBe(false)
+      expect(useWorkspaceStore.getState().sync.canRetry).toBe(true)
+      return project
+    }
+
+    it('asks first and exports nothing when cancelled', async () => {
+      await failOneWrite()
+      const { anchors } = captureDownloads()
+      const exportSaved = vi.spyOn(actions(), 'exportSavedBackup')
+      const { user } = renderSettings('data')
+
+      await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+      const dialog = await screen.findByRole('alertdialog', { name: "Some changes aren't saved" })
+      expect(dialog).toHaveTextContent(/without the changes that couldn't be saved/)
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      expect(exportSaved).not.toHaveBeenCalled()
+      expect(anchors).toHaveLength(0)
+      expect(
+        screen.getByText(/haven't exported a backup from this browser yet/),
+      ).toBeInTheDocument()
+    })
+
+    it('exports what is saved after "Export anyway"', async () => {
+      await failOneWrite()
+      const { anchors, blobs } = captureDownloads()
+      const { user } = renderSettings('data')
+
+      await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+      const dialog = await screen.findByRole('alertdialog', { name: "Some changes aren't saved" })
+      await user.click(within(dialog).getByRole('button', { name: 'Export anyway' }))
+
+      await waitFor(() => expect(anchors).toHaveLength(1))
+      const file = JSON.parse(await blobText(blobs[0])) as BackupFile
+      expect(file.data.tasks.map((t) => t.title)).not.toContain('Not saved')
+      expect(file.data.tasks).toHaveLength(2)
+    })
+  })
+
+  it('asks first when task text is not saved yet', async () => {
+    await seedWorkspace()
+    const { anchors } = captureDownloads()
+    vi.spyOn(taskDrafts, 'getOutstanding').mockReturnValue([
+      {
+        key: 't|title',
+        taskId: 't',
+        field: 'title',
+        taskTitle: 'Write brief',
+        taskExists: true,
+        phase: 'failed',
+        text: 'Unsaved words',
+        error: 'The network request failed.',
+      },
+    ])
+    const { user } = renderSettings('data')
+
+    await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+    const dialog = await screen.findByRole('alertdialog', { name: "Some changes aren't saved" })
+    expect(anchors).toHaveLength(0)
+    await user.click(within(dialog).getByRole('button', { name: 'Export anyway' }))
+
+    await waitFor(() => expect(anchors).toHaveLength(1))
+  })
+
+  it('shows why and downloads nothing when the saved data cannot be read', async () => {
+    await seedWorkspace()
+    const { anchors } = captureDownloads()
+    vi.spyOn(actions(), 'exportSavedBackup').mockResolvedValue({
+      ok: false,
+      error: { kind: 'network', message: 'The network request failed.' },
+    })
+    const success = vi.spyOn(notify, 'success')
+    const error = vi.spyOn(notify, 'error')
+    const { user } = renderSettings('data')
+
+    await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith("Couldn't export the backup", {
+        description: 'The network request failed.',
+      }),
+    )
+    expect(anchors).toHaveLength(0)
+    expect(success).not.toHaveBeenCalled()
+    expect(screen.getByText(/haven't exported a backup from this browser yet/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Export JSON backup' })).not.toHaveAttribute(
+      'aria-busy',
+    )
+  })
+
+  it('ignores a second click while the export is under way', async () => {
+    await seedWorkspace()
+    captureDownloads()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const original = actions().exportSavedBackup
+    const exportSaved = vi.spyOn(actions(), 'exportSavedBackup').mockImplementation(async () => {
+      await gate
+      return original()
+    })
+    const { user } = renderSettings('data')
+    const button = screen.getByRole('button', { name: 'Export JSON backup' })
+
+    await user.click(button)
+    expect(button).toHaveAttribute('aria-busy', 'true')
+    await user.click(button)
+    release()
+
+    await waitFor(() => expect(button).not.toHaveAttribute('aria-busy'))
+    expect(exportSaved).toHaveBeenCalledTimes(1)
   })
 
   it('downloads the tasks as CSV', async () => {

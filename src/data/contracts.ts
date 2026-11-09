@@ -263,7 +263,16 @@ export interface WorkspaceActions {
 
   updatePreferences(patch: Partial<Preferences>): Promise<Result>
 
+  /** The backup from what is on the screen (synchronous; may hold changes not saved yet). */
   exportBackup(): BackupFile
+  /**
+   * The backup from what is SAVED: waits (up to 15 s) for writes in flight, then reads the
+   * workspace through the write queue, so it holds every confirmed write and another device's
+   * newer changes, and never an unconfirmed or rolled-back change. Fails (no file) when the writes
+   * don't finish in time, the read fails, or the session changes meanwhile. Does not touch the
+   * store's data, sync state or toasts.
+   */
+  exportSavedBackup(): Promise<Result<BackupFile>>
   /** Imports as NEW copies (fresh ids); never modifies or deletes existing data. */
   importBackup(file: BackupFile): Promise<Result<ImportSummary>>
 

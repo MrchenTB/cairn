@@ -190,3 +190,12 @@
 - **理由**：使用者要能用預覽網址驗收每次修改，再決定是否發布。Vercel 的 PR Preview 不用額外設定就符合這個流程。前端是靜態 SPA，只換設定，不需重構。
 - **防護**：`src/data/supabaseProjects.ts` 在每次建置與啟動時檢查專案：Preview 只能連 Staging，Production 不能連 Staging 也不能沒有設定（否則會靜默變成本機模式），本機不能連 Production。私有 repo 在免費 GitHub 方案沒有分支保護，所以合併的關卡是 `CLAUDE.md` 的規則與 `.claude/settings.json` 的確認提示。
 - **取捨**：`/assets/` 不走 SPA fallback，缺少的檔案回 404 而不是 HTML，避免把 HTML 當成永久快取的腳本。舊分頁載入已不存在的 chunk 時，由 `RouteErrorBoundary` 處理。Hobby 的 Instant Rollback 只能回到上一個部署。
+
+## D36 — JSON 備份從伺服器確認的資料產生
+
+> 註：D34、D35 由其他 PR 使用；若合併順序不同，再調整編號。
+
+- **背景**：Settings → Data → Export JSON backup 原本直接從畫面上的 store 狀態產生檔案。寫入進行中時，檔案可能含尚未確認的樂觀更新；有失敗寫入等待 Retry、或有未存的任務文字時，使用者會以為最新修改已在備份裡（失敗的修改其實已回滾、不在檔案中），卻沒有任何提示；另一台裝置的更新還沒刷新到此頁時，檔案也不是雲端最新狀態。備份是 Supabase Free 沒有自動備份下唯一的保險，不該有這種落差。
+- **決定**：新增 `exportSavedBackup()`：先等 `sync.pending` 歸零（最多 15 秒，逾時回傳失敗），再經由 store 既有的 FIFO 佇列重新讀取 `loadWorkspace()` 並用該快照產生檔案，所以包含已送出的寫入，也包含其他裝置的新資料。讀取失敗，或讀取途中 session 改變（登出、換帳號），都回傳失敗、不下載任何檔案；這個 action 不修改 store 資料、不動同步狀態、不出 toast。檔案組裝抽成純函式 `backupFrom`，與原本的 `exportBackup()` 共用，JSON 格式與排序不變。Settings 的按鈕改用它；有失敗寫入等待 Retry 或有未存文字時，先詢問「Some changes aren't saved」，確認後才匯出。正常情況不多一步。Local mode 走同一條路（讀 localStorage 的真實內容）。
+- **理由**：備份應該是「已經存好的資料」，而不是「畫面上看到的資料」。沿用寫入佇列的讀取順序（與 `load()` 相同），不需要新的資料層介面或資料庫變更。
+- **取捨**：匯出多一次網路讀取，離線時無法匯出（以錯誤說明，不產生可能不完整的檔案）。若寫入在 15 秒內沒完成就失敗，使用者需稍後再試。`exportBackup()` 保留給測試與其他同步用途，不再用於下載。失敗的寫入不會出現在備份中，這是刻意的：對話框只負責讓使用者知道，不會把未確認的資料寫進檔案。
