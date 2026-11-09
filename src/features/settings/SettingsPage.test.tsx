@@ -418,7 +418,7 @@ describe('SettingsPage: exports', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
 
       await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
-      expect(exportSaved).not.toHaveBeenCalled()
+      expect(exportSaved).toHaveBeenCalledTimes(1) // read first, then asked: nothing handed out
       expect(anchors).toHaveLength(0)
       expect(
         screen.getByText(/haven't exported a backup from this browser yet/),
@@ -439,6 +439,26 @@ describe('SettingsPage: exports', () => {
       expect(file.data.tasks.map((t) => t.title)).not.toContain('Not saved')
       expect(file.data.tasks).toHaveLength(2)
     })
+  })
+
+  it('asks first when a write still in flight fails while the export waits for it', async () => {
+    await seedWorkspace()
+    const task = Object.values(useWorkspaceStore.getState().data.tasks)[0]
+    const { anchors } = captureDownloads()
+    const { user } = renderSettings('data')
+    window.__cairnTest?.setLatency(150)
+    window.__cairnTest?.failNextWrites(1)
+    const saving = actions().updateTask(task.id, { title: 'Fails while exporting' })
+    expect(useWorkspaceStore.getState().sync.canRetry).toBe(false) // nothing failed yet
+
+    await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+    const dialog = await screen.findByRole('alertdialog', { name: "Some changes aren't saved" })
+    expect((await saving).ok).toBe(false)
+    expect(anchors).toHaveLength(0)
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(anchors).toHaveLength(0)
+    window.__cairnTest?.setLatency(0)
   })
 
   it('asks first when task text is not saved yet', async () => {

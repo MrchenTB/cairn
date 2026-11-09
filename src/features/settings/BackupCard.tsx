@@ -66,10 +66,18 @@ export function BackupCard() {
   const exportJson = async () => {
     // Text that can still go out goes out first; what can't is named below.
     taskDrafts.flushAll()
-    const unsavedText = taskDrafts.getOutstanding().length > 0
-    const failedWrites = useWorkspaceStore.getState().sync.canRetry
     setExporting(true)
     try {
+      // The backup is read from the saved data, not from the screen, once the writes in flight
+      // (the text just sent included) have their answer.
+      const result = await actions.exportSavedBackup()
+      if (!result.ok) {
+        notify.error("Couldn't export the backup", { description: result.error.message })
+        return
+      }
+      // Only now is it known what could not be saved: say so before handing out the file.
+      const unsavedText = taskDrafts.getOutstanding().length > 0
+      const failedWrites = useWorkspaceStore.getState().sync.canRetry
       if (unsavedText || failedWrites) {
         const agreed = await confirm({
           title: "Some changes aren't saved",
@@ -78,12 +86,6 @@ export function BackupCard() {
           confirmLabel: 'Export anyway',
         })
         if (!agreed) return
-      }
-      // The backup is read from the saved data, not from the screen.
-      const result = await actions.exportSavedBackup()
-      if (!result.ok) {
-        notify.error("Couldn't export the backup", { description: result.error.message })
-        return
       }
       const file = result.value
       downloadBackup(file)
