@@ -8,7 +8,9 @@ import { AuthLayout } from './AuthLayout'
  * The stored session could not be confirmed because the server did not answer (auth status
  * `unreachable`). Not a sign-out: the session stays on this device and nothing is shown or
  * cleared until it is confirmed. Tries again on the button and once whenever the browser comes
- * back online; never on a timer, so a server that stays down cannot cause a loop.
+ * back online; never on a timer of its own, so a server that stays down cannot cause a loop.
+ * supabase-js also keeps renewing the session in the background (every 30 s, after a 60 s
+ * cool-down following a failure): when that succeeds the app continues without a click.
  */
 export function SessionUnreachable() {
   const { actions } = useAuth()
@@ -34,8 +36,8 @@ export function SessionUnreachable() {
       <div className="flex flex-col items-center text-center" role="status">
         <WifiOff className="size-6 text-fg-tertiary" strokeWidth={1.5} aria-hidden />
         <p className="mt-3 text-ui text-fg-secondary">
-          You’re still signed in on this device, but the server didn’t answer. Check your connection
-          and try again.
+          You’re still signed in on this device, but the server didn’t answer. Cairn keeps trying
+          and continues by itself once the connection is back.
         </p>
         <Button
           variant="primary"

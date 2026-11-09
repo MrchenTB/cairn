@@ -488,9 +488,11 @@ test.describe('session lifetime', () => {
     await expect(page.locator(`[data-task-row="${ids.a}"]`)).toBeVisible()
   })
 
-  test('expired at startup and the server unreachable: not signed out; Try again restores it', async ({
+  test('expired at startup and the server unreachable: not signed out; continues once it is back', async ({
     page,
   }) => {
+    // supabase-js retries the refresh with backoff for ~30 s, then waits a 60 s cool-down.
+    test.setTimeout(240_000)
     await signUpNew(page)
     const { projectId } = await seedProject(page, {
       name: 'Kept plans',
@@ -517,8 +519,10 @@ test.describe('session lifetime', () => {
       times: 50,
     })
     await page.reload()
+    // While supabase-js retries: the splash, never the sign-in page.
+    await expect(page.getByRole('status', { name: 'Loading Cairn' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Can’t reach Cairn' })).toBeVisible({
-      timeout: 15_000,
+      timeout: 60_000,
     })
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/list$`)) // not sent to /login
     await expect(page.getByLabel('Password')).toHaveCount(0)
@@ -528,9 +532,11 @@ test.describe('session lifetime', () => {
     await page.getByRole('button', { name: 'Try again' }).click()
     await expect(page.getByRole('heading', { name: 'Can’t reach Cairn' })).toBeVisible()
 
+    // Back online: the library renews the session by itself after its cool-down, no reload.
     await sim.clearFaults()
-    await page.getByRole('button', { name: 'Try again' }).click()
-    await expect.poll(() => rowTitles(listScroll(page)), { timeout: 15_000 }).toEqual(['Alpha'])
+    await expect
+      .poll(() => rowTitles(listScroll(page)), { timeout: 150_000, intervals: [2_000] })
+      .toEqual(['Alpha'])
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/list$`))
   })
 
