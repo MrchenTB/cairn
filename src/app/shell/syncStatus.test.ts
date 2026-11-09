@@ -35,6 +35,15 @@ describe('deriveSyncStatus', () => {
     )
   })
 
+  it('never says Saved while a failed write waits for Retry, even without its error', () => {
+    for (const mode of ['supabase', 'local'] as const) {
+      expect(deriveSyncStatus(mode, { ...idle, canRetry: true, lastSavedAt: 2 })).toMatchObject({
+        kind: 'failed',
+        canRetry: true,
+      })
+    }
+  })
+
   it('reports offline in cloud mode', () => {
     expect(deriveSyncStatus('supabase', { ...idle, online: false })).toMatchObject({
       kind: 'offline',

@@ -32,12 +32,14 @@ export function deriveSyncStatus(mode: DataMode, sync: SyncState): SyncStatus {
       canRetry: false,
     }
   }
-  if (sync.lastError && sync.canRetry) {
+  // A failed write waiting for Retry is never covered by "Saved", whatever else is known.
+  if (sync.canRetry) {
+    const reason = sync.lastError ? `${sync.lastError.message} ` : ''
     return {
       kind: 'failed',
       label: "Couldn't save",
       title: "Couldn't save your last change",
-      detail: `${sync.lastError.message} The change was undone on screen; retry to apply it again.`,
+      detail: `${reason}The change was undone on screen; retry to apply it again.`,
       canRetry: true,
     }
   }

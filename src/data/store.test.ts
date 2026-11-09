@@ -393,11 +393,22 @@ describe('retry', () => {
     expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
   })
 
-  it('a successful write clears the last error', async () => {
+  it('a successful write of other data does not clear the error of a failed one', async () => {
     const h = await setup({ rows: workspaceRows() })
     h.repo.failNextWrites(1)
     await h.actions.updateTask('a', { title: 'x' })
     expect(h.state().sync.lastError).not.toBeNull()
+    await h.actions.updateTask('b', { title: 'y' })
+    // "a" was never saved: the error and its Retry stay until it is
+    expect(h.state().sync.lastError).not.toBeNull()
+    expect(h.state().sync.canRetry).toBe(true)
+  })
+
+  it('a successful write clears the error of a refused write (nothing left to retry)', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    await new LocalRepository({ storage: h.storage }).deleteTask('a', { keepSubtasks: false })
+    expect((await h.actions.updateTask('a', { title: 'gone' })).ok).toBe(false)
+    await idle(h)
     await h.actions.updateTask('b', { title: 'y' })
     expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
   })
@@ -2009,6 +2020,186 @@ describe('text the database cannot store', () => {
     expect(h.state().data).toBe(data)
     for (const spy of writes) expect(spy).not.toHaveBeenCalled()
     expect(h.notifier.error).not.toHaveBeenCalled()
+  })
+})
+
+/** The order in which the repository was asked to change tasks, as "kind:id". */
+function recordTaskWrites(h: Harness): string[] {
+  const calls: string[] = []
+  const insert = h.repo.insertTask.bind(h.repo)
+  const update = h.repo.updateTask.bind(h.repo)
+  vi.spyOn(h.repo, 'insertTask').mockImplementation(async (task) => {
+    calls.push(`insert:${task.id}`)
+    return insert(task)
+  })
+  vi.spyOn(h.repo, 'updateTask').mockImplementation(async (id, patch) => {
+    calls.push(`update:${id}`)
+    return update(id, patch)
+  })
+  return calls
+}
+
+describe('a failed write stays failed until it is saved, replaced or shown as stored', () => {
+  it('A: a save of unrelated data keeps the failure, its error and its Retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Never stored' })).ok).toBe(false)
+    expect((await h.actions.updateTask('b', { priority: 'high' })).ok).toBe(true)
+    await idle(h)
+    await h.actions.refresh({ silent: true }) // the server does not have it either
+    expect(h.state().data.tasks.a.title).toBe('A')
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(h.state().sync.lastError).not.toBeNull()
+
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedTask(h, 'a'))?.title).toBe('Never stored')
+    expect((await storedTask(h, 'b'))?.priority).toBe('high')
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    expect(h.notifier.success).toHaveBeenCalledWith('Saved')
+  })
+
+  it('A: the toast Retry of a failure made before an unrelated save still sends it', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Retry from the toast' })
+    const retry = lastToastAction(h)
+    await h.actions.updateProject('p1', { name: 'Alpha 2' })
+    retry?.onClick()
+    await vi.waitFor(async () =>
+      expect((await storedTask(h, 'a'))?.title).toBe('Retry from the toast'),
+    )
+    await idle(h)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+  })
+
+  it('B: a newer save of the same field replaces the failure; Retry never sends the old value', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Old' })).ok).toBe(false)
+    expect((await h.actions.updateTask('a', { title: 'New' })).ok).toBe(true)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    const writes = recordTaskWrites(h)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect(writes).toEqual([])
+    expect((await storedTask(h, 'a'))?.title).toBe('New')
+  })
+
+  it('B: editing a task whose deletion failed withdraws the deletion', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.deleteTask('a', { keepSubtasks: false })).ok).toBe(false)
+    expect(h.state().data.tasks.a).toBeDefined() // rolled back
+    expect((await h.actions.updateTask('a', { title: 'Still needed' })).ok).toBe(true)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedTask(h, 'a'))?.title).toBe('Still needed')
+  })
+
+  it('C: a create stored without an answer is found by the refresh, and Retry adds no copy', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const insert = h.repo.insertTask.bind(h.repo)
+    vi.spyOn(h.repo, 'insertTask').mockImplementationOnce(async (task) => {
+      await insert(task)
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+    })
+    expect((await h.actions.createTask({ projectId: 'p1', title: 'Stored' })).ok).toBe(false)
+    expect((await h.actions.updateTask('b', { priority: 'low' })).ok).toBe(true)
+    await idle(h)
+    await h.actions.refresh({ silent: true })
+    expect(h.state().data.tasks['new-1']).toMatchObject({ title: 'Stored' })
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedSnapshot(h)).tasks.filter((t) => t.title === 'Stored')).toHaveLength(1)
+  })
+
+  it('D: several failures between saves are re-sent once, in the order they were made', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'First' })).ok).toBe(false)
+    expect((await h.actions.updateTask('c', { priority: 'low' })).ok).toBe(true)
+    h.repo.failNextWrites(1)
+    expect((await h.actions.createTask({ projectId: 'p1', title: 'Second' })).ok).toBe(false)
+    expect((await h.actions.updateTask('d', { priority: 'low' })).ok).toBe(true)
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('b', { title: 'Third' })).ok).toBe(false)
+    expect(h.state().sync.canRetry).toBe(true)
+
+    // The first Retry fails again at the first change: nothing after it is sent out of order.
+    const writes = recordTaskWrites(h)
+    h.repo.failNextWrites(1)
+    expect((await h.actions.retryLastFailed()).ok).toBe(false)
+    expect(writes).toEqual(['update:a'])
+    expect(h.state().sync).toMatchObject({ canRetry: true })
+    expect(h.state().sync.lastError).not.toBeNull()
+
+    writes.length = 0
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect(writes).toEqual(['update:a', 'insert:new-1', 'update:b'])
+    const stored = await storedSnapshot(h)
+    expect(stored.tasks.find((t) => t.id === 'a')?.title).toBe('First')
+    expect(stored.tasks.filter((t) => t.title === 'Second')).toHaveLength(1)
+    expect(stored.tasks.find((t) => t.id === 'b')?.title).toBe('Third')
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    // nothing is sent twice
+    writes.length = 0
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    expect(writes).toEqual([])
+  })
+
+  it('E: a failure of the previous session is never retried for the next one', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Account A' })
+    h.actions.reset() // signed out; another account signs in on the same store
+    await h.actions.load()
+    await idle(h)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    const writes = recordTaskWrites(h)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(writes).toEqual([])
+    expect((await storedTask(h, 'a'))?.title).toBe('A')
+  })
+
+  it('F: a refresh withdraws only the failures it shows as stored; the rest stay reported', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Really failed' })).ok).toBe(false)
+    const update = h.repo.updateTask.bind(h.repo)
+    vi.spyOn(h.repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await update(id, patch)
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+    })
+    // the newest failure is the one that was stored after all
+    expect((await h.actions.updateTask('b', { priority: 'urgent' })).ok).toBe(false)
+    await vi.waitFor(() => expect(h.state().data.tasks.b.priority).toBe('urgent'))
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('A')
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(h.state().sync.lastError).not.toBeNull()
+  })
+
+  it('a failed load in between does not hide a failure still waiting for Retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Waiting' })
+    await idle(h)
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(
+      new RepositoryError('network', NETWORK_ERROR_MESSAGE),
+    )
+    expect((await h.actions.load()).ok).toBe(false)
+    expect(h.state().sync.canRetry).toBe(true)
+    expect((await h.actions.load()).ok).toBe(true)
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(h.state().sync.lastError).not.toBeNull()
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedTask(h, 'a'))?.title).toBe('Waiting')
   })
 })
 

@@ -183,10 +183,11 @@ export interface SyncState {
   /** Remote writes currently in flight. > 0 → UI shows "Saving…". */
   pending: number
   /**
-   * Most recent failed write/load that has not been followed by a successful write (a failed
-   * write that a later refresh shows the server applied after all — its answer was lost — no
-   * longer counts, and neither does a write the server refused once a refresh has shown the
-   * current data).
+   * The error to report: the newest failed write still waiting for Retry, otherwise the most
+   * recent failed load or refused write not yet followed by a success. A failed write ends only
+   * when it is saved, replaced by a newer change of the same data, or shown by a refresh to be
+   * stored after all (its answer was lost); a save of other data does not end it. A refused write
+   * (it would fail the same way again) ends with the next success or with a refresh.
    */
   lastError: AppError | null
   /** epoch ms of the last successful write */
@@ -195,7 +196,7 @@ export interface SyncState {
   lastLoadedAt: number | null
   /** navigator.onLine, kept up to date */
   online: boolean
-  /** true when a failed write can be retried with actions.retryLastFailed() */
+  /** true while a failed write waits for actions.retryLastFailed() (then lastError is set too) */
   canRetry: boolean
 }
 
@@ -268,8 +269,8 @@ export interface WorkspaceActions {
   importBackup(file: BackupFile): Promise<Result<ImportSummary>>
 
   /**
-   * Re-runs the failed writes not followed by a successful one (usually just the most recent;
-   * several after an outage), one at a time in the order they were made, stopping at the first
+   * Re-runs the failed writes still waiting for Retry (usually just the most recent; several
+   * after an outage), one at a time in the order they were made, stopping at the first
    * that fails again. A failed write that a newer change of the same fields replaced is never
    * re-sent (it would overwrite that newer change), nor one a refresh showed the server applied.
    */

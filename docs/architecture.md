@@ -157,7 +157,10 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
   runs and E2E-tests without keys; it is never presented as cloud sync.
 - Store (`src/data/store.ts`): zustand + immer. Optimistic update → repository call → reconcile or
   rollback (inverse patches) + toast with Retry. `sync` state drives the sidebar indicator
-  ("Saving…", "Saved", "Couldn't save · Retry", "Offline", "Local only").
+  ("Saving…", "Saved", "Couldn't save · Retry", "Offline", "Local only"). A retryable failure
+  ends only when Retry saves it, a newer change replaces it (same field, the whole entity, or an
+  edit of an entity whose deletion failed), or a refresh shows it was stored; a save of other data
+  never ends it, so "Saved" never covers an unsaved change (D34).
 - Cross-device freshness: `refresh({ silent: true })` on window focus / visibility / coming back online
   (throttled to 30 s, `AUTO_REFRESH_INTERVAL_MS`; skipped while writes are pending; a refresh started
   before a write is discarded). This is refresh-on-return, **not** live push: another device that stays
