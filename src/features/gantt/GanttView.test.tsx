@@ -115,7 +115,7 @@ afterEach(() => {
 })
 
 describe('GanttView', () => {
-  it('lists the outline: phase header, tasks with subtasks, milestone, Unscheduled (n)', async () => {
+  it('lists the outline in place: undated tasks stay in their phase, no Unscheduled group', async () => {
     const s = await seed()
     renderGantt(s.project.id)
     const rows = Array.from(chart().querySelectorAll('[data-row-key]')).map((row) =>
@@ -132,23 +132,17 @@ describe('GanttView', () => {
       `milestone:${s.milestone.id}`,
       'group:none', // "No phase" comes after the phases
       `task:${s.brief.id}`,
-      'unscheduled',
       `task:${s.idea.id}`,
     ])
-    expect(screen.getByRole('button', { name: 'Unscheduled, 1 task' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
-    // Group counts say what they count: tasks with dates (subtasks included) — not the List's number.
-    const designCount = within(
-      screen.getByRole('button', { name: new RegExp(`^${s.design.name}, \\d+ tasks?$`) }),
-    ).getByTitle(/with dates, subtasks included$/)
-    expect(designCount).toBeInTheDocument()
+    // Parent (no dates of its own) stays under Design; so does "Idea" under No phase.
+    expect(screen.queryByRole('button', { name: /^Unscheduled, / })).not.toBeInTheDocument()
+    // Group counts are every task of the group (subtasks included), dated or not.
     expect(
-      within(screen.getByRole('button', { name: 'Unscheduled, 1 task' })).getByTitle(
-        '1 task without dates, subtasks included',
+      within(screen.getByRole('button', { name: 'Design, 6 tasks' })).getByTitle(
+        '6 tasks, subtasks included',
       ),
     ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'No phase, 2 tasks' })).toBeInTheDocument()
     // Each outline row: status glyph, title (opens the modal), due text.
     const wireRow = chart().querySelector(`[data-row-key="task:${s.wire.id}"]`) as HTMLElement
     expect(within(wireRow).getByRole('img', { name: 'Status: To Do' })).toBeInTheDocument()
@@ -499,7 +493,9 @@ describe('GanttView', () => {
     must(await a.createTask({ projectId: project.id, title: 'Someday' }))
     renderGantt(project.id)
     expect(screen.getAllByText(/Drag across a row to schedule it/).length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: 'Unscheduled, 1 task' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Show only unscheduled tasks, 1' }),
+    ).toBeInTheDocument()
   })
 
   it('double-clicking an empty lane schedules a one-day task there', async () => {
@@ -518,5 +514,185 @@ describe('GanttView', () => {
       expect(idea.startDate).toBe(idea.dueDate)
     })
     Reflect.deleteProperty(document, 'elementFromPoint')
+  })
+})
+
+describe('GanttView: Unscheduled filter', () => {
+  const toggle = (count: number) =>
+    screen.getByRole('button', { name: `Show only unscheduled tasks, ${count}` })
+  const rowKeys = () =>
+    Array.from(chart().querySelectorAll('[data-row-key]')).map((row) =>
+      row.getAttribute('data-row-key'),
+    )
+
+  it('is a toggle named with the count; filtering lists only tasks without dates', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    // Parent and Idea have neither date (Review / Build have one, Child has both).
+    expect(toggle(2)).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle(2)).toHaveTextContent('Unscheduled 2')
+    await user.click(toggle(2))
+    expect(toggle(2)).toHaveAttribute('aria-pressed', 'true')
+    expect(rowKeys()).toEqual([
+      `group:${s.design.id}`,
+      `task:${s.parent.id}`,
+      'group:none',
+      `task:${s.idea.id}`,
+    ])
+    // Headers count the matches only and say so.
+    expect(
+      within(screen.getByRole('button', { name: 'Design, 1 task' })).getByTitle(
+        '1 task without dates, subtasks included',
+      ),
+    ).toBeInTheDocument()
+    // The Parent's bracket (its dated Child) is still drawn: the chevron is gone, the span is real.
+    expect(
+      chart().querySelector(`[data-row-key="task:${s.parent.id}"] [title^="Parent (subtasks)"]`),
+    ).not.toBeNull()
+    await user.click(toggle(2))
+    expect(toggle(2)).toHaveAttribute('aria-pressed', 'false')
+    expect(rowKeys()).toHaveLength(11)
+  })
+
+  it('a scheduled parent stays as a dimmed context row for its unscheduled subtasks', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Ctx' }))
+    const parent = must(
+      await a.createTask({
+        projectId: project.id,
+        title: 'Epic',
+        startDate: at(1),
+        dueDate: at(4),
+      }),
+    )
+    const sub = must(
+      await a.createTask({ projectId: project.id, parentTaskId: parent.id, title: 'Loose end' }),
+    )
+    must(
+      await a.createTask({
+        projectId: project.id,
+        parentTaskId: parent.id,
+        title: 'Planned',
+        dueDate: at(3),
+      }),
+    )
+    const { user } = renderGantt(project.id)
+    // Only the subtask counts: the parent is shown for it, not as a match.
+    await user.click(toggle(1))
+    expect(rowKeys()).toEqual([`task:${parent.id}`, `task:${sub.id}`])
+    const context = within(
+      chart().querySelector(`[data-row-key="task:${parent.id}"]`) as HTMLElement,
+    ).getByRole('button', { name: /^Epic, has dates/ })
+    expect(context).toHaveAccessibleName('Epic, has dates, shown for its subtasks')
+    expect(context).toHaveAttribute('title', 'Epic (has dates, shown for its subtasks)')
+    expect(context).toHaveClass('text-fg-tertiary')
+    // Still fully interactive: the title opens the task, the bar can be reached.
+    expect(barOf(parent.id)).toBeInTheDocument()
+  })
+
+  it('opening a task works in filter mode', async () => {
+    const s = await seed()
+    const { user, router } = renderGantt(s.project.id)
+    await user.click(toggle(2))
+    await user.click(
+      within(chart().querySelector(`[data-row-key="task:${s.idea.id}"]`) as HTMLElement).getByRole(
+        'button',
+        { name: 'Idea' },
+      ),
+    )
+    expect(router.state.location.search).toBe(`?task=${s.idea.id}`)
+  })
+
+  it('scheduling a task while filtering removes it; the toggle stays at 0 and turns the filter off', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    await user.click(toggle(2))
+    await act(async () => {
+      must(await getWorkspaceActions().updateTask(s.idea.id, { dueDate: at(2) }))
+    })
+    await waitFor(() => expect(toggle(1)).toBeInTheDocument())
+    expect(rowKeys()).toEqual([`group:${s.design.id}`, `task:${s.parent.id}`])
+    await act(async () => {
+      must(await getWorkspaceActions().updateTask(s.parent.id, { dueDate: at(2) }))
+    })
+    // Nothing left: the toggle is still there (pressed, 0) and the empty state offers a way out.
+    await waitFor(() => expect(toggle(0)).toHaveAttribute('aria-pressed', 'true'))
+    expect(rowKeys()).toEqual([])
+    expect(screen.getByText('No tasks without dates')).toBeInTheDocument()
+    expect(screen.queryByText(/Drag across a row to schedule it/)).not.toBeInTheDocument()
+    await user.click(toggle(0))
+    expect(rowKeys()).toContain(`task:${s.idea.id}`)
+    // Not pressed and no tasks without dates: the toggle hides again.
+    expect(
+      screen.queryByRole('button', { name: /^Show only unscheduled tasks/ }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('the empty state button shows all tasks again and returns focus to the toggle', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'One' }))
+    const only = must(await a.createTask({ projectId: project.id, title: 'Only' }))
+    const { user } = renderGantt(project.id)
+    await user.click(toggle(1))
+    await act(async () => {
+      must(await getWorkspaceActions().updateTask(only.id, { dueDate: at(1) }))
+    })
+    await user.click(await screen.findByRole('button', { name: 'Show all tasks' }))
+    expect(rowKeys()).toEqual([`task:${only.id}`])
+    expect(screen.queryByText('No tasks without dates')).not.toBeInTheDocument()
+  })
+
+  it('focus on a row that leaves the filtered list moves to the toggle', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    await user.click(toggle(2))
+    const idea = within(
+      chart().querySelector(`[data-row-key="task:${s.idea.id}"]`) as HTMLElement,
+    ).getByRole('button', { name: 'Idea' })
+    act(() => idea.focus())
+    expect(idea).toHaveFocus()
+    await act(async () => {
+      must(await getWorkspaceActions().updateTask(s.idea.id, { dueDate: at(2) }))
+    })
+    await waitFor(() => expect(toggle(1)).toHaveFocus())
+  })
+
+  it('goes to the top when filtering and restores the vertical scroll position afterwards', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    chart().scrollTop = 96
+    chart().scrollLeft = 40
+    await user.click(toggle(2))
+    expect(chart().scrollTop).toBe(0)
+    expect(chart().scrollLeft).toBe(40)
+    await user.click(toggle(2))
+    expect(chart().scrollTop).toBe(96)
+  })
+
+  it('does not touch the saved collapse prefs: filter rows start expanded and toggle separately', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    // Collapse Design in the normal view (persisted).
+    await user.click(screen.getByRole('button', { name: 'Design, 6 tasks' }))
+    const saved = localStorage.getItem('cairn:gantt-collapsed')
+    expect(JSON.parse(saved ?? '{}')).toEqual({ [s.project.id]: [`group:${s.design.id}`] })
+    expect(rowKeys()).not.toContain(`task:${s.wire.id}`)
+
+    await user.click(toggle(2))
+    // Filter mode ignores the saved collapse: the Design match is visible.
+    expect(rowKeys()).toContain(`task:${s.parent.id}`)
+    // Collapsing in filter mode only affects the temporary set.
+    await user.click(screen.getByRole('button', { name: 'Design, 1 task' }))
+    expect(rowKeys()).not.toContain(`task:${s.parent.id}`)
+    expect(localStorage.getItem('cairn:gantt-collapsed')).toBe(saved)
+
+    // Back to the normal view: the saved state (Design collapsed) is exactly as it was.
+    await user.click(toggle(2))
+    expect(rowKeys()).not.toContain(`task:${s.wire.id}`)
+    expect(rowKeys()).toContain(`group:${s.design.id}`)
+    expect(localStorage.getItem('cairn:gantt-collapsed')).toBe(saved)
+    // Filtering again starts from an empty temporary set (Design's match is visible again).
+    await user.click(toggle(2))
+    expect(rowKeys()).toContain(`task:${s.parent.id}`)
   })
 })
