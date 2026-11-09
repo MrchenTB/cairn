@@ -22,9 +22,11 @@
  * - a full load reads behind the writes already sent (same queue) and re-applies the writes made
  *   meanwhile on top of the snapshot, so it never reverts or loses them.
  *
- * Retry re-sends the retryable failures not followed by a successful write, in the order they
- * were made (an edit of a task whose creation failed goes after the creation). A newer change of
- * the same fields withdraws an older failure's Retry, so a Retry never overwrites newer work.
+ * Retry re-sends the retryable failures, in the order they were made (an edit of a task whose
+ * creation failed goes after the creation). A failure stays until it is saved by a Retry, replaced
+ * by a newer change of the same fields (or of an entity whose deletion failed), or shown as stored
+ * by a refresh; a save of other data does not end it, so "Saved" never covers an unsaved change.
+ * Withdrawing on a newer change means a Retry never overwrites newer work.
  */
 import {
   applyPatches,
@@ -269,6 +271,20 @@ function changedPaths(patches: readonly Patch[]): Path[] {
  */
 function replaces(newer: readonly Path[], older: readonly Path[]): boolean {
   return older.some((path) => newer.some((candidate) => isPrefix(candidate, path)))
+}
+
+/**
+ * True when a change of `newer` works on an entity whose deletion `older` (forward patches) was:
+ * the deletion failed and was undone, and the user went on using the entity. Sending the deletion
+ * again would throw that newer work away.
+ */
+function revives(newer: readonly Path[], older: readonly Patch[]): boolean {
+  return older.some(
+    (patch) =>
+      patch.op === 'remove' &&
+      patch.path.length === 3 &&
+      newer.some((path) => path.length > 3 && isPrefix(patch.path, path)),
+  )
 }
 
 /** A stored row to merge into the state at `path` (['data', table, id] or ['preferences']). */
@@ -775,6 +791,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       return failedWrites.length > 0
     }
 
+    /** The error to report for the failures still waiting for Retry (the newest), or null. */
+    function failedWriteError(): AppError | null {
+      return failedWrites.at(-1)?.error ?? null
+    }
+
     /**
      * The failed creation (still waiting for Retry) of an entity that `write` changes. The server
      * refused such a change with "not found" only because it never got the creation (only that
@@ -810,7 +831,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         !handle.stale &&
         !handle.used &&
         handle.seq < seq &&
-        (replaces(paths, handle.paths) || (intent !== undefined && handle.intent === intent))
+        (replaces(paths, handle.paths) ||
+          revives(paths, handle.patches) ||
+          (intent !== undefined && handle.intent === intent))
       let withdrawn = false
       for (const handle of failedWrites) {
         if (replaced(handle)) {
@@ -842,7 +865,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         Number.POSITIVE_INFINITY,
       )
       const withdrew = failedWrites.length !== before || toastRetry !== toastBefore
-      if (withdrew && !hasFailedWrites() && !lastErrorFromLoad) updateSync({ lastError: null })
+      if (withdrew && !lastErrorFromLoad) updateSync({ lastError: failedWriteError() })
     }
 
     function onWriteFailed<T>(
@@ -901,7 +924,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         action: handle
           ? {
               label: 'Retry',
-              // Everything that failed since the last save, or (after an unrelated save) this.
+              // Every failure still waiting for Retry, in the order made (this one included).
               onClick: () => void runRetry([...failedWrites, handle]),
             }
           : undefined,
@@ -909,19 +932,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       })
     }
 
-    function onWriteSucceeded<T>(spec: WriteSpec<T>, seq: number): void {
+    function onWriteSucceeded<T>(spec: WriteSpec<T>): void {
       if (!spec.background) userWritesPending -= 1
       if (spec.background) {
         updateSync({ pending: get().sync.pending - 1 })
         return
       }
-      // A save ends the failures made before it (contract: lastError is cleared by a success).
-      failedWrites = failedWrites.filter((handle) => handle.seq > seq)
+      // A save says nothing about other changes: a failure still waiting for Retry stays reported
+      // until it is saved, replaced by a newer change (supersedeFailures) or shown as stored by a
+      // refresh (withdrawAppliedFailures). Only a refused write's or a load's error ends here.
       lastErrorFromLoad = false
       updateSync({
         pending: get().sync.pending - 1,
         lastSavedAt: now(),
-        lastError: null,
+        lastError: failedWriteError(),
         canRetry: hasFailedWrites(),
       })
     }
@@ -960,7 +984,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             if (startEpoch === epoch) {
               settle(pending)
               requestResync()
-              onWriteSucceeded(spec, seq)
+              onWriteSucceeded(spec)
             }
             return { ok: true, value: alreadyDone.value() }
           }
@@ -985,7 +1009,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             const { afterSuccess } = spec
             safely(() => afterSuccess(value))
           }
-          onWriteSucceeded(spec, seq)
+          onWriteSucceeded(spec)
         }
         return { ok: true, value }
       })
@@ -1078,12 +1102,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
      * change failed. Others stay.
      */
     function withdrawAppliedFailures(stored: Doc): void {
-      // The toast's failure too: an unrelated save took it off the Retry list, not off the toast.
-      const candidates =
-        toastRetry && !failedWrites.includes(toastRetry)
-          ? [...failedWrites, toastRetry]
-          : failedWrites
-      const applied = candidates.filter(
+      const applied = failedWrites.filter(
         (handle) =>
           handle.epoch === epoch &&
           !handle.stale &&
@@ -1099,7 +1118,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       }
       const { lastError } = get().sync
       const cleared = applied.some((handle) => handle.error === lastError)
-      updateSync({ canRetry: hasFailedWrites(), ...(cleared ? { lastError: null } : {}) })
+      // The failures it did not show as stored are still reported (their newest error).
+      updateSync({
+        canRetry: hasFailedWrites(),
+        ...(cleared ? { lastError: failedWriteError() } : {}),
+      })
     }
 
     /**
@@ -1109,9 +1132,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
      */
     function loadedSync(sync: SyncState): SyncState {
       let cleared: Partial<SyncState> = {}
-      if (lastErrorFromLoad) cleared = { lastError: null, canRetry: false }
+      if (lastErrorFromLoad)
+        cleared = { lastError: failedWriteError(), canRetry: hasFailedWrites() }
       else if (sync.lastError && !isRetryable(sync.lastError)) {
-        cleared = { lastError: failedWrites.at(-1)?.error ?? null }
+        cleared = { lastError: failedWriteError() }
       }
       lastErrorFromLoad = false
       return { ...sync, ...cleared, lastLoadedAt: now() }
@@ -1178,7 +1202,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         set((state) => ({
           status: 'error',
           loadError: error,
-          sync: { ...state.sync, lastError: error, canRetry: false },
+          // A failed write waiting for Retry is still unsaved (closing the tab still asks).
+          sync: { ...state.sync, lastError: error, canRetry: hasFailedWrites() },
         }))
         return failed(error)
       }
@@ -2270,7 +2295,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       })
     }
 
-    /** Re-sends every failed write not followed by a successful one, in order (see runRetry). */
+    /** Re-sends every failed write still waiting for Retry, in order (see runRetry). */
     function retryLastFailed(): Promise<Result> {
       return runRetry(failedWrites)
     }

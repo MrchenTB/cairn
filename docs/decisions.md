@@ -190,3 +190,10 @@
 - **理由**：使用者要能用預覽網址驗收每次修改，再決定是否發布。Vercel 的 PR Preview 不用額外設定就符合這個流程。前端是靜態 SPA，只換設定，不需重構。
 - **防護**：`src/data/supabaseProjects.ts` 在每次建置與啟動時檢查專案：Preview 只能連 Staging，Production 不能連 Staging 也不能沒有設定（否則會靜默變成本機模式），本機不能連 Production。私有 repo 在免費 GitHub 方案沒有分支保護，所以合併的關卡是 `CLAUDE.md` 的規則與 `.claude/settings.json` 的確認提示。
 - **取捨**：`/assets/` 不走 SPA fallback，缺少的檔案回 404 而不是 HTML，避免把 HTML 當成永久快取的腳本。舊分頁載入已不存在的 chunk 時，由 `RouteErrorBoundary` 處理。Hobby 的 Instant Rollback 只能回到上一個部署。
+
+## D34 — 失敗的寫入只在存好、被取代或證實已存時結束；無關的成功不再清除它
+
+- **背景**：production-readiness §8 的 F2。`onWriteSucceeded()` 把序號較早的失敗全部移出 Retry 清單並清掉 `lastError`：A 存失敗後，B 的無關修改一成功，側邊欄就顯示 Saved，關閉分頁也不再提醒，但 A 從未存進資料庫（只剩 toast 上的 Retry）。另外 refresh 證實「部分」失敗其實已存時，若被撤回的剛好是最新那筆，`lastError` 會變成 null 而 `canRetry` 仍是 true，側邊欄同樣落到 Saved；載入失敗再成功後，`canRetry` 也被直接設成 false。
+- **決定**：一筆可重試的失敗只在三種情況結束：Retry 存好；被較新的修改取代（同一欄位、整個實體，或使用者繼續編輯一個刪除失敗、已被復原的實體）；refresh 顯示伺服器其實已存（回應遺失）。其他寫入成功不影響它。`lastError` 永遠是尚待 Retry 的最新失敗；伺服器拒絕的寫入（重送也會失敗）與載入錯誤，仍由下一次成功或 refresh 清除。側邊欄只要 `canRetry` 為真就顯示 Couldn't save，不再同時依賴 `lastError`。
+- **理由**：Saved 只能代表「沒有已知未存的變更」。舊規則原本是為了避免 Retry 用舊值覆蓋新修改，但這件事已由「較新的修改取代舊失敗」處理，不需要靠清除所有失敗。新增的「編輯刪除失敗的實體會撤回刪除」補上舊規則順帶擋掉的情況：重送刪除會丟掉使用者之後的修改。
+- **取捨**：失敗的提示會一直留到使用者 Retry 或改掉那個欄位，不會因為之後做了別的事就自己消失。側邊欄的 Retry 會依原順序重送所有尚未解決的失敗，遇到再次失敗就停下，其餘保留。Retry 仍只存在記憶體（D28），重新整理就消失；關閉分頁前的提示（D14）現在也涵蓋這些失敗。

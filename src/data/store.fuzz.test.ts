@@ -755,7 +755,7 @@ function chooseAction(random: Random, data: WorkspaceData, seen: Seen): Plan {
 // Runs
 // ---------------------------------------------------------------------------
 
-const SEEDS = [1, 2, 3, 5, 8, 13]
+const SEEDS = [1, 2, 3, 5, 8, 13, 21]
 const STEPS = 130
 
 function emptySeen(): Seen {
