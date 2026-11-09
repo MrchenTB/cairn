@@ -406,6 +406,20 @@ describe('SettingsPage: exports', () => {
       return project
     }
 
+    it('still asks after a later, unrelated change was saved (the failure is not forgotten)', async () => {
+      await failOneWrite()
+      const other = Object.values(useWorkspaceStore.getState().data.tasks)[1]
+      expect((await actions().updateTask(other.id, { priority: 'high' })).ok).toBe(true)
+      const { anchors } = captureDownloads()
+      const { user } = renderSettings('data')
+
+      await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+      const dialog = await screen.findByRole('alertdialog', { name: "Some changes aren't saved" })
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      expect(anchors).toHaveLength(0)
+    })
+
     it('asks first and exports nothing when cancelled', async () => {
       await failOneWrite()
       const { anchors } = captureDownloads()
