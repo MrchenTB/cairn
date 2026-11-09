@@ -1,6 +1,6 @@
 /**
  * /my-tasks/:tab — every open task across projects, in the shared bucket definitions
- * (src/domain/buckets.ts): Today, Upcoming (next 7 days), Overdue and All (grouped by due date,
+ * (src/domain/buckets.ts): Today (due today, plus tasks scheduled across today), Upcoming (next 7 days), Overdue and All (grouped by due date,
  * completed tasks on request via `?completed=1`). Counts come from the same `myTasks()` result
  * as the rows, so they always agree with each other and with the Overview.
  */
@@ -37,6 +37,7 @@ import {
   SHOW_COMPLETED_PARAM,
   TAB_DEFINITIONS,
   TAB_LABELS,
+  TODAY_SECTION_LABELS,
   dueSoonGroups,
   groupAllTasks,
   isDueSoonFilter,
@@ -98,6 +99,17 @@ function MyTasks() {
     )
 
   const sections = useMemo<TaskRowSection[]>(() => {
+    if (tab === 'today') {
+      // Two disjoint groups; an empty one is left out. Counts.today is their total.
+      return [
+        { key: 'due-today', title: TODAY_SECTION_LABELS.dueToday, tasks: buckets.today },
+        {
+          key: 'scheduled-today',
+          title: TODAY_SECTION_LABELS.scheduledToday,
+          tasks: buckets.scheduledToday,
+        },
+      ].filter((section) => section.tasks.length > 0)
+    }
     if (tab !== 'all') return [{ key: tab, tasks: buckets[tab] }]
     const groups = groupAllTasks(buckets.all, today, showCompleted)
     return (dueSoon ? dueSoonGroups(groups) : groups).map((group) => ({
@@ -111,12 +123,12 @@ function MyTasks() {
   return (
     <PageContainer
       width="full"
-      // A row the keyboard scrolls into view stays clear of the sticky view bar (and, on All, of
-      // the 2rem section heading) instead of ending up under them; 0.25rem is the gap between a
-      // row's edge and its controls.
+      // A row the keyboard scrolls into view stays clear of the sticky view bar (and, on All and
+      // Today, of the 2rem section heading) instead of ending up under them; 0.25rem is the gap
+      // between a row's edge and its controls.
       style={{
         scrollPaddingTop:
-          tab === 'all'
+          tab === 'all' || tab === 'today'
             ? 'calc(var(--viewbar-height) + 2.25rem)'
             : 'calc(var(--viewbar-height) + 0.25rem)',
         scrollPaddingBottom: '0.25rem',
@@ -157,7 +169,7 @@ function MyTasks() {
           </>
         }
       />
-      {dueSoon ? <DueSoonFilterBar count={counts.today + counts.upcoming} /> : null}
+      {dueSoon ? <DueSoonFilterBar count={counts.dueSoon} /> : null}
       {empty ? (
         dueSoon ? (
           <EmptyState
@@ -280,8 +292,8 @@ function DefinitionsPopover({ today }: { today: string }) {
           ))}
         </dl>
         <p className="mt-3 text-meta text-fg-tertiary">
-          Subtasks count like any other task. Archived projects are left out. Today is{' '}
-          {formatDate(today, 'long')} ({timezone}).
+          Subtasks count like any other task. Scheduled today needs both a start and a due date.
+          Archived projects are left out. Today is {formatDate(today, 'long')} ({timezone}).
         </p>
       </PopoverContent>
     </Popover>
@@ -318,8 +330,9 @@ function MyTasksEmpty({
       case 'today':
         return {
           icon: CalendarCheck,
-          title: 'Nothing due today',
-          description: 'Tasks due today that aren’t done show up here.',
+          title: 'Nothing for today',
+          description:
+            'Tasks due today, or with today between their start and due dates, show up here.',
           secondaryAction:
             counts.overdue > 0
               ? tabLink('overdue', `View ${taskCount(counts.overdue, 'overdue task')}`)

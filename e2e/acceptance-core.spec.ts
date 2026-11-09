@@ -424,7 +424,7 @@ test.describe('AC-1: first run', () => {
     // My Tasks: each tab explains itself.
     await page.goto('/my-tasks')
     await expect(page).toHaveURL(/\/my-tasks\/today$/)
-    await expect(page.getByRole('heading', { name: 'Nothing due today' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Nothing for today' })).toBeVisible()
     await page.getByRole('link', { name: /^Upcoming/ }).click()
     await expect(
       page.getByRole('heading', { name: 'Nothing due in the next 7 days' }),

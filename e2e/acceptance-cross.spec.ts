@@ -163,7 +163,9 @@ function buildWorkspace(projects: SeedProject[]): unknown {
  *   期末報告簡報, Catering quote on exactly day +7) · later 2 (+8, +20) · no date 2.
  * Done tasks with past due dates (Interview users -10, Review with team -1, Confirm speakers -5,
  * 期末報告初稿 -2, 問卷設計 -4, Wireframes -30) are never overdue; "Ongoing admin" is In Progress
- * without a date and "Send invitations" is In Progress due in 3 days: neither is Today.
+ * without a date, so it is not Today. The My Tasks Today tab also lists tasks scheduled across
+ * today (start <= today < due): Cluster notes, Synthesize findings and Send invitations (all start
+ * today) — 5 in all, while the badge and Overview Due soon count due dates only.
  */
 function seedProjects(): SeedProject[] {
   return [
@@ -697,13 +699,17 @@ test.describe('AC-11: My Tasks', () => {
     // /my-tasks opens on Today.
     await page.getByRole('link', { name: 'View all in My Tasks' }).click()
     await expect(page).toHaveURL(/\/my-tasks\/all$/)
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
 
-    // Today = open AND due today. Not "In Progress": Ongoing admin (In Progress, no date) and
-    // Send invitations (In Progress, in 3 days) are elsewhere. A subtask counts like any task.
+    // Today = open AND (due today OR scheduled across today: start <= today < due), in two
+    // sections: "Due today", then "Scheduled today" by due date. Not "In Progress" as such:
+    // Ongoing admin (In Progress, no date) is elsewhere; Send invitations (In Progress, today …
+    // day 3) is scheduled. A subtask counts like any task, by its own dates.
     await openTab(page, 'Today')
     await expect(page).toHaveURL(/\/my-tasks\/today$/)
-    await expect.poll(() => rowIds(page.getByRole('main'))).toEqual(['t-proto', 't-personas'])
+    await expect
+      .poll(() => rowIds(page.getByRole('main')))
+      .toEqual(['t-proto', 't-personas', 't-cluster', 't-synth', 'e-invite'])
 
     // Upcoming = open AND due after today up to and including today + 7 (Catering quote sits on
     // day 7); Volunteer schedule (day 8) is "later". Today is not repeated here.
@@ -742,7 +748,7 @@ test.describe('AC-11: My Tasks', () => {
       )
     // … and the completed ones only on request (9 of them), still never as overdue.
     await page.getByRole('switch', { name: /Show completed/ }).click()
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
     await expect(page.locator('[data-task-row]')).toHaveCount(23)
     await expect(taskRow(page, 'o-inventory')).toHaveCount(0)
     await expect(page.locator('[data-bucket="overdue"]')).toHaveCount(2)
@@ -752,7 +758,7 @@ test.describe('AC-11: My Tasks', () => {
     page,
   }) => {
     await openApp(page, '/my-tasks/overdue')
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
     await expectBadge(page, 4, 2)
 
     // Finishing an overdue task takes it off Overdue and out of every count; Undo restores it.
@@ -761,13 +767,13 @@ test.describe('AC-11: My Tasks', () => {
       .click()
     await page.getByRole('menuitemradio', { name: 'Done' }).click()
     await expect(taskRow(page, 'e-venue')).toHaveCount(0)
-    await expectTabCounts(page, [2, 6, 1, 13])
+    await expectTabCounts(page, [5, 6, 1, 13])
     await expectBadge(page, 3, 1)
     await toast(page, /Marked as done/)
       .getByRole('button', { name: 'Undo' })
       .click()
     await expect(taskRow(page, 'e-venue')).toBeVisible()
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
 
     // An In Progress task without a date is not "Today": giving it today's date puts it there.
     await openTab(page, 'Today')
@@ -778,13 +784,14 @@ test.describe('AC-11: My Tasks', () => {
     await pickDate(page, modal, 'Due date', TODAY)
     await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toBeHidden()
-    await expectTabCounts(page, [3, 6, 2, 14])
+    await expectTabCounts(page, [6, 6, 2, 14])
     await expectBadge(page, 5, 2)
     await openTab(page, 'Today')
-    // Same day: by priority, then by position in the project (a subtask sits with its parent).
+    // Same day: by priority, then by position in the project (a subtask sits with its parent);
+    // the scheduled tasks follow in their own section.
     await expect
       .poll(() => rowIds(page.getByRole('main')))
-      .toEqual(['t-proto', 't-personas', 't-admin'])
+      .toEqual(['t-proto', 't-personas', 't-admin', 't-cluster', 't-synth', 'e-invite'])
 
     // Yesterday's date makes it overdue (it is still In Progress, not done) …
     await openTab(page, 'All')
@@ -792,14 +799,14 @@ test.describe('AC-11: My Tasks', () => {
     await pickDate(page, modal, 'Due date', day(-1))
     await modal.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(modal).toBeHidden()
-    await expectTabCounts(page, [2, 6, 3, 14])
+    await expectTabCounts(page, [5, 6, 3, 14])
 
     // … and finishing it leaves Overdue again: done is never overdue, the date stays.
     await taskRow(page, 't-admin')
       .getByRole('button', { name: /^Status:/ })
       .click()
     await page.getByRole('menuitemradio', { name: 'Done' }).click()
-    await expectTabCounts(page, [2, 6, 2, 13])
+    await expectTabCounts(page, [5, 6, 2, 13])
     expect((await stored(page)).tasks['t-admin']).toMatchObject({
       status: 'done',
       dueDate: day(-1),
@@ -1305,7 +1312,7 @@ test.describe('AC-11 / AC-12: one source of truth across pages', () => {
     page,
   }) => {
     await openApp(page, '/my-tasks/today')
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
 
     // Los Angeles is still on Nov 3 (18:00) while Taipei is on Nov 4 (10:00): Today is a day
     // earlier, for every page at once. Finalize report (-3) stays overdue, Book venue (due Nov 3)
@@ -1321,8 +1328,9 @@ test.describe('AC-11 / AC-12: one source of truth across pages', () => {
     await expectMetrics(page, 5, 14, 8, 1)
     await expectBadge(page, 2, 1)
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [1, 7, 1, 14])
-    await expect.poll(() => rowIds(page.getByRole('main'))).toEqual(['e-venue'])
+    await expectTabCounts(page, [2, 7, 1, 14])
+    // Book venue is due today; Review prototype (Nov 3 – Nov 4) is scheduled across it.
+    await expect.poll(() => rowIds(page.getByRole('main'))).toEqual(['e-venue', 't-proto'])
     await openTab(page, 'Overdue')
     await expect.poll(() => rowIds(page.getByRole('main'))).toEqual(['t-report'])
 
@@ -1383,12 +1391,13 @@ test.describe('AC-11 / AC-12: one source of truth across pages', () => {
     await page.getByRole('menuitem', { name: 'Archive' }).click()
     await expect(toast(page, 'Project archived')).toBeVisible()
 
-    // Its 4 open tasks (1 overdue, 2 upcoming, 1 later) leave every number.
+    // Its 4 open tasks (1 overdue, 2 upcoming, 1 later; one of them also scheduled today) leave
+    // every number.
     await goVia(page, 'Overview')
     await expectMetrics(page, 4, 10, 6, 1)
     await expectBadge(page, 3, 1)
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [2, 4, 1, 10])
+    await expectTabCounts(page, [4, 4, 1, 10])
     await goVia(page, 'Timeline')
     await expect(chartOf(page)).toBeVisible()
     await expect(barOf(page, 'p-event')).toHaveCount(0)
@@ -1408,7 +1417,7 @@ test.describe('AC-11 / AC-12: one source of truth across pages', () => {
     await goVia(page, 'Overview')
     await expectMetrics(page, 5, 14, 8, 2)
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
   })
 
   test('AC-11: search reflects what you create, rename and delete, at once', async ({ page }) => {
@@ -1463,7 +1472,7 @@ test.describe('AC-11 / AC-12: one source of truth across pages', () => {
     await page.keyboard.press('Escape')
     // The count of open tasks is back to the original 14 (one created, one deleted).
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
   })
 })
 
@@ -1472,7 +1481,10 @@ test.describe('AC-10: progress from another page', () => {
     page,
   }) => {
     await openApp(page, '/my-tasks/today')
-    await expect.poll(() => rowIds(page.getByRole('main'))).toEqual(['t-proto', 't-personas'])
+    // Due today first, then the tasks scheduled across today.
+    await expect
+      .poll(() => rowIds(page.getByRole('main')))
+      .toEqual(['t-proto', 't-personas', 't-cluster', 't-synth', 'e-invite'])
     // Review prototype and Write personas are both Research leaves: 3 → 5 of 11 = 45%.
     for (const id of ['t-proto', 't-personas']) {
       await taskRow(page, id)
@@ -1619,7 +1631,7 @@ test.describe('AC-11 / §4.2, §4.3, §4.8, §4.10: a brand-new workspace', () =
     await goVia(page, 'My Tasks')
     await expectTabCounts(page, [0, 0, 0, 0])
     for (const [tab, text] of [
-      ['Today', 'Nothing due today'],
+      ['Today', 'Nothing for today'],
       ['Upcoming', 'Nothing due in the next 7 days'],
       ['Overdue', 'No overdue tasks'],
       ['All', 'No tasks yet'],
@@ -1829,7 +1841,7 @@ test.describe('§4.2 / §4.3 / §4.8 / §4.10: the pages, part by part', () => {
     page,
   }) => {
     await openApp(page, '/my-tasks/all')
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
     await page.getByRole('button', { name: 'New task' }).first().click()
     const modal = page.getByRole('dialog', { name: 'New task', exact: true })
     await expect(modal).toBeVisible()
@@ -1850,7 +1862,7 @@ test.describe('§4.2 / §4.3 / §4.8 / §4.10: the pages, part by part', () => {
     await modal.getByRole('button', { name: /^Create/ }).click()
     await expect(modal).toBeHidden()
     // It is due today, so it is in Today now and every number moved by one.
-    await expectTabCounts(page, [3, 6, 2, 15])
+    await expectTabCounts(page, [6, 6, 2, 15])
     await expectBadge(page, 5, 2)
     await expect(
       page.locator('[data-task-row]').filter({ hasText: 'Send the term sheet' }),
@@ -1956,11 +1968,14 @@ test.describe('§4.2 / §4.3 / §4.8 / §4.10: the pages, part by part', () => {
     }
     // …the dates did not move (AC-11)…
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [2, 6, 2, 14])
+    await expectTabCounts(page, [5, 6, 2, 14])
     await openTab(page, 'Today')
     await expect(page.locator('[data-task-row]')).toHaveText([
       /Review prototype/,
       /Synthesize findings.*Write personas/,
+      /Synthesize findings.*Cluster notes/,
+      /Synthesize findings/,
+      /Send invitations/,
     ])
     // …and the Timeline (AC-12) and the search find the same things as before.
     await goVia(page, 'Timeline')
@@ -2161,9 +2176,9 @@ test.describe('AC-10: the hierarchy changes under the progress', () => {
 
     // The three subtasks were leaves before and are leaves now: 3 of 11 either way.
     await expectResearchProgress(page, 3, 11)
-    // Only the parent (open, due in 2 days) is gone from the counts.
+    // Only the parent (open, scheduled today – day 2) is gone from the counts.
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [2, 5, 2, 13])
+    await expectTabCounts(page, [4, 5, 2, 13])
     await expectBadge(page, 4, 2)
     await goVia(page, 'Overview')
     await expectMetrics(page, 5, 13, 7, 2)
@@ -2196,10 +2211,11 @@ test.describe('AC-10: the hierarchy changes under the progress', () => {
 
     // Gone: Cluster notes, Write personas (open) and Review with team (done): 2 of 8.
     await expectResearchProgress(page, 2, 8)
-    // My Tasks: Today loses Write personas, Upcoming loses Cluster notes and the parent, All loses
-    // those three open tasks.
+    // My Tasks: Today loses Write personas (due today) and the parent and Cluster notes (both
+    // scheduled today), Upcoming loses Cluster notes and the parent, All loses those three open
+    // tasks.
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [1, 4, 2, 11])
+    await expectTabCounts(page, [2, 4, 2, 11])
     await expectBadge(page, 3, 2)
     await goVia(page, 'Overview')
     await expectMetrics(page, 5, 11, 5, 2)
@@ -2232,10 +2248,11 @@ test.describe('AC-11 / AC-12: a project that is deleted', () => {
     await expect(toast(page, 'Project deleted')).toBeVisible()
     await expect(row).toHaveCount(0)
 
-    // Open tasks of Community Event: Book venue (overdue), Send invitations and Catering quote
-    // (upcoming), Volunteer schedule (later). Confirm speakers was done.
+    // Open tasks of Community Event: Book venue (overdue), Send invitations (scheduled today and
+    // upcoming) and Catering quote (upcoming), Volunteer schedule (later). Confirm speakers was
+    // done.
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [2, 4, 1, 10])
+    await expectTabCounts(page, [4, 4, 1, 10])
     await expectBadge(page, 3, 1)
     await goVia(page, 'Overview')
     await expectMetrics(page, 4, 10, 6, 1)
@@ -2282,10 +2299,12 @@ test.describe('AC-11 / AC-12: the day rolls over while the app stays open', () =
 
     await page.clock.fastForward(60_000)
     await expect.poll(todayFromResearchStart).toBeCloseTo(21, 0)
-    // The numbers beside it moved with the same clock: Thursday's list is Cluster notes; Review
-    // prototype and Write personas (due Wednesday) are overdue now, next to the two from before.
+    // The numbers beside it moved with the same clock: Thursday's due list is Cluster notes and
+    // four tasks are scheduled across it (Synthesize findings, Send invitations, Draft survey and
+    // the slides, which start on Thursday); Review prototype and Write personas (due Wednesday)
+    // are overdue now, next to the two from before.
     await goVia(page, 'My Tasks')
-    await expectTabCounts(page, [1, 6, 4, 14])
+    await expectTabCounts(page, [5, 6, 4, 14])
   })
 
   test('AC-12: on Sunday night the Overview slides its six weeks to the new week', async ({

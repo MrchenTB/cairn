@@ -218,3 +218,10 @@
 - **決定**：新增階段的兩個入口（Add phase 對話框、List 的 inline Add phase）會以 `suggestPhaseColor(phases, projectColor)`（`src/domain/phaseColors.ts`）算出顏色，明確傳給 `createPhase`。規則：以「實際顯示的顏色」計數（`null` 算專案色，專案色是 red 時不佔用任何階段色）；排除最後一個階段（`sortOrder` 最大）顯示的顏色，使相鄰階段不同色；在其餘顏色中取用得最少的，同數量依 blue、violet、pink、orange、yellow、green、teal、gray 的順序。沒有隨機；空專案為 blue。對話框在開啟時算一次作為預選，使用者可改選，或選 "Use project color" 存成 `null`。
 - **資料層不變**：`NewPhaseInput.color` 省略或 `null` 仍是沿用專案色（備份匯入、測試與 `createPhase` 的其他呼叫端不受影響）；既有階段不改，沒有 migration。失敗重試重送同一份 input，顏色不變。
 - **取捨**：階段色不隨之後的刪除、搬移或改色重新分配，只在新增當下決定；刪掉中間的階段後，之後新增的顏色可能與較早的階段相同，屬於預期。新階段一律帶顏色，所以雲端寫入會送出 `color` 欄位（D25 的「無顏色時不送」只對 `null` 成立），資料庫需要已套用階段顏色的 migration。
+
+## D38 — My Tasks 的 Today 也列出「今天正在進行」的任務，但到期日分類不變
+
+- **決定**：My Tasks → Today 顯示兩組（皆為未完成、未封存專案，子任務依自己的日期判斷）。**Due today**：`dueDate === today`（開始日不影響）。**Scheduled today**：同時有開始日與到期日，且 `startDate <= today < dueDate`（兩端含，到期日當天已屬第一組，所以用 `<`）。只有開始日、沒有日期、開始日在未來、已逾期（即使開始日已過）的任務都不列入。判斷放在 `src/domain/buckets.ts` 的 `isScheduledToday()`，`myTasks()` 多回傳 `scheduledToday`（排序同其他清單：到期日、優先度、專案與位置）。Today 分頁的數字 = 兩組相加（兩組互斥，所以等於畫面上的列數）。
+- **為什麼不動 `dueBucket()`**：`dueBucket` / `bucketOf` 仍是「只看到期日」的分類，Upcoming、Overdue、Overview 的 Due soon、側邊欄徽章與 All 分頁的分組都用它，所以這些數字的意義不變。`buckets.today` 仍是「今天到期」，Overview 與 `overviewMetrics` 因此不受影響。
+- **Due soon 計數修正**：`?due=soon` 篩選列原本用 `counts.today + counts.upcoming`；Today 數字變成聯集後這會多算只在進行中的任務。改用 `counts.dueSoon`（= `buckets.today + buckets.upcoming`），與 Overview 的 Due soon 一致。
+- **取捨**：一個任務可以同時出現在 Today（Scheduled today）與 Upcoming（它的到期日在 7 天內）。這是刻意的：兩個分頁回答不同問題（今天要做什麼／什麼快到期），各自的數字只算自己的清單。側邊欄徽章仍是「今天到期 + 逾期」，不包含進行中的任務。
