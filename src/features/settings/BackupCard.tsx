@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Download, FileSpreadsheet, FileUp, Info, TriangleAlert, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { confirm } from '@/components/ui/confirm'
 import {
   backupFileName,
   downloadBackup,
@@ -14,10 +15,12 @@ import {
   tasksCsvFileName,
 } from '@/data/backup'
 import { useActions, useDataMode, useWorkspaceData } from '@/data/hooks'
+import { useWorkspaceStore } from '@/data/store'
+import { taskDrafts } from '@/features/task-modal/autosave/taskDrafts'
 import type { AppError, BackupFile, ImportSummary } from '@/domain/types'
 import { notify } from '@/lib/notify'
 import { BusyButton } from './BusyButton'
-import { describeAge, describeCounts, countRows } from './format'
+import { describeAge, describeCounts, countRows, formatMoment } from './format'
 import { ImportBackupDialog } from './ImportBackupDialog'
 import { readLastBackupAt, writeLastBackupAt } from './lastBackup'
 import { SettingRow, SettingsGroup, SettingsNotice } from './SettingsLayout'
@@ -50,6 +53,7 @@ export function BackupCard() {
   const invalidAlert = useRef<HTMLDivElement>(null)
   const readToken = useRef(0)
   const [lastBackupAt, setLastBackupAt] = useState(readLastBackupAt)
+  const [exporting, setExporting] = useState(false)
   const [importState, setImportState] = useState<ImportState>({ status: 'idle' })
   const hasTasks = Object.keys(data.tasks).length > 0
   const invalid = importState.status === 'invalid'
@@ -59,21 +63,50 @@ export function BackupCard() {
     if (invalid) invalidAlert.current?.scrollIntoView?.({ block: 'nearest' })
   }, [invalid])
 
-  const exportJson = () => {
+  const exportJson = async () => {
+    // Text that can still go out goes out first; what can't is named below.
+    taskDrafts.flushAll()
+    setExporting(true)
     try {
-      const file = actions.exportBackup()
+      // The backup is read from the saved data, not from the screen, once the writes in flight
+      // (the text just sent included) have their answer.
+      const result = await actions.exportSavedBackup()
+      if (!result.ok) {
+        notify.error("Couldn't export the backup", { description: result.error.message })
+        return
+      }
+      const file = result.value
+      // The file holds what was saved when the read started (its exportedAt); say when.
+      const readAt = Date.parse(file.exportedAt)
+      const asOf = formatMoment(readAt)
+      // Only now is it known what could not be saved: say so before handing out the file.
+      const unsavedText = taskDrafts.getOutstanding().length > 0
+      const failedWrites = useWorkspaceStore.getState().sync.canRetry
+      if (unsavedText || failedWrites) {
+        const agreed = await confirm({
+          title: "Some changes aren't saved",
+          description: `The backup holds what was saved as of ${asOf}, without the changes that couldn't be saved. Retry them first to include them.`,
+          confirmLabel: 'Export anyway',
+        })
+        if (!agreed) return
+      }
       downloadBackup(file)
       const now = Date.now()
       writeLastBackupAt(now)
       setLastBackupAt(now)
+      // Changes this tab made after the read began are saved normally but not in this file.
+      const { sync } = useWorkspaceStore.getState()
+      const changedSince = sync.pending > 0 || (sync.lastSavedAt ?? 0) > readAt
       const contents = describeCounts(countRows(file.data))
       notify.success('Backup exported', {
-        description: `${backupFileName()} · ${contents === 'nothing' ? 'no projects or tasks yet' : contents}`,
+        description: `${backupFileName()} · ${contents === 'nothing' ? 'no projects or tasks yet' : contents} · saved data as of ${asOf}.${changedSince ? ' Changes made after that aren’t included.' : ''}`,
       })
     } catch (error) {
       notify.error("Couldn't export the backup", {
         description: error instanceof Error ? error.message : undefined,
       })
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -132,10 +165,15 @@ export function BackupCard() {
           </>
         }
       >
-        <Button variant="secondary" size="md" onClick={exportJson}>
-          <Download aria-hidden />
+        <BusyButton
+          variant="secondary"
+          size="md"
+          busy={exporting}
+          icon={<Download aria-hidden />}
+          onClick={() => void exportJson()}
+        >
           Export JSON backup
-        </Button>
+        </BusyButton>
       </SettingRow>
       <SettingRow
         title="Tasks spreadsheet"
