@@ -6,10 +6,10 @@
  * (built by `buildGanttRows`), so they draw exactly as they do in the project's Gantt.
  */
 import { formatDateRange, fromEpochDay, isISODate, tryToEpochDay } from '@/domain/dates'
-import { buildProjectOutline, compareMilestones } from '@/domain/hierarchy'
+import { buildProjectOutline, compareMilestones, type OutlineTask } from '@/domain/hierarchy'
 import { bySortOrder } from '@/domain/ordering'
 import { computeProgress, type ProgressInfo } from '@/domain/progress'
-import { rollupRange } from '@/domain/scheduling'
+import { rollupRange, taskSpan } from '@/domain/scheduling'
 import type {
   ISODate,
   Milestone,
@@ -21,9 +21,7 @@ import type {
 } from '@/domain/types'
 import { ROW_HEIGHT } from '@/features/gantt/model/constants'
 import {
-  UNSCHEDULED_KEY,
   buildGanttRows,
-  isUnscheduledOutlineTask,
   taskRowKey,
   type MilestoneRow,
   type TaskRow,
@@ -35,6 +33,12 @@ import { projectSpan } from '@/features/overview/overviewModel'
 /** Project rows are a little taller than the 32px task rows, so the hierarchy reads at a glance. */
 export const PROJECT_ROW_HEIGHT = 36
 export const UNSCHEDULED_SECTION_KEY = 'section:unscheduled'
+
+/** A top-level task counts as unscheduled here when neither it nor any subtask has a date. */
+function isUnscheduledOutlineTask(item: OutlineTask): boolean {
+  const hasNoDates = (task: Task) => taskSpan(task).kind === 'unscheduled'
+  return hasNoDates(item.task) && item.subtasks.every(hasNoDates)
+}
 
 export const projectRowKey = (projectId: string) => `project:${projectId}`
 
@@ -133,8 +137,16 @@ function childRows(
   tasks: readonly Task[],
   milestones: readonly Milestone[],
 ): { taskRows: TaskRow[]; milestoneRows: MilestoneRow[] } {
-  const outline = buildProjectOutline(project, phases, tasks, milestones)
-  const collapsed = new Set<string>([UNSCHEDULED_KEY])
+  const full = buildProjectOutline(project, phases, tasks, milestones)
+  // Undated top-level tasks are not listed under a project here (they have no bar to show).
+  const outline = {
+    ...full,
+    groups: full.groups.map((group) => ({
+      ...group,
+      tasks: group.tasks.filter((item) => !isUnscheduledOutlineTask(item)),
+    })),
+  }
+  const collapsed = new Set<string>()
   for (const group of outline.groups) {
     for (const item of group.tasks) {
       if (item.subtasks.length > 0) collapsed.add(taskRowKey(item.task.id))

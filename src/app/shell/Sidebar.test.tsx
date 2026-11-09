@@ -112,6 +112,19 @@ describe('Sidebar', () => {
     )
   })
 
+  it('does not count tasks that are only scheduled today (the badge is due-date based)', () => {
+    const today = todayInTimeZone(TIME_ZONE)
+    seed(projects, {}, [
+      makeTask({ projectId: 'a', dueDate: today }),
+      makeTask({ projectId: 'a', startDate: '2000-01-03', dueDate: '2999-01-01' }),
+      makeTask({ projectId: 'a', startDate: '2000-01-03' }),
+    ])
+    renderUI(<Sidebar />, { route: '/overview' })
+    expect(screen.getByRole('link', { name: /^My Tasks/ })).toHaveAccessibleName(
+      'My Tasks, 1 due today',
+    )
+  })
+
   it('spells out what the My Tasks dot means in the collapsed rail tooltip', async () => {
     const today = todayInTimeZone(TIME_ZONE)
     seed(projects, { sidebarCollapsed: true }, [

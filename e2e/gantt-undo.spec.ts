@@ -73,7 +73,7 @@ test('resizing either end can be undone too', async ({ page }) => {
   await expect.poll(() => stored(page, s.ids.c)).toEqual({ start: '2026-11-12', due: '2026-11-13' })
 })
 
-test('scheduling an undated task by drawing is confirmed and undoable (back to Unscheduled)', async ({
+test('scheduling an undated task by drawing is confirmed and undoable (back to no dates)', async ({
   page,
 }) => {
   const s = seed()

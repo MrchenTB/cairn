@@ -48,9 +48,48 @@ describe('myTasksCounts', () => {
       today: 1,
       upcoming: 1,
       overdue: 1,
+      dueSoon: 2,
       all: 5,
       done: 1,
     })
+  })
+})
+
+describe('myTasksCounts with scheduled tasks', () => {
+  const task = (id: string, startDate: string | null, dueDate: string | null, extra = {}) =>
+    makeTask({ id, title: id, projectId: 'p', startDate, dueDate, ...extra })
+  const data = makeWorkspace({
+    projects: [makeProject({ id: 'p' })],
+    tasks: [
+      task('due-today', null, TODAY),
+      task('span-due-today', '2026-11-01', TODAY),
+      task('scheduled', '2026-11-01', '2026-11-20'), // later by due date, scheduled across today
+      task('scheduled-soon', '2026-11-02', '2026-11-06'), // upcoming and scheduled
+      task('start-only', '2026-11-01', null),
+      task('future', '2026-11-05', '2026-11-20'),
+      task('overdue', '2026-10-01', '2026-11-01'),
+      task('done', '2026-11-01', '2026-11-20', { status: 'done' }),
+    ],
+  })
+  const buckets = myTasks(data, TODAY)
+
+  it('counts Today as the union of due-today and scheduled-today, with no task twice', () => {
+    const counts = myTasksCounts(buckets)
+    expect(counts.today).toBe(4)
+    expect(counts.today).toBe(
+      new Set([...buckets.today, ...buckets.scheduledToday].map((t) => t.id)).size,
+    )
+  })
+
+  it('keeps Due soon, Upcoming and Overdue on the due date', () => {
+    const counts = myTasksCounts(buckets)
+    expect(counts.upcoming).toBe(1)
+    expect(counts.overdue).toBe(1)
+    // Due soon is the Overview's number: due today + upcoming, never the Today tab count.
+    expect(counts.dueSoon).toBe(buckets.today.length + buckets.upcoming.length)
+    expect(counts.dueSoon).toBe(3)
+    expect(counts.dueSoon).not.toBe(counts.today + counts.upcoming)
+    expect(counts.all).toBe(7)
   })
 })
 

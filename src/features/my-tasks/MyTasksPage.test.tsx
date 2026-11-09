@@ -163,7 +163,7 @@ describe('MyTasksPage', () => {
       '/my-tasks/overdue',
     )
 
-    const list = screen.getByRole('list', { name: 'Today tasks' })
+    const list = screen.getByRole('region', { name: 'Today tasks' })
     // Priority breaks the due-date tie; a subtask carries its parent as a prefix.
     expect(rowNames(list)).toEqual(['Book a room', SUBTASK_ROW])
     // The decorative "›" is aria-hidden: assistive tech hears "Subtask of …: title".
@@ -185,7 +185,7 @@ describe('MyTasksPage', () => {
   it('treats an unknown tab as Today', async () => {
     await seedStandard()
     renderMyTasks('/my-tasks/bogus')
-    expect(rowNames(screen.getByRole('list', { name: 'Today tasks' }))).toEqual([
+    expect(rowNames(screen.getByRole('region', { name: 'Today tasks' }))).toEqual([
       'Book a room',
       SUBTASK_ROW,
     ])
@@ -288,7 +288,7 @@ describe('MyTasksPage', () => {
       tasks: [makeTask({ id: 'done', projectId: research.id, title: 'Done', status: 'done' })],
     })
     const { user } = renderMyTasks('/my-tasks/today')
-    expect(screen.getByRole('heading', { name: 'Nothing due today' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Nothing for today' })).toBeInTheDocument()
 
     const tabs = screen.getByRole('navigation', { name: 'My Tasks' })
     await user.click(within(tabs).getByRole('link', { name: /^Upcoming/ }))
@@ -332,7 +332,7 @@ describe('MyTasksPage', () => {
     await user.click(await screen.findByRole('menuitemradio', { name: /Done/ }))
     expect(storeTask('t-room')?.status).toBe('done')
     // Done tasks leave Today at once (every view reads the same store).
-    expect(rowNames(screen.getByRole('list', { name: 'Today tasks' }))).toEqual([SUBTASK_ROW])
+    expect(rowNames(screen.getByRole('region', { name: 'Today tasks' }))).toEqual([SUBTASK_ROW])
     expect(
       within(screen.getByRole('navigation', { name: 'My Tasks' })).getByRole('link', {
         name: /^Today/,
@@ -346,7 +346,7 @@ describe('MyTasksPage', () => {
     const undo = options?.action as NotifyAction
     await act(async () => undo.onClick())
     await waitFor(() => expect(storeTask('t-room')?.status).toBe('todo'))
-    expect(rowNames(screen.getByRole('list', { name: 'Today tasks' }))).toContain('Book a room')
+    expect(rowNames(screen.getByRole('region', { name: 'Today tasks' }))).toContain('Book a room')
   })
 
   it('keeps a task whose status stays open in the list, without a toast', async () => {
@@ -373,7 +373,7 @@ describe('MyTasksPage', () => {
     await user.click(await screen.findByRole('menuitemradio', { name: /Done/ }))
     await waitFor(() => expect(error).toHaveBeenCalled()) // the store's toast (with Retry)
     expect(storeTask('t-room')?.status).toBe('todo')
-    expect(rowNames(screen.getByRole('list', { name: 'Today tasks' }))).toContain('Book a room')
+    expect(rowNames(screen.getByRole('region', { name: 'Today tasks' }))).toContain('Book a room')
     expect(success).not.toHaveBeenCalled()
   })
 
@@ -428,7 +428,7 @@ describe('MyTasksPage', () => {
     expect(screen.getByText(/The server did not answer/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     // Local mode reloads (an empty workspace here): the page is back, with its empty state.
-    expect(await screen.findByRole('heading', { name: 'Nothing due today' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Nothing for today' })).toBeInTheDocument()
   })
 
   it('explains the definitions', async () => {
@@ -436,8 +436,241 @@ describe('MyTasksPage', () => {
     const { user } = renderMyTasks('/my-tasks/today')
     await user.click(screen.getByRole('button', { name: 'How tasks are grouped' }))
     const dialog = await screen.findByRole('dialog', { name: 'How tasks are grouped' })
-    expect(within(dialog).getByText('Due today and not done')).toBeInTheDocument()
+    expect(
+      within(dialog).getByText('Due today, or between its start and due dates'),
+    ).toBeInTheDocument()
     expect(within(dialog).getByText('Due in the next 7 days, after today')).toBeInTheDocument()
     expect(within(dialog).getByText('Past their due date and not done')).toBeInTheDocument()
+  })
+})
+
+describe('MyTasksPage — Today with scheduled tasks', () => {
+  const task = (id: string, title: string, overrides: Partial<Task> = {}) =>
+    makeTask({ id, projectId: research.id, title, ...overrides })
+
+  async function seedScheduled() {
+    await seedWorkspace({
+      projects: [research, archived],
+      tasks: [
+        task('t-due', 'Due today task', { dueDate: testToday(), sortOrder: 'a1' }),
+        task('t-span-due', 'Span ends today', {
+          startDate: testToday(-3),
+          dueDate: testToday(),
+          sortOrder: 'a2',
+        }),
+        task('t-span', 'Span task', {
+          startDate: testToday(-2),
+          dueDate: testToday(5),
+          sortOrder: 'a3',
+        }),
+        task('t-starts', 'Starts today', {
+          startDate: testToday(),
+          dueDate: testToday(2),
+          sortOrder: 'a4',
+        }),
+        task('t-start-only', 'Start only', { startDate: testToday(-4), sortOrder: 'a5' }),
+        task('t-future', 'Future start', {
+          startDate: testToday(1),
+          dueDate: testToday(9),
+          sortOrder: 'a6',
+        }),
+        task('t-overdue', 'Overdue span', {
+          startDate: testToday(-6),
+          dueDate: testToday(-1),
+          sortOrder: 'a7',
+        }),
+        task('t-done', 'Finished span', {
+          startDate: testToday(-2),
+          dueDate: testToday(4),
+          status: 'done',
+          sortOrder: 'a8',
+        }),
+        makeTask({
+          id: 't-archived',
+          projectId: archived.id,
+          title: 'Archived span',
+          startDate: testToday(-2),
+          dueDate: testToday(4),
+        }),
+      ],
+    })
+  }
+
+  const todayRegion = () => screen.getByRole('region', { name: 'Today tasks' })
+  const sectionOf = (name: RegExp) => within(todayRegion()).getByRole('region', { name })
+  const headings = () =>
+    within(todayRegion())
+      .getAllByRole('heading', { level: 2 })
+      .map((heading) => heading.textContent)
+  const todayTab = () =>
+    within(screen.getByRole('navigation', { name: 'My Tasks' })).getByRole('link', {
+      name: /^Today/,
+    })
+
+  it('shows Due today and Scheduled today sections whose rows add up to the Today count', async () => {
+    await seedScheduled()
+    renderMyTasks('/my-tasks/today')
+
+    expect(headings()).toEqual(['Due today2, 2 tasks', 'Scheduled today2, 2 tasks'])
+    expect(rowNames(sectionOf(/^Due today/))).toEqual(['Due today task', 'Span ends today'])
+    expect(rowNames(sectionOf(/^Scheduled today/))).toEqual(['Starts today', 'Span task'])
+
+    // Not shown: start only, future start, overdue, done, archived project.
+    for (const title of [
+      'Start only',
+      'Future start',
+      'Overdue span',
+      'Finished span',
+      'Archived span',
+    ]) {
+      expect(screen.queryByText(title)).not.toBeInTheDocument()
+    }
+
+    // The tab count is the number of distinct rows on screen.
+    const rows = Array.from(todayRegion().querySelectorAll('[data-task-row]'))
+    expect(new Set(rows.map((row) => row.getAttribute('data-task-row'))).size).toBe(4)
+    expect(rows).toHaveLength(4)
+    expect(todayTab()).toHaveAccessibleName('Today, 4 tasks')
+    // The other tabs keep their due-date meaning.
+    const tabs = screen.getByRole('navigation', { name: 'My Tasks' })
+    expect(within(tabs).getByRole('link', { name: /^Upcoming/ })).toHaveAccessibleName(
+      'Upcoming, 2 tasks',
+    )
+    expect(within(tabs).getByRole('link', { name: /^Overdue/ })).toHaveAccessibleName(
+      'Overdue, 1 task',
+    )
+  })
+
+  it('leaves out an empty section', async () => {
+    await seedWorkspace({
+      projects: [research],
+      tasks: [task('t-span', 'Span task', { startDate: testToday(-2), dueDate: testToday(5) })],
+    })
+    renderMyTasks('/my-tasks/today')
+    expect(headings()).toEqual(['Scheduled today1, 1 task'])
+  })
+
+  it('says "Nothing for today" with the new description and keeps the secondary link', async () => {
+    await seedWorkspace({
+      projects: [research],
+      tasks: [
+        task('t-start-only', 'Start only', { startDate: testToday(-2) }),
+        task('t-late', 'Late', { dueDate: testToday(-1) }),
+      ],
+    })
+    renderMyTasks('/my-tasks/today')
+    expect(screen.getByRole('heading', { name: 'Nothing for today' })).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Tasks due today, or with today between their start and due dates, show up here.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'View 1 overdue task' })).toHaveAttribute(
+      'href',
+      '/my-tasks/overdue',
+    )
+  })
+
+  it('keeps the ?due=soon filter on the due date: its count excludes scheduled-only tasks', async () => {
+    await seedWorkspace({
+      projects: [research],
+      tasks: [
+        task('t-due', 'Due today task', { dueDate: testToday() }),
+        task('t-soon', 'Due soon task', { dueDate: testToday(3) }),
+        // Scheduled across today but due beyond the window: Today tab yes, Due soon no.
+        task('t-far', 'Far span', { startDate: testToday(-1), dueDate: testToday(30) }),
+        // Scheduled across today and due within the window: counted once, by its due date.
+        task('t-near', 'Near span', { startDate: testToday(-1), dueDate: testToday(2) }),
+      ],
+    })
+    renderMyTasks('/my-tasks/all?due=soon')
+    const bar = document.querySelector('[data-slot="due-soon-filter"]') as HTMLElement
+    expect(bar).toHaveTextContent('Due soon · 3 tasks')
+    expect(screen.queryByText('Far span')).not.toBeInTheDocument()
+    const region = screen.getByRole('region', { name: 'Tasks due soon' })
+    expect(region.querySelectorAll('[data-task-row]')).toHaveLength(3)
+    // Today tab = 1 due today + 2 scheduled; the filter's 3 is a different set.
+    expect(todayTab()).toHaveAccessibleName('Today, 3 tasks')
+  })
+
+  it('updates Today when a task’s dates or status change', async () => {
+    await seedScheduled()
+    renderMyTasks('/my-tasks/today')
+    const actions = useWorkspaceStore.getState().actions
+    const names = () => rowNames(todayRegion())
+    expect(names()).toContain('Span task')
+    expect(names()).not.toContain('Start only')
+
+    // Give a start-only task a due date after today: it is now scheduled today.
+    await act(async () => {
+      await actions.updateTask('t-start-only', { dueDate: testToday(3) })
+    })
+    expect(rowNames(sectionOf(/^Scheduled today/))).toContain('Start only')
+    expect(todayTab()).toHaveAccessibleName('Today, 5 tasks')
+
+    // Pushing a start into the future takes it out.
+    await act(async () => {
+      await actions.updateTask('t-span', { startDate: testToday(1) })
+    })
+    expect(names()).not.toContain('Span task')
+
+    // Moving a due date to today moves it from Scheduled to Due today.
+    await act(async () => {
+      await actions.updateTask('t-starts', { dueDate: testToday() })
+    })
+    expect(rowNames(sectionOf(/^Due today/))).toContain('Starts today')
+    expect(rowNames(sectionOf(/^Scheduled today/))).not.toContain('Starts today')
+
+    // Done leaves; reopening brings it back.
+    await act(async () => {
+      await actions.updateTask('t-start-only', { status: 'done' })
+    })
+    expect(names()).not.toContain('Start only')
+    await act(async () => {
+      await actions.updateTask('t-start-only', { status: 'todo' })
+    })
+    expect(names()).toContain('Start only')
+    expect(todayTab()).toHaveAccessibleName(`Today, ${names().length} tasks`)
+  })
+
+  it('moves between rows across the two sections with the arrow keys', async () => {
+    await seedScheduled()
+    const { user } = renderMyTasks('/my-tasks/today')
+    screen.getByRole('button', { name: 'Span ends today' }).focus()
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('button', { name: 'Starts today' })).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
+    expect(screen.getByRole('button', { name: 'Span ends today' })).toHaveFocus()
+  })
+
+  it('judges "today" in the preference time zone, not the browser’s', async () => {
+    // 20:00 UTC on Nov 9 is already Nov 10 in Taipei (UTC+8).
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-09T20:00:00Z') })
+    try {
+      await seedWorkspace({
+        projects: [research],
+        tasks: [
+          task('t-due', 'Due Nov 10', { dueDate: '2026-11-10', sortOrder: 'a1' }),
+          // Scheduled in Taipei's today only (starts Nov 10); the UTC date would not include it.
+          task('t-starts', 'Starts Nov 10', {
+            startDate: '2026-11-10',
+            dueDate: '2026-11-12',
+            sortOrder: 'a2',
+          }),
+          // Due on the UTC date: already overdue for the user.
+          task('t-utc', 'Due Nov 9', {
+            startDate: '2026-11-05',
+            dueDate: '2026-11-09',
+            sortOrder: 'a3',
+          }),
+        ],
+      })
+      renderMyTasks('/my-tasks/today')
+      expect(rowNames(sectionOf(/^Due today/))).toEqual(['Due Nov 10'])
+      expect(rowNames(sectionOf(/^Scheduled today/))).toEqual(['Starts Nov 10'])
+      expect(screen.queryByText('Due Nov 9')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

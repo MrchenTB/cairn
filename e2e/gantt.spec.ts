@@ -392,7 +392,7 @@ test.describe('gantt (local mode)', () => {
     const { ids } = seed
     await openGantt(page, seed, 'week')
 
-    // Outline order: Design (tasks, subtasks, milestones) → No phase → Unscheduled.
+    // Outline order: Design (tasks, subtasks, milestones) → No phase. Undated tasks stay where they are.
     const keys = await page
       .locator('[data-row-key]')
       .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-row-key')))
@@ -407,7 +407,6 @@ test.describe('gantt (local mode)', () => {
       `task:${ids.alpha}`,
       `task:${ids.bravo}`,
       `task:${ids.charlie}`,
-      'unscheduled',
       `task:${ids.undated1}`,
       `task:${ids.undated2}`,
     ])
@@ -422,10 +421,13 @@ test.describe('gantt (local mode)', () => {
     )
     await expect(bar(page, ids.sub)).toHaveAccessibleName('Sub one, Nov 6 – Nov 9, 4 days, To Do')
     await expect(page.getByRole('button', { name: 'Milestone Launch, Nov 15, 2026' })).toBeVisible()
-    // The dependency is drawn (one line), the Unscheduled group explains how to schedule.
+    // The dependency is drawn (one line); there is no Unscheduled group, the toolbar toggle counts
+    // Parent (no dates of its own) and the two undated tasks, and group headers count every task.
     await expect(page.locator('path[data-dep-id]')).toHaveCount(1)
-    await expect(page.getByText('Drag across a row to schedule it · double-click')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Unscheduled, 2 tasks' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Unscheduled, / })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Show only unscheduled tasks, 3' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Design, 4 tasks' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'No phase, 5 tasks' })).toBeVisible()
 
     // Header: month tier + week tier, today highlighted.
     await expect(chart(page).getByText('Nov 2026', { exact: true }).first()).toBeVisible()
@@ -632,8 +634,8 @@ test.describe('gantt (local mode)', () => {
     await expect(bar(page, ids.undated1)).toHaveAccessibleName(
       'Undated one, Nov 11 – Nov 14, 4 days, To Do',
     )
-    // It left the Unscheduled group.
-    await expect(page.getByRole('button', { name: 'Unscheduled, 1 task' })).toBeVisible()
+    // It still sits in its place; the toolbar count dropped (Parent + Undated two are left).
+    await expect(page.getByRole('button', { name: 'Show only unscheduled tasks, 2' })).toBeVisible()
 
     // Double-click an empty lane: a one-day task on that day.
     const lane2 = outlineRow(page, `task:${ids.undated2}`).locator('[data-handle="lane"]')
@@ -645,7 +647,7 @@ test.describe('gantt (local mode)', () => {
     await expect
       .poll(() => stored(page, ids.undated2))
       .toEqual({ start: '2026-11-08', due: '2026-11-08' })
-    await expect(page.getByRole('button', { name: /^Unscheduled/ })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Show only unscheduled tasks, 1' })).toBeVisible()
   })
 
   test('keyboard: Tab to a bar, Alt+arrows move / resize it, Enter opens it and focus returns', async ({
@@ -1003,7 +1005,12 @@ test.describe('gantt (local mode)', () => {
     await expect(
       page.getByText('Drag across a row to schedule it', { exact: false }).first(),
     ).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Unscheduled, 2 tasks' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Show only unscheduled tasks, 2' })).toBeVisible()
+    // Nothing is scheduled, so the filter would show the very same rows: no extra hint in filter mode.
+    await page.getByRole('button', { name: 'Show only unscheduled tasks, 2' }).click()
+    await expect(page.getByText('Drag across a row to schedule it', { exact: false })).toHaveCount(
+      0,
+    )
   })
 
   test('the outline pane resizes by pointer and keyboard (min 220) and keeps its width after a reload', async ({
@@ -1140,17 +1147,105 @@ test.describe('gantt (local mode)', () => {
     await expect(page.getByRole('button', { name: /conflict/ })).toHaveCount(0)
   })
 
-  test('the Unscheduled button in the view bar jumps to the group, even when it was collapsed', async ({
+  test('Unscheduled filter: tasks keep their phase, the toggle lists only tasks without dates, drawing one removes it, and it turns off at 0', async ({
     page,
   }) => {
-    const seed = seedWorkspace()
+    const seed = seedWorkspace({
+      deps: [],
+      tasks: [
+        { key: 'planned', title: 'Planned', start: '2026-11-05', due: '2026-11-06', phase: true },
+        { key: 'p1', title: 'Phase idea', phase: true },
+        { key: 'n1', title: 'Loose idea' },
+        { key: 'n2', title: 'Planned too', start: '2026-11-10', due: '2026-11-11' },
+        { key: 'epic', title: 'Epic', start: '2026-11-09', due: '2026-11-12' },
+        { key: 'epicsub', title: 'Epic leftover', parent: 'epic' },
+      ],
+    })
     const { ids } = seed
-    await openGantt(page, seed, 'week')
-    await page.getByRole('button', { name: 'Unscheduled, 2 tasks' }).click() // collapse it
-    await expect(outlineRow(page, `task:${ids.undated1}`)).toHaveCount(0)
-    await page.getByRole('button', { name: /^Unscheduled\s*2$/ }).click()
-    await expect(outlineRow(page, `task:${ids.undated1}`)).toBeVisible()
-    await expect(outlineRow(page, `task:${ids.undated2}`)).toBeVisible()
+    await openGantt(page, seed)
+    const keys = () =>
+      page
+        .locator('[data-row-key]')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-row-key')))
+    const all = [
+      `group:${seed.phaseId}`,
+      `task:${ids.planned}`,
+      `task:${ids.p1}`,
+      `milestone:${ids.launch}`,
+      'group:none',
+      `task:${ids.n1}`,
+      `task:${ids.n2}`,
+      `task:${ids.epic}`,
+      `task:${ids.epicsub}`,
+    ]
+    // Phase grouping: the undated "Phase idea" stays in Design, "Loose idea" in No phase.
+    expect(await keys()).toEqual(all)
+    const toggle = (count: number) =>
+      page.getByRole('button', { name: `Show only unscheduled tasks, ${count}` })
+    await expect(toggle(3)).toHaveAttribute('aria-pressed', 'false')
+
+    // Filter on: matches only; the dated parent "Epic" stays as a context row for its leftover.
+    await toggle(3).click()
+    await expect(toggle(3)).toHaveAttribute('aria-pressed', 'true')
+    expect(await keys()).toEqual([
+      `group:${seed.phaseId}`,
+      `task:${ids.p1}`,
+      'group:none',
+      `task:${ids.n1}`,
+      `task:${ids.epic}`,
+      `task:${ids.epicsub}`,
+    ])
+    await expect(page.getByRole('button', { name: 'Design, 1 task' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'No phase, 2 tasks' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Epic, has dates/ })).toBeVisible()
+    await expect(page.getByText('Drag across a row to schedule it')).toHaveCount(0)
+
+    // Toggling it off restores the full outline exactly.
+    await toggle(3).click()
+    expect(await keys()).toEqual(all)
+    await toggle(3).click()
+
+    // Draw across the lanes in filter mode: each task leaves the list; nothing else moves.
+    const draw = async (key: string, from: string) => {
+      const lane = outlineRow(page, `task:${ids[key]}`).locator('[data-handle="lane"]')
+      const box = await boxOf(lane)
+      await dragBy(
+        page,
+        { x: await dayX(page, from, 'center'), y: box.y + box.height / 2 },
+        2 * DAY_PX,
+      )
+    }
+    await draw('p1', '2026-11-12')
+    await expect
+      .poll(() => stored(page, ids.p1))
+      .toEqual({ start: '2026-11-12', due: '2026-11-14' })
+    await expect(toggle(2)).toBeVisible()
+    await expect(outlineRow(page, `task:${ids.p1}`)).toHaveCount(0)
+    await expect(outlineRow(page, `group:${seed.phaseId}`)).toHaveCount(0)
+    await draw('n1', '2026-11-12')
+    await expect
+      .poll(() => stored(page, ids.n1))
+      .toEqual({ start: '2026-11-12', due: '2026-11-14' })
+    await draw('epicsub', '2026-11-12')
+    await expect
+      .poll(() => stored(page, ids.epicsub))
+      .toEqual({ start: '2026-11-12', due: '2026-11-14' })
+
+    // Nothing left: the toggle stays (pressed, 0) and an empty state offers the way back.
+    await expect(toggle(0)).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByText('No tasks without dates')).toBeVisible()
+    expect(await keys()).toEqual([])
+    await page.getByRole('button', { name: 'Show all tasks' }).click()
+    expect(await keys()).toEqual(all)
+    await expect(page.getByRole('button', { name: /^Show only unscheduled tasks/ })).toHaveCount(0)
+    // The overlay and the toggle are gone: focus lands on a row in view, not on <body>.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.closest('[data-row-key]') !== null))
+      .toBe(true)
+    // The rows did not move, and the scheduled tasks now have bars.
+    await expect(bar(page, ids.p1)).toHaveAccessibleName(
+      'Phase idea, Nov 12 – Nov 14, 3 days, To Do',
+    )
   })
 
   test('across a year boundary a bar keeps its length, and the header shows the new year', async ({
@@ -1284,7 +1379,7 @@ test.describe('gantt (local mode)', () => {
 
     // Words give way to icons (the names stay for screen readers)…
     const chip = page.getByRole('button', { name: '1 conflict', exact: true })
-    const unscheduled = page.getByRole('button', { name: /^Unscheduled\s*1$/ })
+    const unscheduled = page.getByRole('button', { name: 'Show only unscheduled tasks, 1' })
     const mode = page.getByRole('button', { name: 'Dependencies: Manual' })
     for (const control of [chip, unscheduled, mode]) await expect(control).toBeVisible()
     expect((await boxOf(chip)).width).toBeLessThan(70)

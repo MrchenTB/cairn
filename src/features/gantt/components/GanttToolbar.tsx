@@ -1,7 +1,7 @@
 /**
  * Gantt controls rendered into the project view bar (via <ViewBarActions>): conflicts chip
- * (hidden at zero), Unscheduled (n) (hidden at zero), dependency mode (Manual / Auto), Today (T)
- * and Day / Week / Month. Memoised: the chart re-renders on every virtual-row change while
+ * (hidden at zero), the "Unscheduled n" filter toggle (shown while n > 0 or while it is on, so it
+ * can always be turned off), dependency mode (Manual / Auto), Today (T) and Day / Week / Month. Memoised: the chart re-renders on every virtual-row change while
  * scrolling, the toolbar only when its own props change (callbacks must be stable).
  */
 import { memo, useState } from 'react'
@@ -56,24 +56,20 @@ export interface GanttToolbarProps {
   today: ISODate
   onOpenConflict: (successorId: string) => void
   onResolveAll: () => void
-  /** Tasks (any level) in the Unscheduled group. */
+  /** Tasks (any level) without dates in the whole project. */
   unscheduledCount: number
-  onShowUnscheduled: () => void
+  /** Filter mode: the chart lists only the tasks without dates. */
+  unscheduledOnly: boolean
+  onUnscheduledOnlyChange: (on: boolean) => void
+  /** Callback ref of the toggle: the chart hands keyboard focus back here when a row leaves. */
+  registerUnscheduledToggle: (element: HTMLButtonElement | null) => void
 }
 
 export const GanttToolbar = memo(function GanttToolbar(props: GanttToolbarProps) {
   return (
     <>
       <ConflictsChip {...props} />
-      {props.unscheduledCount > 0 ? (
-        <Tooltip content="Jump to the tasks without dates">
-          <Button variant="ghost" size="sm" onClick={props.onShowUnscheduled}>
-            <CalendarOff aria-hidden />
-            <span className={compactOnly}>Unscheduled</span>{' '}
-            <span className="text-fg-tertiary tabular-nums">{props.unscheduledCount}</span>
-          </Button>
-        </Tooltip>
-      ) : null}
+      <UnscheduledToggle {...props} />
       <ScheduleModeMenu mode={props.scheduleMode} onChange={props.onScheduleModeChange} />
       <Tooltip content="Scroll to today" shortcut="t">
         <Button variant="ghost" size="sm" onClick={props.onToday}>
@@ -89,6 +85,33 @@ export const GanttToolbar = memo(function GanttToolbar(props: GanttToolbarProps)
     </>
   )
 })
+
+function UnscheduledToggle({
+  unscheduledCount,
+  unscheduledOnly,
+  onUnscheduledOnlyChange,
+  registerUnscheduledToggle,
+}: GanttToolbarProps) {
+  // Shown while there is something to filter, and while the filter is on (so it can be turned off).
+  if (unscheduledCount === 0 && !unscheduledOnly) return null
+  return (
+    <Tooltip content={unscheduledOnly ? 'Show all tasks' : 'Show only tasks without dates'}>
+      <Button
+        ref={registerUnscheduledToggle}
+        variant="ghost"
+        size="sm"
+        aria-pressed={unscheduledOnly}
+        aria-label={`Show only unscheduled tasks, ${unscheduledCount}`}
+        className={cn(unscheduledOnly && 'bg-active text-fg')}
+        onClick={() => onUnscheduledOnlyChange(!unscheduledOnly)}
+      >
+        <CalendarOff aria-hidden />
+        <span className={compactOnly}>Unscheduled</span>{' '}
+        <span className="text-fg-tertiary tabular-nums">{unscheduledCount}</span>
+      </Button>
+    </Tooltip>
+  )
+}
 
 function ConflictsChip({
   conflicts,

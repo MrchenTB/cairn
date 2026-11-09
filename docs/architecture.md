@@ -133,6 +133,8 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
 - **Buckets** (`buckets.ts`) — population = tasks of any level in non-archived projects.
   Overdue = open & due < today · Today = open & due == today · Upcoming = open & today < due ≤ today+7 ·
   done tasks are never overdue. Overview "Due soon" = Today + Upcoming; "Open tasks" = open tasks.
+  `dueBucket` is due-date only. The My Tasks Today tab also lists tasks _scheduled today_
+  (`isScheduledToday`: open, both dates, start ≤ today < due; `myTasks().scheduledToday`) — see D38.
 - **Progress** (`progress.ts`) — completed leaf tasks / leaf tasks; milestones never count; no tasks → "No tasks".
 - **Hierarchy** (`hierarchy.ts`) — Project → optional Phase → Task → optional one level of Subtask.
   Outline groups: null-phase group first, then phases in order; milestones listed inside their group by date.
