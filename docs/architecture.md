@@ -167,6 +167,10 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
   in the foreground shows changes only after focus or reload. While a schedule preview is open the
   throttle is bypassed on focus (decision D15). A refresh the server refuses (auth) re-checks the
   session instead of silently showing old data.
+- Session at startup (D35): only an answer that refuses the session signs out. When the server cannot
+  be reached (offline, timeout, 502/503/504) supabase-js keeps the stored session but reports none;
+  the auth store then says `unreachable` (no data loaded or cleared) and `AuthGate` / `/login` show
+  "Can't reach Cairn" with Try again, retried once more when the browser comes back online (no timer of its own; supabase-js keeps renewing in the background and the app continues when that succeeds). An explicit sign-out still signs this device out.
 - Network deadline: `src/data/supabaseClient.ts` gives the Supabase client a custom `fetch`
   (`fetchWithDeadline`): every request, including a response body that never finishes, is aborted
   after `REQUEST_TIMEOUT_MS` (30 s) so a hung request cannot block the write queue or a form; the

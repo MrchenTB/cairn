@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { useAuth } from '@/data/hooks'
 import { AppSplash } from './AppSplash'
+import { SessionUnreachable } from './SessionUnreachable'
 
 /** Location state passed to /login so the user returns to the page they asked for. */
 export interface LoginRedirectState {
@@ -9,7 +10,8 @@ export interface LoginRedirectState {
 
 /**
  * Protects the app. Local mode: always signed in. Supabase mode: splash while the session is
- * restored, /login (remembering the intended URL) when signed out. Loading/clearing the
+ * restored, a "Can't reach Cairn" screen with Try again when the server did not answer, /login
+ * (remembering the intended URL) when signed out. Loading/clearing the
  * workspace on sign-in/out is done by the auth store.
  */
 export function AuthGate() {
@@ -18,6 +20,8 @@ export function AuthGate() {
 
   if (mode === 'local' || status === 'signed_in') return <Outlet />
   if (status === 'loading') return <AppSplash />
+  // The server did not answer: the session may be fine, so this is not a sign-out.
+  if (status === 'unreachable') return <SessionUnreachable />
   const state: LoginRedirectState = {
     from: `${location.pathname}${location.search}${location.hash}`,
   }

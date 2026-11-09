@@ -114,7 +114,12 @@ export interface AuthUser {
   email: string | null
 }
 
-export type AuthStatus = 'loading' | 'signed_out' | 'signed_in'
+/**
+ * `unreachable`: a session may be stored on this device, but the server could not be reached to
+ * confirm it (offline, a timeout, a gateway error). Not a sign-out: nothing is loaded or cleared,
+ * and `retrySession()` (or the library renewing the session by itself) continues.
+ */
+export type AuthStatus = 'loading' | 'signed_out' | 'signed_in' | 'unreachable'
 
 /**
  * What an auth change was. 'password_recovery' = the user opened a password-reset link: they
@@ -170,6 +175,11 @@ export interface AuthState {
     updatePassword(newPassword: string): Promise<Result>
     /** The user chose not to set a new password now (clears passwordRecovery). */
     dismissPasswordRecovery(): void
+    /**
+     * Reads the session again after the server could not be reached (status `unreachable`); does
+     * nothing in any other status. One request per call; calls made meanwhile share it.
+     */
+    retrySession(): Promise<void>
   }
 }
 
