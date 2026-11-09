@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 /**
- * Gantt visual refinements (UX iteration 1, docs/ux-audit.md G-1 / G-3 / G-6 / G-7 / G-9), checked
+ * Gantt visual refinements (UX iteration 1, docs/archive/ux-audit.md G-1 / G-3 / G-6 / G-7 / G-9), checked
  * against computed styles and geometry of the real page: a quiet grid (no weekend bands, header
  * lanes see-through), opaque bars and label chips (nothing shows through the letters), bar
  * tooltips that never get in the way of drag / resize, and the Unscheduled jump landing on the

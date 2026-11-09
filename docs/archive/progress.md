@@ -1,6 +1,6 @@
 # Cairn 進度與驗收報告（版本 1.0.0，2026-11-06）
 
-> 上線準備度與真實雲端驗收的最新狀態，見 [`production-readiness.md`](production-readiness.md)。
+> 上線準備度與真實雲端驗收的最新狀態，見 [`production-readiness.md`](../production-readiness.md)。
 
 **一句話現況**：PRD 要求的功能都已實作，並在本機模擬環境通過自動化測試；但「雲端同步（驗收 13）」與「真實 Supabase 的登入與權限（驗收 1、16 的雲端部分）」還沒有在真實服務上驗證過，必須由你註冊帳號、部署後親自確認，確認之前不能算完成。
 

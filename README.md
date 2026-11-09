@@ -1,77 +1,233 @@
-# Cairn — Plan clearly. Work simply.
+<p align="center">
+  <img src="public/favicon.svg" width="56" height="56" alt="Cairn logo">
+</p>
 
-給個人使用的輕量專案管理 Web App：同一份任務資料，提供 **List、Board（Kanban）、Gantt** 三種視圖，
-加上 Overview、My Tasks、跨專案 Timeline 與全域搜尋。介面受 Linear 啟發（原創設計），
-資料透過 **Supabase（Auth + Postgres + RLS）** 在不同電腦間同步，前端可免費部署在 **Vercel**。
+<h1 align="center">Cairn</h1>
 
-> 狀態：版本 1.0.0，**已正式部署**：<https://cairn-omega-blue.vercel.app>（Vercel ＋ Supabase Production，2026-11-07）。真實 Staging 驗收已通過；已知問題與尚未驗證的項目見 [`docs/production-readiness.md`](docs/production-readiness.md) 第 8 節。
-> 已完成／待你操作／尚未完成的清單、驗收結果與已知限制見 [`docs/progress.md`](docs/progress.md)。
+<p align="center">
+  <strong>Plan clearly. Work simply.</strong><br>
+  A calm, keyboard-friendly workspace for personal projects, tasks and timelines.
+</p>
 
-## 快速開始（本機）
+---
 
-需求：Node.js 24（`package.json` engines 為 `24.x`，`.node-version` 指定 24）、npm。
+## Overview
+
+Cairn is a personal project manager. One set of projects and tasks can be viewed as a list, a board
+or a Gantt chart, with an overview, a personal task inbox and a cross-project timeline on top.
+
+It exists because the usual choices sit at two extremes. Simple to-do apps have no sense of phases,
+dates or dependencies, so a project with a real schedule outgrows them quickly. Team tools have all
+of that, but they bring workspaces, permissions, notifications and setup that one person does not
+need. Cairn keeps the planning features (phases, milestones, dependencies, scheduling) and leaves
+out the collaboration machinery.
+
+It is built for one owner who plans several long-running projects at once: side projects, studies,
+renovations, anything with tasks that have dates and an order. It is desktop-first, works fully from
+the keyboard, and handles Chinese input (IME) correctly in every text field.
+
+## Features
+
+**Projects and tasks**
+
+- Projects with optional phases, tasks with one level of subtasks, and dated milestones
+- Status, priority, start and due dates, descriptions, and progress that rolls up from subtasks
+- A task panel that saves every field automatically, with drafts kept safe across navigation and
+  IME composition
+
+**Views**
+
+- **List**: tasks grouped by phase, with inline editing and drag-and-drop ordering
+- **Board**: a Kanban board by status, with drag-and-drop between columns
+- **Gantt**: drag and resize bars, draw dependencies, Day / Week / Month scales, milestones and
+  weekend shading
+- **Overview**: metrics, active projects, upcoming tasks and milestones at a glance
+- **My Tasks**: everything due Today, Upcoming, Overdue, or All, across projects
+- **Timeline**: every project on one horizontal time axis
+
+**Planning**
+
+- Finish-to-start dependencies with cycle detection
+- Per-project scheduling mode: **Manual** warns about conflicts; **Auto** previews which tasks
+  would move and applies the change atomically
+- Global search (`⌘K` / `Ctrl+K`) across projects, tasks and milestones, plus single-key shortcuts
+  (`?` lists them)
+
+**Data**
+
+- Cloud sync through Supabase, with optimistic updates, an ordered write queue, and a visible sync
+  state (Saving / Saved / Couldn't save · Retry / Offline)
+- A local mode that runs without any backend, clearly labelled _Local only — not synced_
+- JSON backup export and import (imported as a new copy, never overwriting), and CSV export of tasks
+- Light, dark and system themes; configurable time zone and first day of the week
+
+## Tech Stack
+
+| Area             | Technology                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| Frontend         | React 19, Vite 8, React Router 8                                                      |
+| Language         | TypeScript 7 (strict)                                                                 |
+| Styling / UI     | Tailwind CSS 4, Radix UI primitives, lucide-react icons, cmdk, sonner, dnd-kit, Inter |
+| State management | Zustand 5 + Immer 11 (optimistic updates with patch-based rollback)                   |
+| Validation       | Zod 4                                                                                 |
+| Authentication   | Supabase Auth (email and password)                                                    |
+| Database         | Supabase Postgres with Row Level Security, accessed with `@supabase/supabase-js`      |
+| Hosting          | Vercel (static SPA with security headers)                                             |
+| Testing          | Vitest, Testing Library, PGlite (database and RLS tests), Playwright                  |
+| Tooling          | oxlint, Prettier                                                                      |
+
+## Architecture
+
+Cairn is a static single-page app with no application server. The browser talks to Supabase
+directly, and Postgres enforces who can see what.
+
+```mermaid
+flowchart LR
+    subgraph Browser["Browser · React SPA"]
+        UI["Views<br/>List · Board · Gantt · Overview · Timeline"]
+        Store["Zustand store<br/>optimistic updates · FIFO write queue"]
+        Repo{"Repository"}
+        UI --> Store --> Repo
+    end
+
+    Repo -- "local mode" --> LS[("localStorage")]
+    Repo -- "cloud mode" --> SB
+
+    subgraph SB["Supabase"]
+        Auth["Auth"]
+        DB[("Postgres + RLS")]
+    end
+
+    Vercel["Vercel<br/>static hosting + CSP"] -. serves .-> Browser
+```
+
+- **React frontend.** Each screen lives in `src/features/`. Business rules (dates, ordering,
+  scheduling, validation) are plain TypeScript in `src/domain/`, with no React and no I/O, so they
+  are tested in isolation.
+- **Zustand store.** All reads and writes go through one store in `src/data/store.ts`. A change is
+  applied to the screen immediately, queued, and sent to the repository in order. If the write
+  fails, only the affected fields are rolled back and a Retry is offered.
+- **Supabase.** Supabase Auth handles sign-in. Data is stored in Postgres and read and written
+  through the auto-generated REST API, plus three database functions for operations that must be
+  atomic (rescheduling, deleting a task with its subtasks, importing a backup).
+- **Row Level Security.** Every table carries a `user_id` and has policies that allow access only to
+  rows where it matches the signed-in user. Composite foreign keys stop a row from pointing at
+  another user's data. The frontend only ever holds the publishable key.
+- **Vercel.** Vercel builds the app and serves it as static files, with a strict Content Security
+  Policy and an SPA fallback defined in `vercel.json`.
+
+The full engineering contract (data model, domain rules, UI contracts) is in
+[`docs/architecture.md`](docs/architecture.md), and the reasoning behind each choice is in
+[`docs/decisions.md`](docs/decisions.md).
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 24 (`.node-version`, `engines: 24.x`) and npm
+- Optional: a Supabase project, for sign-in and cloud sync
+
+### Installation
 
 ```bash
 npm install
 ```
 
+### Development server
+
 ```bash
 npm run dev
 ```
 
-開啟 http://localhost:5173 。
+Open <http://localhost:5173>. With no environment variables, Cairn runs in **local mode**: no
+sign-in, and data stays in this browser's `localStorage`.
 
-- **沒有設定 Supabase 時**，App 以「本機模式」執行：資料只存在這個瀏覽器（localStorage），不需登入，
-  側邊欄會明確顯示 **Local only — not synced**。適合先試用；**不是**雲端同步。
-- 要跨電腦同步，請完成下方「Supabase 設定」，把金鑰填進 `.env.local` 後重新啟動。
+### Environment variables
 
-## Supabase 設定（雲端資料庫與登入）
+To use cloud sync, copy the example file and fill in your own Supabase project:
 
-詳細步驟見 [`supabase/README.md`](supabase/README.md)。最短流程：
+```bash
+cp .env.example .env.local
+```
 
-1. 在 https://supabase.com 建立免費專案。
-2. 打開專案的 **SQL Editor**，依檔名順序貼上並執行 `supabase/migrations/` 內的**每一個** SQL（目前 2 個），再執行 `supabase/verify.sql` 確認全部 `pass`。
-3. 在 **Project Settings → API** 複製 Project URL 與 **publishable（或 anon）key**。
-4. 複製 `.env.example` 為 `.env.local` 並填入：
-   ```bash
-   cp .env.example .env.local
-   ```
-5. `npm run dev`，登入（或註冊）自己的帳號。Supabase 預設要求 email 確認，內建寄信服務有限制，建議改在 Dashboard 直接新增使用者並勾選 Auto Confirm，細節見 [`docs/deployment.md`](docs/deployment.md)。
-6. 建立好自己的帳號後，到 **Authentication → Providers / Settings** 關閉新使用者註冊（避免陌生人註冊）。
+```bash
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_<your-key>
+VITE_DATA_MODE=          # empty = automatic; "local" forces local mode
+```
 
-部署到 Vercel 與上線後的驗收清單見 [`docs/deployment.md`](docs/deployment.md)。
+Apply the SQL files in `supabase/migrations/` in order, then run `supabase/verify.sql`. Step-by-step
+setup, including Auth settings, is in [`supabase/README.md`](supabase/README.md).
 
-> ⚠️ 只有 publishable／anon key 可以放在前端。**永遠不要**把 service role key 放進 `.env.local` 或提交到 Git。
+> **Never** put a `service_role` or `sb_secret_` key in any `VITE_` variable. Those values are
+> embedded in the public bundle. `vite build` refuses to build if it finds one.
 
-## 常用指令
+### Build
 
-| 指令                 | 說明                                                                                             |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| `npm run dev`        | 開發伺服器                                                                                       |
-| `npm run build`      | 型別檢查 + 產生正式版到 `dist/`                                                                  |
-| `npm run typecheck`  | TypeScript 型別檢查                                                                              |
-| `npm run lint`       | oxlint 程式碼檢查                                                                                |
-| `npm test`           | 所有 Vitest 測試（domain 單元測試、元件測試、資料庫／RLS 測試）                                  |
-| `npm run test:unit`  | 只跑單元與元件測試（不含資料庫）                                                                 |
-| `npm run test:db`    | 只跑資料庫 migration、約束與 RLS 測試（PGlite，不需 Docker）                                     |
-| `npm run test:e2e`   | Playwright 端對端測試（本機模式）                                                                |
-| `npm run test:cloud` | Playwright 端對端測試（雲端模式，對本機模擬的 Supabase，不需帳號）                               |
-| `npm run test:prod`  | 用正式版 build 與真實的 `vercel.json` 跑主要流程（CSP、深層網址、lazy chunks、不外洩測試程式碼） |
-| `npm run preview`    | 在本機預覽已建置的 `dist/`（先執行 `npm run build`）                                             |
+```bash
+npm run build      # type check + production build into dist/
+npm run preview    # serve dist/ locally
+```
 
-E2E 測試需要 Playwright 的 Chromium（第一次執行前：`npx playwright install chromium`）。目前自動化測試只在 Chromium 跑過；Safari 與 Firefox 請依 [`docs/deployment.md`](docs/deployment.md) 最後的清單手動檢查。各組測試的數字與日期見 [`docs/progress.md`](docs/progress.md) 第 3 節。
+### Testing
 
-## 文件
+```bash
+npm run verify     # format check, lint, type check, build, and all Vitest tests
+npm test           # Vitest only: unit, component, and database/RLS tests
+npm run test:e2e   # Playwright end-to-end tests in local mode
+```
 
-- [`docs/production-readiness.md`](docs/production-readiness.md)：上線準備度：審查結果、風險、還缺什麼
-- [`docs/cloud-test-plan.md`](docs/cloud-test-plan.md)：Staging 環境建立步驟與真實雲端驗收清單
-- [`docs/deployment.md`](docs/deployment.md)：部署步驟（Supabase＋Vercel）與需要你親自完成的事項
-- [`docs/architecture.md`](docs/architecture.md)：架構、資料模型、規則與重要取捨
-- [`docs/decisions.md`](docs/decisions.md)：決策紀錄
-- [`docs/design-research.md`](docs/design-research.md)：Linear 設計研究與 design tokens
-- [`docs/gantt-evaluation.md`](docs/gantt-evaluation.md)：甘特圖套件評估
-- [`docs/platform-notes.md`](docs/platform-notes.md)：Supabase／Cloudflare 免費方案與限制（早期的 Cloudflare 調查紀錄，網站現已改用 Vercel）
-- [`docs/task-autosave-implementation.md`](docs/task-autosave-implementation.md)：Task Modal 自動儲存的互動規則、測試結果與限制
-- [`CLAUDE.md`](CLAUDE.md)：開發工作流程（模型分工與委派方式）
-- [`docs/progress.md`](docs/progress.md)：進度與驗收結果（已完成／待你操作／尚未完成）、測試結果、已知限制
-- [`supabase/README.md`](supabase/README.md)：資料庫 migration、RLS 檢查與 Auth 設定的詳細步驟
+Install the Playwright browser once with `npx playwright install chromium`. Further suites:
+
+| Command                     | Runs against                                                 |
+| --------------------------- | ------------------------------------------------------------ |
+| `npm run test:db`           | Migrations, constraints and RLS in PGlite (no Docker needed) |
+| `npm run test:cloud`        | The app in cloud mode against a local Supabase simulator     |
+| `npm run test:prod`         | A production build behind the real `vercel.json` headers     |
+| `npm run test:staging:core` | The real Staging project, with dedicated test accounts       |
+
+## Development Workflow
+
+- **Branches.** Work happens on short-lived branches (`feature/…`, `fix/…`, `chore/…`) cut from
+  `master`. `master` is never pushed to directly.
+- **Pull requests.** Every change goes through a PR that states what changed, how to verify it, and
+  whether it touches the database. `npm run verify` must pass first.
+- **Previews.** Vercel builds a Preview for each PR. Previews always use the **Staging** Supabase
+  project, so real data is never touched during review.
+- **Environment isolation.** Staging and Production are separate Supabase projects. A build-time
+  guard (`src/data/supabaseProjects.ts`) fails any Preview that points anywhere but Staging, any
+  Production build that points anywhere but Production, and any local run that points at
+  Production.
+- **Releases.** After review, the PR is merged with a merge commit and Vercel deploys `master` to
+  production. Database migrations are additive only, and are applied to Staging, then (after a JSON
+  backup) to Production, before the merge.
+
+Details: [`docs/deployment.md`](docs/deployment.md) for hosting and release steps,
+[`docs/cloud-test-plan.md`](docs/cloud-test-plan.md) for Staging testing, and
+[`CLAUDE.md`](CLAUDE.md) for the day-to-day workflow.
+
+## Project Structure
+
+```
+src/
+  app/          routing, app shell, auth gate, shortcuts
+  components/   shared UI primitives and task widgets
+  domain/       pure business rules: dates, ordering, scheduling, validation
+  data/         store, repositories (local and Supabase), auth, backup, environment guards
+  features/     one folder per screen: list, board, gantt, task-modal, settings, …
+  lib/          small helpers (keyboard, focus, notifications)
+  styles/       design tokens and theme
+supabase/       migrations and read-only verification SQL
+tests/          database tests, local Supabase simulator, Staging checks
+e2e*/           Playwright suites: local, cloud, prod, staging
+docs/           architecture, decisions, deployment, testing; archive/ for dated reports
+```
+
+## Project Status
+
+Cairn is a personal tool under active development. It is deployed and in daily use by its author,
+and it changes as that use reveals what is missing.
+
+It is not a commercial product or a hosted service. It is designed for a single user, does not
+support teams or sharing, and its automated tests run in Chromium only. Known issues are tracked in
+[`docs/production-readiness.md`](docs/production-readiness.md).

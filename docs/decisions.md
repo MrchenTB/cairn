@@ -147,7 +147,7 @@
 ## D26 — Task Modal 編輯模式改為自動儲存：逐欄位寫入，沒有 Save／Cancel
 
 - **決定**：Status、Priority、Phase 選了就存；日期成對經 planner 寫入；Title 在 Enter、失焦、關閉時存；Description 停止輸入 2 秒後存（連續輸入最長 10 秒），失焦、關閉、分頁隱藏時立即存。Footer 只留 Done 與儲存狀態。建立模式不變，仍有 Create。實作在 `src/features/task-modal/autosave/`，寫入一律走 store 既有的 `updateTask` 與 `planScheduleChange`。
-- **理由**：全站只有 Modal 要按 Save（`docs/task-autosave-design.md` §2.1）。store 的 FIFO 佇列、欄位層級回滾與 Retry 撤回，本來就是為逐欄位寫入設計的，不需要第二套儲存系統。
+- **理由**：全站只有 Modal 要按 Save（`docs/archive/task-autosave-design.md` §2.1）。store 的 FIFO 佇列、欄位層級回滾與 Retry 撤回，本來就是為逐欄位寫入設計的，不需要第二套儲存系統。
 - **取捨**：沒有「取消這次編輯」。文字可以再改回來；日期有 Undo；Status、Priority、Phase 重選即可。
 
 ## D27 — 關閉就是保留；只有存不了的文字才會擋下關閉

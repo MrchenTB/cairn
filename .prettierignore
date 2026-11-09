@@ -6,5 +6,5 @@ playwright-report
 test-results
 package-lock.json
 supabase/.temp
-# public/_headers pins the hash of the inline theme script; reformatting this file would break the CSP.
+# vercel.json pins the hash of the inline theme script; reformatting this file would break the CSP.
 index.html
