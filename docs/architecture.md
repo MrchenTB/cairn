@@ -154,7 +154,8 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
   `VITE_SUPABASE_PUBLISHABLE_KEY` (or legacy `VITE_SUPABASE_ANON_KEY`) are set, unless
   `VITE_DATA_MODE=local`. Otherwise **local mode**: data in `localStorage` of this browser only, no
   login, and the UI always shows a "Local only — not synced" indicator. Local mode exists so the app
-  runs and E2E-tests without keys; it is never presented as cloud sync.
+  runs and E2E-tests without keys; it is never presented as cloud sync. A Vercel deployment
+  (production or preview) cannot force local mode with `VITE_DATA_MODE=local`: the build fails.
 - Store (`src/data/store.ts`): zustand + immer. Optimistic update → repository call → reconcile or
   rollback (inverse patches) + toast with Retry. `sync` state drives the sidebar indicator
   ("Saving…", "Saved", "Couldn't save · Retry", "Offline", "Local only"). A retryable failure
