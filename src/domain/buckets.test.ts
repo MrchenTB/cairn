@@ -3,6 +3,7 @@ import {
   bucketPopulation,
   dueBucket,
   isOpenTask,
+  isScheduledToday,
   myTasks,
   overviewMetrics,
   UPCOMING_WINDOW_DAYS,
@@ -202,12 +203,161 @@ describe('myTasks / overviewMetrics', () => {
 
   it('handles an empty workspace', () => {
     const empty = makeWorkspace({})
-    expect(myTasks(empty, today)).toEqual({ today: [], upcoming: [], overdue: [], all: [] })
+    expect(myTasks(empty, today)).toEqual({
+      today: [],
+      scheduledToday: [],
+      upcoming: [],
+      overdue: [],
+      all: [],
+    })
     expect(overviewMetrics(empty, today)).toEqual({
       activeProjects: 0,
       openTasks: 0,
       dueSoon: 0,
       overdue: 0,
+    })
+  })
+})
+
+describe('scheduled today', () => {
+  const now = '2026-11-09'
+  const open = (startDate: string | null, dueDate: string | null) => ({
+    status: 'todo' as const,
+    startDate,
+    dueDate,
+  })
+
+  describe('isScheduledToday', () => {
+    it('needs both dates, start <= today < due, both ends inclusive', () => {
+      expect(isScheduledToday(open('2026-11-07', '2026-11-14'), now)).toBe(true)
+      expect(isScheduledToday(open('2026-11-09', '2026-11-14'), now)).toBe(true) // starts today
+      expect(isScheduledToday(open('2026-11-08', '2026-11-10'), now)).toBe(true) // due tomorrow
+    })
+
+    it('leaves out due today (that is the due bucket), overdue, future start and missing dates', () => {
+      expect(isScheduledToday(open('2026-11-09', '2026-11-09'), now)).toBe(false)
+      expect(isScheduledToday(open('2026-11-01', '2026-11-09'), now)).toBe(false)
+      expect(isScheduledToday(open('2026-11-01', '2026-11-08'), now)).toBe(false)
+      expect(isScheduledToday(open('2026-11-10', '2026-11-14'), now)).toBe(false)
+      expect(isScheduledToday(open('2026-11-01', null), now)).toBe(false)
+      expect(isScheduledToday(open(null, '2026-11-14'), now)).toBe(false)
+      expect(isScheduledToday(open(null, null), now)).toBe(false)
+    })
+
+    it('is for open tasks only', () => {
+      const span = { startDate: '2026-11-07', dueDate: '2026-11-14' }
+      expect(isScheduledToday({ status: 'in_progress', ...span }, now)).toBe(true)
+      expect(isScheduledToday({ status: 'done', ...span }, now)).toBe(false)
+    })
+
+    it('crosses month and year boundaries', () => {
+      expect(isScheduledToday(open('2026-10-28', '2026-11-03'), '2026-11-01')).toBe(true)
+      expect(isScheduledToday(open('2026-12-30', '2027-01-02'), '2026-12-31')).toBe(true)
+      expect(isScheduledToday(open('2026-12-30', '2027-01-02'), '2027-01-01')).toBe(true)
+      expect(isScheduledToday(open('2026-12-30', '2027-01-02'), '2027-01-02')).toBe(false)
+      expect(isScheduledToday(open('2026-12-30', '2027-01-02'), '2026-12-29')).toBe(false)
+    })
+  })
+
+  describe('myTasks().scheduledToday', () => {
+    const proj = makeProject({ id: 'p', sortOrder: 'a1' })
+    const other = makeProject({ id: 'q', sortOrder: 'a2' })
+    const old = makeProject({ id: 'old', sortOrder: 'a0', status: 'archived' })
+    const t = (id: string, overrides: Partial<Task> = {}) =>
+      makeTask({ id, title: id, projectId: 'p', ...overrides })
+    const build = (tasks: Task[], when = now) =>
+      myTasks(makeWorkspace({ projects: [old, proj, other], tasks }), when)
+    const ids = (list: Task[]) => list.map((task) => task.id)
+
+    it('puts each case in the right lists', () => {
+      const buckets = build([
+        t('span', { startDate: '2026-11-07', dueDate: '2026-11-14' }),
+        t('one-day', { startDate: now, dueDate: now, sortOrder: 'a1' }),
+        t('due-only', { dueDate: now, sortOrder: 'a2' }),
+        t('start-only', { startDate: '2026-11-01' }),
+        t('no-dates'),
+        t('overdue', { startDate: '2026-11-01', dueDate: '2026-11-08' }),
+        t('future', { startDate: '2026-11-10', dueDate: '2026-11-15' }),
+        t('done', { startDate: '2026-11-07', dueDate: '2026-11-14', status: 'done' }),
+        t('archived', { projectId: 'old', startDate: '2026-11-07', dueDate: '2026-11-14' }),
+        t('gone', { projectId: 'deleted', startDate: '2026-11-07', dueDate: '2026-11-14' }),
+      ])
+      expect(ids(buckets.scheduledToday)).toEqual(['span'])
+      expect(ids(buckets.today)).toEqual(['one-day', 'due-only'])
+      expect(ids(buckets.overdue)).toEqual(['overdue'])
+      expect(ids(buckets.upcoming)).toEqual(['span', 'future']) // still by due date
+    })
+
+    it('judges a subtask by its own dates, not its parent’s', () => {
+      const span = { startDate: '2026-11-07', dueDate: '2026-11-14' }
+      const buckets = build([
+        t('parent-scheduled', { ...span, sortOrder: 'a1' }),
+        t('sub-plain', { parentTaskId: 'parent-scheduled', dueDate: '2026-11-20' }),
+        t('parent-plain', { dueDate: '2026-11-20', sortOrder: 'a2' }),
+        t('sub-scheduled', { parentTaskId: 'parent-plain', ...span }),
+      ])
+      expect(ids(buckets.scheduledToday)).toEqual(['parent-scheduled', 'sub-scheduled'])
+    })
+
+    it('handles a span across a month and across a year', () => {
+      const crossMonth = [t('m', { startDate: '2026-10-28', dueDate: '2026-11-03' })]
+      expect(ids(build(crossMonth, '2026-11-01').scheduledToday)).toEqual(['m'])
+      const crossYear = [t('y', { startDate: '2026-12-30', dueDate: '2027-01-02' })]
+      expect(ids(build(crossYear, '2026-12-31').scheduledToday)).toEqual(['y'])
+      expect(ids(build(crossYear, '2027-01-01').scheduledToday)).toEqual(['y'])
+      expect(ids(build(crossYear, '2027-01-02').scheduledToday)).toEqual([])
+      expect(ids(build(crossYear, '2027-01-02').today)).toEqual(['y'])
+    })
+
+    it('is disjoint from today, and a task is in at most one of today / scheduledToday', () => {
+      const buckets = build([
+        t('a', { startDate: '2026-11-01', dueDate: now, sortOrder: 'a1' }),
+        t('b', { startDate: '2026-11-01', dueDate: '2026-11-10' }),
+        t('c', { dueDate: now, sortOrder: 'a2' }),
+        t('d', { startDate: now, dueDate: now, sortOrder: 'a3' }),
+      ])
+      const dueToday = new Set(ids(buckets.today))
+      expect(ids(buckets.scheduledToday).filter((id) => dueToday.has(id))).toEqual([])
+      expect(ids(buckets.today)).toEqual(['a', 'c', 'd'])
+      expect(ids(buckets.scheduledToday)).toEqual(['b'])
+    })
+
+    it('sorts like the other lists: due date, priority, project order, outline position', () => {
+      const span = { startDate: '2026-11-01' }
+      const buckets = build([
+        t('late', { ...span, dueDate: '2026-11-20' }),
+        t('soon-low', { ...span, dueDate: '2026-11-12', priority: 'low', sortOrder: 'a0' }),
+        t('soon-urgent', { ...span, dueDate: '2026-11-12', priority: 'urgent' }),
+        t('soon-q', { projectId: 'q', ...span, dueDate: '2026-11-12', priority: 'low' }),
+        t('soon-p2', { ...span, dueDate: '2026-11-12', priority: 'low', sortOrder: 'a2' }),
+        t('soon-p1', { ...span, dueDate: '2026-11-12', priority: 'low', sortOrder: 'a1' }),
+      ])
+      expect(ids(buckets.scheduledToday)).toEqual([
+        'soon-urgent',
+        'soon-low',
+        'soon-p1',
+        'soon-p2',
+        'soon-q',
+        'late',
+      ])
+    })
+
+    it('does not change overview metrics (Due soon stays due-date based)', () => {
+      const withSpan = makeWorkspace({
+        projects: [proj],
+        tasks: [
+          t('span', { startDate: '2026-11-07', dueDate: '2026-12-31' }), // far due: later
+          t('due', { dueDate: now }),
+        ],
+      })
+      expect(myTasks(withSpan, now).scheduledToday.map((task) => task.id)).toEqual(['span'])
+      expect(overviewMetrics(withSpan, now)).toEqual({
+        activeProjects: 1,
+        openTasks: 2,
+        dueSoon: 1,
+        overdue: 0,
+      })
+      expect(dueBucket({ status: 'todo', dueDate: '2026-12-31' }, now)).toBe('later')
     })
   })
 })

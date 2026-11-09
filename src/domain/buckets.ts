@@ -9,6 +9,10 @@
  * - later    : open and dueDate beyond the window
  * - no_date  : open and no dueDate
  * - done     : status === 'done'
+ * On top of the due-date buckets, My Tasks → Today also lists "scheduled today" tasks (open, with
+ * both dates, startDate <= today < dueDate: today falls inside the planned span but the task isn't
+ * due yet). `isScheduledToday` / `MyTasksBuckets.scheduledToday` hold that rule; it never changes
+ * `dueBucket` (Upcoming, Overdue, Overview Due soon and the sidebar badge stay due-date based).
  * "today" always comes from `todayInTimeZone(preferences.timezone)` (hook: `useToday()`).
  */
 import { addDays } from './dates'
@@ -55,9 +59,25 @@ export function bucketPopulation(data: WorkspaceData): Task[] {
   })
 }
 
+/**
+ * Open and scheduled across today: both dates set, startDate <= today < dueDate (both ends
+ * inclusive; the due-today case belongs to the `today` bucket). Only a start date, only a due date,
+ * a future start and an overdue task are not "scheduled today".
+ */
+export function isScheduledToday(
+  task: Pick<Task, 'status' | 'startDate' | 'dueDate'>,
+  today: ISODate,
+): boolean {
+  if (!isOpenTask(task)) return false
+  const { startDate, dueDate } = task
+  return Boolean(startDate && dueDate && startDate <= today && today < dueDate)
+}
+
 export interface MyTasksBuckets {
-  /** open, due today */
+  /** open, due today (the due-date bucket; Overview and the sidebar badge use this) */
   today: Task[]
+  /** open, scheduled across today but due later (disjoint from `today`); shown in My Tasks Today */
+  scheduledToday: Task[]
   /** open, due tomorrow..today+window */
   upcoming: Task[]
   /** open, due before today */
@@ -122,12 +142,18 @@ function compareDescending(a: number, b: number): number {
 }
 
 /**
- * Sorting inside today/upcoming/overdue: dueDate asc, then priority (urgent→none), then project
+ * Sorting inside today/scheduledToday/upcoming/overdue: dueDate asc, then priority (urgent→none), then project
  * sortOrder, then task sortOrder.
  */
 export function myTasks(data: WorkspaceData, today: ISODate): MyTasksBuckets {
   const windowEnd = addDays(today, UPCOMING_WINDOW_DAYS)
-  const buckets: MyTasksBuckets = { today: [], upcoming: [], overdue: [], all: [] }
+  const buckets: MyTasksBuckets = {
+    today: [],
+    scheduledToday: [],
+    upcoming: [],
+    overdue: [],
+    all: [],
+  }
   const open: Task[] = []
   const done: Task[] = []
   for (const task of bucketPopulation(data)) {
@@ -137,6 +163,7 @@ export function myTasks(data: WorkspaceData, today: ISODate): MyTasksBuckets {
       continue
     }
     open.push(task)
+    if (isScheduledToday(task, today)) buckets.scheduledToday.push(task)
     if (bucket === 'today' || bucket === 'upcoming' || bucket === 'overdue') {
       buckets[bucket].push(task)
     }
@@ -146,6 +173,7 @@ export function myTasks(data: WorkspaceData, today: ISODate): MyTasksBuckets {
   const byDue = (a: Task, b: Task) =>
     compareDueDates(a.dueDate, b.dueDate) || priorityRank(a) - priorityRank(b) || byPosition(a, b)
   buckets.today.sort(byDue)
+  buckets.scheduledToday.sort(byDue)
   buckets.upcoming.sort(byDue)
   buckets.overdue.sort(byDue)
   open.sort(byDue)
@@ -168,7 +196,7 @@ export interface OverviewMetrics {
   activeProjects: number
   /** open tasks (any level) in non-archived projects */
   openTasks: number
-  /** open tasks due today..today+window (= My Tasks today + upcoming) */
+  /** open tasks due today..today+window (= `buckets.today` + `buckets.upcoming`; not the Today tab) */
   dueSoon: number
   /** open tasks due before today (= My Tasks overdue) */
   overdue: number

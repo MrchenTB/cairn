@@ -6,7 +6,8 @@
  * reloaded, the way the app is opened again the next day).
  *
  * After EVERY mutation an oracle derives the expected numbers from the stored workspace alone
- * (PRD §5: progress = done leaf tasks / leaf tasks; Today = due today and not done; Overdue = due
+ * (PRD §5: progress = done leaf tasks / leaf tasks; Today = due today, or scheduled across today
+ * (start <= today < due), and not done; Overdue = due
  * before today and not done; Upcoming = due within the next 7 days) and every view must agree:
  * Overview, My Tasks tabs + sidebar badge, Projects list, project header, List, Board, Gantt and
  * Timeline. At the end the workspace is exported (JSON + CSV), imported into a fresh browser
@@ -280,7 +281,10 @@ interface Expected {
   open: number
   soon: number
   overdue: number
+  /** Open tasks due today (the sidebar badge counts these). */
   today: string[]
+  /** Open tasks with start <= today < due (My Tasks Today lists these after the due ones). */
+  scheduledToday: string[]
   upcoming: string[]
   overdueTitles: string[]
   all: string[]
@@ -320,6 +324,10 @@ function derive(db: Db, today: string): Expected {
     soon: open.filter(inWindow).length,
     overdue: open.filter((t) => t.dueDate !== null && t.dueDate < today).length,
     today: open.filter((t) => t.dueDate === today).map((t) => t.title),
+    scheduledToday: open
+      .filter((t) => t.startDate !== null && t.dueDate !== null)
+      .filter((t) => t.startDate! <= today && today < t.dueDate!)
+      .map((t) => t.title),
     upcoming: open.filter((t) => inWindow(t) && t.dueDate! > today).map((t) => t.title),
     overdueTitles: open.filter((t) => t.dueDate !== null && t.dueDate < today).map((t) => t.title),
     all: open.map((t) => t.title),
@@ -450,7 +458,7 @@ async function checkAllInner(
   // My Tasks
   await goVia(page, 'My Tasks')
   await expect(myTabs(page).getByRole('link'), `${label}: My Tasks tabs`).toHaveText([
-    new RegExp(`^Today\\s*${exp.today.length}\\b`),
+    new RegExp(`^Today\\s*${exp.today.length + exp.scheduledToday.length}\\b`),
     new RegExp(`^Upcoming\\s*${exp.upcoming.length}\\b`),
     new RegExp(`^Overdue\\s*${exp.overdue}\\b`),
     new RegExp(`^All Tasks\\s*${exp.open}\\b`),
@@ -463,13 +471,13 @@ async function checkAllInner(
   )
   for (const [tab, titles] of (deep
     ? [
-        ['Today', exp.today],
+        ['Today', [...exp.today, ...exp.scheduledToday]],
         ['Upcoming', exp.upcoming],
         ['Overdue', exp.overdueTitles],
         ['All', exp.all],
       ]
     : [
-        ['Today', exp.today],
+        ['Today', [...exp.today, ...exp.scheduledToday]],
         ['All', exp.all],
       ]) as [string, string[]][]) {
     const link = myTabs(page).getByRole('link', { name: new RegExp(`^${tab}`) })

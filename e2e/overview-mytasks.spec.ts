@@ -48,6 +48,8 @@ type Priority = 'none' | 'low' | 'medium' | 'high' | 'urgent'
 interface SeedTask {
   id: string
   title: string
+  /** Start date, in days from today (default: none). */
+  start?: number
   /** Due date, in days from today. */
   due?: number
   status?: Status
@@ -134,7 +136,7 @@ function buildWorkspace(
         description: null,
         status: task.status ?? 'todo',
         priority: task.priority ?? 'none',
-        startDate: null,
+        startDate: task.start === undefined ? null : day(task.start),
         dueDate: task.due === undefined ? null : day(task.due),
         sortOrder: key(index),
         completedAt: task.status === 'done' ? (task.completedAt ?? STAMP) : null,
@@ -348,6 +350,11 @@ const metric = (page: Page, name: 'active' | 'open' | 'soon' | 'overdue') =>
   page.locator(`[data-metric="${name}"] dd`)
 const sidebarMyTasks = (page: Page) => page.locator('a[href="/my-tasks"]')
 const tabs = (page: Page) => page.getByRole('navigation', { name: 'My Tasks' })
+/** The Today tab's list (a region holding its "Due today" / "Scheduled today" sections). */
+const todayTasks = (page: Page) => page.getByRole('region', { name: 'Today tasks', exact: true })
+/** One of the Today tab's sections, by heading id (whitespace-proof, unlike the accessible name). */
+const todaySection = (page: Page, key: 'due-today' | 'scheduled-today') =>
+  page.locator(`section[aria-labelledby="task-section-${key}"]`)
 const section = (page: Page, name: string) => page.getByRole('region', { name, exact: true })
 const toast = (page: Page, text: string | RegExp) =>
   page.locator('[data-sonner-toast]').filter({ hasText: text })
@@ -933,9 +940,10 @@ test.describe('my tasks', () => {
       'page',
     )
 
-    // Today: due today and not done — by priority, then project order (not "in progress").
+    // Today: due today and not done — by priority, then project order (not "in progress"). The
+    // seed has no start dates, so the Today tab holds only its "Due today" section.
     const list = (name: string) => page.getByRole('list', { name })
-    await expect.poll(() => rowIds(list('Today tasks'))).toEqual(['t-proto', 't-personas', 'c-1'])
+    await expect.poll(() => rowIds(todayTasks(page))).toEqual(['t-proto', 't-personas', 'c-1'])
 
     await tabs(page)
       .getByRole('link', { name: /^Upcoming/ })
@@ -970,6 +978,92 @@ test.describe('my tasks', () => {
       'aria-current',
       'page',
     )
+  })
+
+  test('Today also lists tasks scheduled across today, and nothing else changes meaning', async ({
+    page,
+  }) => {
+    // Today is Wed Nov 4. Open tasks (10): due today = s-due, s-span-due (its start is irrelevant);
+    // scheduled today (start <= today < due) = s-sub (own dates; its parent has none), s-starts,
+    // s-span, s-span-far; not in Today = s-start-only (no due date), s-future (starts tomorrow),
+    // s-overdue (started, but past due), s-parent (no dates). Also left out: a done task and an
+    // archived project's task.
+    const projects: SeedProject[] = [
+      {
+        id: 'p-sched',
+        name: 'Scheduling',
+        tasks: [
+          { id: 's-due', title: 'Due today only', due: 0 },
+          { id: 's-span-due', title: 'Started, ends today', start: -3, due: 0 },
+          { id: 's-span', title: 'Spans this week', start: -2, due: 5 },
+          { id: 's-span-far', title: 'Spans for weeks', start: -1, due: 20 },
+          { id: 's-starts', title: 'Starts today', start: 0, due: 3 },
+          { id: 's-start-only', title: 'Start date only', start: -4 },
+          { id: 's-future', title: 'Starts tomorrow', start: 1, due: 6 },
+          { id: 's-overdue', title: 'Started and overdue', start: -6, due: -1 },
+          { id: 's-parent', title: 'Parent without dates' },
+          { id: 's-sub', title: 'Subtask in its span', parent: 's-parent', start: -1, due: 2 },
+          { id: 's-done', title: 'Finished span', start: -2, due: 4, status: 'done' },
+        ],
+      },
+      {
+        id: 'p-gone',
+        name: 'Archived',
+        status: 'archived',
+        tasks: [{ id: 'a-span', title: 'Archived span', start: -2, due: 4 }],
+      },
+    ]
+    await openApp(page, '/my-tasks/today', projects)
+
+    // Today = 2 due + 4 scheduled; the other tabs keep their due-date meaning.
+    await expectTabCounts(page, [6, 4, 1, 10])
+    await expect(todaySection(page, 'due-today').getByRole('heading')).toContainText('Due today')
+    await expect(todaySection(page, 'scheduled-today').getByRole('heading')).toContainText(
+      'Scheduled today',
+    )
+    await expect
+      .poll(() => rowIds(todaySection(page, 'due-today')))
+      .toEqual(['s-due', 's-span-due'])
+    // By due date: s-sub (day 2), s-starts (3), s-span (5), s-span-far (20).
+    await expect
+      .poll(() => rowIds(todaySection(page, 'scheduled-today')))
+      .toEqual(['s-sub', 's-starts', 's-span', 's-span-far'])
+    // The tab count is the number of rows on the page.
+    await expect.poll(() => rowIds(todayTasks(page))).toHaveLength(6)
+    for (const id of ['s-start-only', 's-future', 's-overdue', 's-parent', 's-done', 'a-span']) {
+      await expect(taskRow(page, id), id).toHaveCount(0)
+    }
+
+    // The sidebar badge is still overdue + due today (3, 1 overdue): scheduled work is not "due".
+    await expectBadge(page, 3, 1)
+
+    // Overview: Due soon counts due dates only (today 2 + next 7 days 4 = 6), and its list does
+    // not pick up the task that is merely scheduled across today and due in three weeks.
+    await page.getByRole('link', { name: 'Overview', exact: true }).click()
+    await expect(metric(page, 'open')).toHaveText('10')
+    await expect(metric(page, 'soon')).toHaveText('6')
+    await expect(metric(page, 'overdue')).toHaveText('1')
+    await expect(taskRow(page, 's-span-far')).toHaveCount(0)
+
+    // Its Due soon card leads to the filter, which agrees with the Overview, not with Today.
+    await page.goto('/my-tasks/all?due=soon')
+    await expect(page.locator('[data-slot="due-soon-filter"]')).toContainText('Due soon · 6 tasks')
+    await expect(taskRow(page, 's-span-far')).toHaveCount(0)
+    await expect(page.locator('[data-task-row]')).toHaveCount(6)
+
+    // Upcoming (due tomorrow … day 7) and Overdue are by due date.
+    await tabs(page)
+      .getByRole('link', { name: /^Upcoming/ })
+      .click()
+    await expect
+      .poll(() => rowIds(page.getByRole('list', { name: 'Upcoming tasks' })))
+      .toEqual(['s-sub', 's-starts', 's-span', 's-future'])
+    await tabs(page)
+      .getByRole('link', { name: /^Overdue/ })
+      .click()
+    await expect
+      .poll(() => rowIds(page.getByRole('list', { name: 'Overdue tasks' })))
+      .toEqual(['s-overdue'])
   })
 
   test('a row shows the parent of a subtask, the project, the priority and the due state', async ({
@@ -1074,7 +1168,7 @@ test.describe('my tasks', () => {
     const trigger = page.getByRole('button', { name: 'How tasks are grouped' })
     await trigger.click()
     const popover = page.getByRole('dialog', { name: 'How tasks are grouped' })
-    await expect(popover).toContainText('Due today and not done')
+    await expect(popover).toContainText('Due today, or between its start and due dates')
     await expect(popover).toContainText('Due in the next 7 days, after today')
     await expect(popover).toContainText('Past their due date and not done')
     await expect(popover).toContainText('Today is Wednesday, November 4, 2026 (Asia/Taipei)')
@@ -1267,7 +1361,7 @@ test.describe('my tasks', () => {
     await openApp(page, '/my-tasks/today', [{ id: 'p-1', name: 'Research' }])
     const empty = page.locator('[data-slot="empty-state"]')
     await expectTabCounts(page, [0, 0, 0, 0])
-    await expect(empty).toContainText('Nothing due today')
+    await expect(empty).toContainText('Nothing for today')
     await tabs(page)
       .getByRole('link', { name: /^Upcoming/ })
       .click()
@@ -1325,9 +1419,7 @@ test.describe('my tasks', () => {
     await tabs(page)
       .getByRole('link', { name: /^Today/ })
       .click()
-    await expect
-      .poll(() => rowIds(page.getByRole('list', { name: 'Today tasks' })))
-      .toEqual(['e-venue'])
+    await expect.poll(() => rowIds(todayTasks(page))).toEqual(['e-venue'])
     await expect(taskRow(page, 'e-venue').locator('[data-bucket="today"]')).toHaveText('Today')
   })
 
@@ -1345,9 +1437,7 @@ test.describe('my tasks', () => {
     // moved with it (Volunteer schedule, day 8, is now inside).
     await expectTabCounts(page, [2, 5, 6, 15])
     await expectBadge(page, 8, 6)
-    await expect
-      .poll(() => rowIds(page.getByRole('list', { name: 'Today tasks' })))
-      .toEqual(['t-cluster', 'c-3'])
+    await expect.poll(() => rowIds(todayTasks(page))).toEqual(['t-cluster', 'c-3'])
     await expect(taskRow(page, 't-cluster').locator('[data-bucket="today"]')).toHaveText('Today')
 
     // The Overview (reached without a reload) agrees.
