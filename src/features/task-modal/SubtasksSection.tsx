@@ -48,10 +48,13 @@ export function SubtasksSection({ parent, onOpenTask, controlsRef }: SubtasksSec
 
   const hasDraft = draft.trim() !== ''
   const composingRef = useRef(false)
+  // The line as typed, for commit() (called from the form's close and unmount). Synced only when
+  // the text changes: a re-render for any other reason (the store adding the committed subtask
+  // while the modal fades out) must not bring a line back that was already handed off.
   const lineRef = useRef(draft)
   useLayoutEffect(() => {
     lineRef.current = draft
-  })
+  }, [draft])
   const parentId = parent.id
   const projectId = parent.projectId
   useEffect(() => {
@@ -61,7 +64,9 @@ export function SubtasksSection({ parent, onOpenTask, controlsRef }: SubtasksSec
         const title = lineRef.current.trim()
         // Unconfirmed IME text is not a title anyone chose.
         if (!title || composingRef.current) return
+        // Handed off exactly once: a second close, or the unmount after the close, finds it empty.
         lineRef.current = ''
+        setDraft('')
         void createTask({ projectId, parentTaskId: parentId, title }).then((result) => {
           // A failure is reported by the store's toast, with Retry.
           if (!result.ok) return

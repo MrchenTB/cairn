@@ -1583,6 +1583,33 @@ test.describe('page specs', () => {
     await expect(card(page, 'Sketch the idea')).toHaveCount(0)
   })
 
+  test('AC-4: §5.1 a line left in "Add subtask" becomes exactly one subtask, whichever way the modal closes', async ({
+    page,
+  }) => {
+    await openApp(page, '/projects/p-research/board', [researchSeed()])
+    const modal = page.getByRole('dialog', { name: 'Edit task: Inbox idea' })
+    const ways: [string, () => Promise<void>][] = [
+      ['Esc', () => page.keyboard.press('Escape')],
+      ['Done', () => modal.getByRole('button', { name: 'Done' }).click()],
+      ['the X', () => modal.getByRole('button', { name: 'Close' }).click()],
+      ['a click outside', () => page.mouse.click(4, 4)],
+    ]
+    for (const [way, close] of ways) {
+      await card(page, 'Inbox idea').click()
+      await modal.getByRole('textbox', { name: 'Add subtask' }).fill(`Left by ${way}`)
+      await close()
+      await expect(modal).toBeHidden()
+    }
+    await page.waitForTimeout(500) // anything a second commit would have sent is stored by now
+    const titles = Object.values((await stored(page)).tasks ?? {})
+      .filter((task) => task.parentTaskId === 't-inbox')
+      .map((task) => task.title)
+      .sort()
+    expect(titles).toEqual(ways.map(([way]) => `Left by ${way}`).sort())
+    await page.reload()
+    await expect(page.locator('li', { has: card(page, 'Inbox idea') })).toContainText('0/4')
+  })
+
   test('AC-2: §4.4 a project status change that failed and was retried from the toast is saved once, and the row follows it', async ({
     page,
   }) => {
