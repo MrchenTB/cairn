@@ -190,3 +190,10 @@
 - **理由**：使用者要能用預覽網址驗收每次修改，再決定是否發布。Vercel 的 PR Preview 不用額外設定就符合這個流程。前端是靜態 SPA，只換設定，不需重構。
 - **防護**：`src/data/supabaseProjects.ts` 在每次建置與啟動時檢查專案：Preview 只能連 Staging，Production 不能連 Staging 也不能沒有設定（否則會靜默變成本機模式），本機不能連 Production。私有 repo 在免費 GitHub 方案沒有分支保護，所以合併的關卡是 `CLAUDE.md` 的規則與 `.claude/settings.json` 的確認提示。
 - **取捨**：`/assets/` 不走 SPA fallback，缺少的檔案回 404 而不是 HTML，避免把 HTML 當成永久快取的腳本。舊分頁載入已不存在的 chunk 時，由 `RouteErrorBoundary` 處理。Hobby 的 Instant Rollback 只能回到上一個部署。
+
+## D35 — 啟動時連不到伺服器不等於登出：新增 `unreachable` 狀態
+
+- **背景**：production-readiness §8 的 F3。access token 過期（例如筆電睡了一晚）且離線、逾時或遇到 502/503/504 時，supabase-js（auth-js 2.118）會保留 storage 裡的 session，但 `getSession()` 回傳「沒有 session＋錯誤」，`INITIAL_SESSION` 事件也以 null 發出。Auth store 把任何讀取失敗都當成登出，所以使用者被帶到登入頁，而且離線時也無法登入。
+- **決定**：只有伺服器明確拒絕（refresh token 失效等，此時 supabase-js 也會刪除 session 並發出 `SIGNED_OUT`）才算登出。連不到伺服器時 auth 狀態為 `unreachable`：不載入、不清除任何資料，`AuthGate` 與 `/login` 顯示「Can't reach Cairn」與 Try again；瀏覽器回到線上時自動再試一次，沒有計時重試。supabase-js 自己續期成功（`TOKEN_REFRESHED`）就直接進入。已登入後的網路失敗維持原樣（不改狀態）。使用者主動登出時，即使連不到伺服器，這台裝置仍登出。
+- **理由**：網路問題不該被當成帳號問題；顯示登入頁會讓人以為 session 沒了，離線時也登入不了。只多一個狀態，不做離線編輯，資料仍要等 session 確認後才載入，所以不會讓未驗證的 session 讀到資料（anon 對資料表沒有權限，RLS 照常）。
+- **取捨**：伺服器長時間不回應時，使用者會停在這個畫面，必須等連線恢復；畫面上不提供「改用別的帳號登入」，因為那同樣需要伺服器。草稿副本（D29）在這段期間保留，同一帳號恢復後找回。

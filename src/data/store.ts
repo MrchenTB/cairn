@@ -2465,13 +2465,28 @@ export function createAuthStore(options: AuthStoreOptions) {
       }
     }
 
-    async function syncUser(): Promise<void> {
+    /**
+     * Reads the session and follows it. A failure without an answer from the server (offline, a
+     * timeout, a gateway error) says nothing about the session: supabase-js keeps it stored, so
+     * this does not sign out ('unreachable' until it can be read, unless signed in already).
+     * Any other failure means there is no usable session. `signingOut`: the user asked to leave,
+     * so this device signs out whatever the server says.
+     */
+    async function syncUser(signingOut = false): Promise<void> {
+      let user: AuthUser | null
       try {
-        applyUser(await service().getUser())
-      } catch {
-        applyUser(null)
+        user = await service().getUser()
+      } catch (error) {
+        if (!signingOut && toAppError(error).kind === 'network') {
+          if (get().status !== 'signed_in') set({ status: 'unreachable', user: null })
+          return
+        }
+        user = null
       }
+      applyUser(user)
     }
+
+    let retrying: Promise<void> | null = null
 
     /**
      * The server rejected the session, which this device may still consider valid (its clock is
@@ -2523,7 +2538,12 @@ export function createAuthStore(options: AuthStoreOptions) {
           if (options.signal?.aborted) return
           let unsubscribe: () => void
           try {
-            unsubscribe = service().onChange((user, event) => applyUser(user, event))
+            unsubscribe = service().onChange((user, event) => {
+              // supabase-js reports "no session" first when it could not refresh a stored one for
+              // the network; syncUser() reads the same session and tells the two apart.
+              if (!user && event === 'initial_session') return
+              applyUser(user, event)
+            })
           } catch (error) {
             // No auth client (e.g. it refused the configuration): never a splash forever.
             console.error('[cairn] Authentication could not start.', error)
@@ -2567,7 +2587,7 @@ export function createAuthStore(options: AuthStoreOptions) {
         } catch (error) {
           failure = toAppError(error)
         }
-        await syncUser()
+        await syncUser(true)
         // Telling the server can fail (offline) after this device already dropped its session:
         // the user is signed out here, which is what they asked for.
         return failure && get().status !== 'signed_out' ? failed(failure) : OK
@@ -2596,6 +2616,13 @@ export function createAuthStore(options: AuthStoreOptions) {
       },
       dismissPasswordRecovery() {
         if (get().passwordRecovery) set({ passwordRecovery: false })
+      },
+      retrySession() {
+        if (get().status !== 'unreachable') return Promise.resolve()
+        retrying ??= syncUser().finally(() => {
+          retrying = null
+        })
+        return retrying
       },
     }
 

@@ -488,6 +488,52 @@ test.describe('session lifetime', () => {
     await expect(page.locator(`[data-task-row="${ids.a}"]`)).toBeVisible()
   })
 
+  test('expired at startup and the server unreachable: not signed out; Try again restores it', async ({
+    page,
+  }) => {
+    await signUpNew(page)
+    const { projectId } = await seedProject(page, {
+      name: 'Kept plans',
+      tasks: [{ key: 'a', title: 'Alpha' }],
+    })
+    await page.goto(`/projects/${projectId}/list`)
+    await expect.poll(() => rowTitles(listScroll(page))).toEqual(['Alpha'])
+    // The access token has expired (a laptop asleep overnight) and the token endpoint cannot be
+    // reached (offline): supabase-js keeps the session but cannot renew it.
+    await page.evaluate(() => {
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index) ?? ''
+        if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
+          const session = JSON.parse(localStorage.getItem(key) ?? '{}')
+          localStorage.setItem(key, JSON.stringify({ ...session, expires_at: 1_000_000 }))
+        }
+      }
+    })
+    await sim.fault({
+      method: 'POST',
+      path: '/auth/v1/token',
+      when: 'before',
+      action: 'drop',
+      times: 50,
+    })
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Can’t reach Cairn' })).toBeVisible({
+      timeout: 15_000,
+    })
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/list$`)) // not sent to /login
+    await expect(page.getByLabel('Password')).toHaveCount(0)
+    expect((await storedSession(page))?.refresh_token).toBeTruthy() // the session was kept
+
+    // Still unreachable: Try again stays here.
+    await page.getByRole('button', { name: 'Try again' }).click()
+    await expect(page.getByRole('heading', { name: 'Can’t reach Cairn' })).toBeVisible()
+
+    await sim.clearFaults()
+    await page.getByRole('button', { name: 'Try again' }).click()
+    await expect.poll(() => rowTitles(listScroll(page)), { timeout: 15_000 }).toEqual(['Alpha'])
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/list$`))
+  })
+
   test('sign out without a connection still signs this device out', async ({ page }) => {
     await signUpNew(page)
     await page.goto('/settings/account')
