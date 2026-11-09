@@ -20,6 +20,8 @@ interface Target {
   vercelEnv: string | undefined
   url: string | undefined
   hasKey: boolean
+  /** `VITE_DATA_MODE` as set; `local` forces local mode (src/data/config.ts), whatever the keys. */
+  dataMode?: string
   productionRef?: string
 }
 
@@ -29,12 +31,17 @@ export function supabaseTargetProblem(target: Target): string | null {
   const url = target.url?.trim() ?? ''
   const ref = projectRefOf(url)
   const onProduction = productionRef !== '' && ref === productionRef
+  // Same comparison as resolveConfig() in config.ts: a different one would be a way around this.
+  const forcesLocal = target.dataMode?.trim().toLowerCase() === 'local'
 
   if (vercelEnv === undefined) {
     return onProduction
       ? 'VITE_SUPABASE_URL is the production project, and only the production site may use it. ' +
           'Use local mode or `npm run dev:staging`.'
       : null
+  }
+  if (forcesLocal) {
+    return `a ${vercelEnv} deployment cannot force local mode: VITE_DATA_MODE=local would make the site run without Supabase, with data in one browser only. Remove VITE_DATA_MODE from the Vercel environment variables.`
   }
   if (vercelEnv === 'production') {
     if (!url || !hasKey) {

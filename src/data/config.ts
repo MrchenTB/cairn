@@ -7,7 +7,8 @@
  * variables one by one: reading `import.meta.env` as a value inlines every VITE_ variable.
  *
  * Mode selection (docs/architecture.md §6): Supabase mode when the URL and a key are set, unless
- * `VITE_DATA_MODE=local`; otherwise local mode (this browser's localStorage, no login).
+ * `VITE_DATA_MODE=local`; otherwise local mode (this browser's localStorage, no login). A Vercel
+ * build (production or preview) may not set `VITE_DATA_MODE=local`: vite.config.ts fails the build.
  */
 import type { DataMode } from './contracts'
 import { isSecretSupabaseKey } from './secretKeys'

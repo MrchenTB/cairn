@@ -68,6 +68,61 @@ describe('supabaseTargetProblem', () => {
     expect(check('production', PRODUCTION_URL, false)).toMatch(/runs in local mode/)
   })
 
+  it('a deployment cannot force local mode, however VITE_DATA_MODE is spelled', () => {
+    const forced = (
+      vercelEnv: string | undefined,
+      target: string | undefined,
+      dataMode: string | undefined,
+    ) =>
+      supabaseTargetProblem({
+        vercelEnv,
+        url: target,
+        hasKey: true,
+        dataMode,
+        productionRef: PRODUCTION,
+      })
+    for (const dataMode of ['local', 'LOCAL', 'Local', ' local ', ' Local\t', '\nLOCAL ']) {
+      expect(forced('production', PRODUCTION_URL, dataMode)).toMatch(/cannot force local mode/)
+      expect(forced('preview', STAGING_URL, dataMode)).toMatch(/cannot force local mode/)
+      expect(forced('development', STAGING_URL, dataMode)).toMatch(/cannot force local mode/)
+    }
+    // Wrong project and forced local: still refused.
+    expect(forced('production', undefined, 'local')).toMatch(/cannot force local mode/)
+    expect(forced('preview', PRODUCTION_URL, 'local')).toMatch(/cannot force local mode/)
+  })
+
+  it('other VITE_DATA_MODE values do not trip the guard, and the other rules still apply', () => {
+    for (const dataMode of [undefined, '', '  ', 'cloud', 'supabase', 'localhost']) {
+      const forced = (vercelEnv: string, target: string) =>
+        supabaseTargetProblem({
+          vercelEnv,
+          url: target,
+          hasKey: true,
+          dataMode,
+          productionRef: PRODUCTION,
+        })
+      expect(forced('production', PRODUCTION_URL)).toBeNull()
+      expect(forced('preview', STAGING_URL)).toBeNull()
+      expect(forced('production', STAGING_URL)).toMatch(/points at the staging project/)
+      expect(forced('preview', PRODUCTION_URL)).toMatch(/must use the staging project/)
+    }
+  })
+
+  it('on this computer, local mode can still be forced', () => {
+    const local = (target: string | undefined, hasKey: boolean) =>
+      supabaseTargetProblem({
+        vercelEnv: undefined,
+        url: target,
+        hasKey,
+        dataMode: 'local',
+        productionRef: PRODUCTION,
+      })
+    expect(local(undefined, false)).toBeNull()
+    expect(local(STAGING_URL, true)).toBeNull()
+    // Forcing local mode does not unlock the production project on this computer.
+    expect(local(PRODUCTION_URL, true)).toMatch(/only the production site/)
+  })
+
   it('before the production project exists, the rules that need its ref stand aside', () => {
     const before = (vercelEnv: string | undefined, target: string) =>
       supabaseTargetProblem({ vercelEnv, url: target, hasKey: true, productionRef: '' })
