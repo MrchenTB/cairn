@@ -356,7 +356,7 @@ test.describe('AC-7: Gantt drag and resize persist', () => {
     expect(Math.abs(line.x + line.width / 2 - (column.x + column.width / 2))).toBeLessThanOrEqual(2)
   })
 
-  test('AC-7: a due-only task is a marker (never an invented range), an undated one waits under Unscheduled until it is drawn', async ({
+  test('AC-7: a due-only task is a marker (never an invented range), an undated one keeps its empty row in its phase until it is drawn', async ({
     page,
   }) => {
     const seed = seedWorkspace({ tasks: PROJECT_TASKS })
@@ -375,12 +375,20 @@ test.describe('AC-7: Gantt drag and resize persist', () => {
       'Echo start, Starts Nov 9, no due date, To Do',
     )
 
-    // No dates at all: listed under Unscheduled, not drawn on the timeline.
-    await expect(page.getByRole('button', { name: 'Unscheduled, 2 tasks' })).toBeVisible()
+    // No dates at all: it stays in the outline where it belongs (no Unscheduled group), with an
+    // empty lane and no bar. The toolbar counts Parent (no dates of its own) and the two undated.
+    await expect(page.getByRole('button', { name: /^Unscheduled, / })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Show only unscheduled tasks, 3' })).toBeVisible()
     await expect(outlineRow(page, `task:${ids.undated1}`)).toBeVisible()
     await expect(bar(page, ids.undated1)).toHaveCount(0)
+    const order = () =>
+      page
+        .locator('[data-row-key]')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-row-key')))
+    const before = await order()
+    expect(before.indexOf(`task:${ids.undated1}`)).toBe(before.indexOf(`task:${ids.charlie}`) + 1)
 
-    // Draw across the lane → start and due; it leaves the list; a reload keeps all of it.
+    // Draw across the lane → start and due; its row does not move; a reload keeps all of it.
     const lane = outlineRow(page, `task:${ids.undated1}`).locator('[data-handle="lane"]')
     const laneBox = await boxOf(lane)
     const y = laneBox.y + laneBox.height / 2
@@ -388,7 +396,8 @@ test.describe('AC-7: Gantt drag and resize persist', () => {
     await expect
       .poll(() => stored(page, ids.undated1))
       .toEqual({ start: '2026-11-12', due: '2026-11-14' })
-    await expect(page.getByRole('button', { name: 'Unscheduled, 1 task' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Show only unscheduled tasks, 2' })).toBeVisible()
+    expect(await order()).toEqual(before)
     await page.reload()
     await expect(bar(page, ids.undated1)).toHaveAccessibleName(
       'Undated one, Nov 12 – Nov 14, 3 days, To Do',
@@ -396,7 +405,7 @@ test.describe('AC-7: Gantt drag and resize persist', () => {
     await expect(bar(page, ids.delta)).toHaveAccessibleName(
       'Delta due, Due Nov 13, no start date, To Do',
     )
-    await expect(page.getByRole('button', { name: 'Unscheduled, 1 task' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Show only unscheduled tasks, 2' })).toBeVisible()
     await expect(bar(page, ids.undated2)).toHaveCount(0)
   })
 

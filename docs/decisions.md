@@ -225,3 +225,11 @@
 - **為什麼不動 `dueBucket()`**：`dueBucket` / `bucketOf` 仍是「只看到期日」的分類，Upcoming、Overdue、Overview 的 Due soon、側邊欄徽章與 All 分頁的分組都用它，所以這些數字的意義不變。`buckets.today` 仍是「今天到期」，Overview 與 `overviewMetrics` 因此不受影響。
 - **Due soon 計數修正**：`?due=soon` 篩選列原本用 `counts.today + counts.upcoming`；Today 數字變成聯集後這會多算只在進行中的任務。改用 `counts.dueSoon`（= `buckets.today + buckets.upcoming`），與 Overview 的 Due soon 一致。
 - **取捨**：一個任務可以同時出現在 Today（Scheduled today）與 Upcoming（它的到期日在 7 天內）。這是刻意的：兩個分頁回答不同問題（今天要做什麼／什麼快到期），各自的數字只算自己的清單。側邊欄徽章仍是「今天到期 + 逾期」，不包含進行中的任務。
+
+## D39 — Gantt 任務留在自己的階段；Unscheduled 改為篩選
+
+- **決定**：Gantt 的列順序完全依專案大綱（階段 → 任務 → 子任務 → 該群組的里程碑）。沒有日期的任務不再被搬到底部的 Unscheduled 群組，留在原階段（或 No phase），保留可拖曳的空白列（拖過去或雙擊即排程）。不改任何任務的 phaseId、sortOrder 或日期。群組標題的數字是該群組所有任務（含子任務）。
+- **篩選**：工具列的 `Unscheduled N` 是切換鈕（`aria-pressed`），預設關閉。「未排程」只指 `taskSpan(task).kind === 'unscheduled'`（開始與到期都空）；只有開始或只有到期的任務不算。N 是整個專案這類任務的數量（頂層與子任務分開計，不含里程碑），不受收合與篩選影響；N 為 0 時只有在篩選開啟時才顯示按鈕，確保一定關得掉。
+- **篩選時的列**：頂層任務本身未排程，顯示它與它「未排程」的子任務（已排程的子任務隱藏）；任務本身已排程但有未排程子任務，顯示為 context 列（`TaskRow.context`，字色較淡，附 "has dates, shown for its subtasks" 的提示），不計入數字，仍可開啟與拖曳。沒有符合項目的階段不顯示標題；里程碑不顯示；群組標題的數字只算符合的任務。括號（rollup / subtaskRollup）仍由真實的子任務計算，所以畫面與資料一致。
+- **暫時狀態**：篩選是 `GanttView` 的 `useState`，不存偏好、不進資料庫，換專案就重置。篩選期間用另一組暫時的收合集合（一開始是空的，所有符合項目都看得到），展開收合只改這一組，關掉篩選就丟掉；已儲存的收合偏好完全不動。開啟時記住捲動位置並回到最上方（水平位置不變），關閉時還原。篩選中任務被排程而消失時，焦點移到切換鈕，不會落在 `<body>`。`revealTask`（例如衝突的後繼任務）找不到列時先關閉篩選再定位。
+- **取捨**：所有顯示都來自同一個列模型（`buildGanttRows(outline, collapsed, { unscheduledOnly })`），索引、虛擬捲動、連線與拖曳都用篩選後的模型，不用 CSS 隱藏。「本身沒有日期、但子任務有日期」的父任務也算未排程（它的括號仍畫出）。Timeline 另有自己的「Unscheduled」概念（整個專案都沒日期），不受影響。

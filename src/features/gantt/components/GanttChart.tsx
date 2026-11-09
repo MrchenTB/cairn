@@ -25,11 +25,12 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual'
-import { CalendarRange, X } from 'lucide-react'
+import { CalendarOff, CalendarRange, X } from 'lucide-react'
 import { useViewShortcut } from '@/app/shortcuts'
 import { useOpenTask, useTaskParam } from '@/app/taskModalRoute'
 import { useUIStore } from '@/app/uiStore'
 import { useGanttScale, type GanttScale } from '@/app/viewPrefs'
+import { Button } from '@/components/ui/button'
 import { useActions, useWorkspaceData } from '@/data/hooks'
 import {
   formatDate,
@@ -84,7 +85,6 @@ import { datesLabel, dragTooltip } from '../model/labels'
 import { buildLinkViews } from '../model/links'
 import { nudgeFromKey, nudgeSpan } from '../model/nudge'
 import {
-  UNSCHEDULED_KEY,
   groupKeyForPhaseId,
   taskRowKey,
   type GanttRow,
@@ -240,7 +240,11 @@ export interface GanttChartProps {
   bounds: DayRange | null
   today: ISODate
   weekStartsOn: 0 | 1
+  /** Toggles a group / parent: the persisted prefs, or the temporary set while filtering. */
   onToggleRow: (key: string, collapse?: boolean) => void
+  /** Filter mode: only tasks without dates (the model is already filtered). */
+  unscheduledOnly: boolean
+  onUnscheduledOnlyChange: (on: boolean) => void
 }
 
 export function GanttChart({
@@ -253,6 +257,8 @@ export function GanttChart({
   today,
   weekStartsOn,
   onToggleRow,
+  unscheduledOnly,
+  onUnscheduledOnlyChange,
 }: GanttChartProps) {
   const data = useWorkspaceData()
   const actions = useActions()
@@ -266,6 +272,10 @@ export function GanttChart({
   const helpId = useId()
 
   const scrollerRef = useRef<HTMLDivElement>(null)
+  const unscheduledToggleRef = useRef<HTMLButtonElement | null>(null)
+  const registerUnscheduledToggle = useCallback((element: HTMLButtonElement | null) => {
+    unscheduledToggleRef.current = element
+  }, [])
   const removeButtonRef = useRef<HTMLButtonElement>(null)
   const [scrollPosition] = useState(createScrollPosition)
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
@@ -659,23 +669,18 @@ export function GanttChart({
   useViewShortcut('t', scrollToToday, { description: 'Scroll to today' })
 
   /**
-   * Row key to bring into view once it exists (after expanding its group / parent). `align`
-   * 'start' puts the row right under the time header (the Unscheduled jump: the group header
-   * and its tasks, not a header stranded at the bottom edge); 'auto' scrolls only as needed.
+   * Row key to bring into view once it exists (after expanding its group / parent: the expanded
+   * rows only exist after the next render, hence the pending key, retried when the model changes).
    */
-  const [revealNonce, setRevealNonce] = useState(0)
   const revealKey = useRef<string | null>(null)
-  const revealAlign = useRef<'auto' | 'start'>('auto')
-  const revealRow = useEvent((key: string, align: 'auto' | 'start' = 'auto') => {
+  const revealRow = useEvent((key: string) => {
     const index = latest.current.model.rowIndexByKey.get(key) ?? -1
     if (index < 0) {
       revealKey.current = key
-      revealAlign.current = align
       return
     }
     revealKey.current = null
-    revealAlign.current = 'auto'
-    virtualizer.scrollToIndex(index, { align })
+    virtualizer.scrollToIndex(index)
     const row = latest.current.rows[index]
     const day =
       row?.kind === 'task'
@@ -686,10 +691,60 @@ export function GanttChart({
     if (day !== null) scrollDayIntoView(day, true)
   })
   useEffect(() => {
-    if (revealKey.current) revealRow(revealKey.current, revealAlign.current)
-  }, [model, revealNonce, revealRow])
+    if (revealKey.current) revealRow(revealKey.current)
+  }, [model, revealRow])
 
-  const revealTask = useEvent((taskId: string) => {
+  /**
+   * The filter is temporary view state: turning it on remembers the vertical scroll position and
+   * jumps to the top (the horizontal position stays); turning it off restores it. Applied after
+   * the render that swaps the row model, so the content height is already the new one.
+   */
+  const savedScrollTop = useRef(0)
+  const scrollAfterFilter = useRef<'top' | 'restore' | null>(null)
+  const changeUnscheduledOnly = useEvent((on: boolean) => {
+    if (on === unscheduledOnly) return
+    if (on) savedScrollTop.current = scrollerRef.current?.scrollTop ?? 0
+    scrollAfterFilter.current = on ? 'top' : 'restore'
+    onUnscheduledOnlyChange(on)
+  })
+  useLayoutEffect(() => {
+    const mode = scrollAfterFilter.current
+    scrollAfterFilter.current = null
+    const el = scrollerRef.current
+    if (mode && el) el.scrollTop = mode === 'top' ? 0 : savedScrollTop.current
+  }, [unscheduledOnly])
+  // A task that got dates while filtering leaves its row. If it held keyboard focus the browser
+  // drops focus to <body>; hand it to the toggle, which is always there while filtering.
+  useEffect(() => {
+    if (!unscheduledOnly || !focusedRowKey || model.rowIndexByKey.has(focusedRowKey)) return
+    setFocusedRowKey(null)
+    const active = document.activeElement
+    if (!active || active === document.body || !active.isConnected) {
+      unscheduledToggleRef.current?.focus()
+    }
+  }, [unscheduledOnly, focusedRowKey, model])
+  // "Show all tasks" in the empty-filter overlay: the overlay and (at a count of 0) the toggle
+  // both go away, so focus moves to the first row in view instead of falling to <body>.
+  const focusRowAfterShowAll = useRef(false)
+  const showAllTasks = useEvent(() => {
+    focusRowAfterShowAll.current = true
+    changeUnscheduledOnly(false)
+  })
+  useEffect(() => {
+    if (unscheduledOnly || !focusRowAfterShowAll.current) return
+    focusRowAfterShowAll.current = false
+    const scroller = scrollerRef.current
+    if (!scroller) return
+    // Below the sticky time header, i.e. a row the user can see.
+    const top = scroller.getBoundingClientRect().top + HEADER_HEIGHT - 1
+    const firstInView = [...scroller.querySelectorAll<HTMLElement>('[data-row-key]')]
+      .map((row) => ({ row, y: row.getBoundingClientRect().top }))
+      .filter(({ y }) => y >= top)
+      .sort((a, b) => a.y - b.y)[0]?.row
+    firstInView?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true })
+  }, [unscheduledOnly])
+
+  const expandAndReveal = useEvent((taskId: string) => {
     const task = Object.hasOwn(data.tasks, taskId) ? data.tasks[taskId] : undefined
     if (!task) return
     const parent =
@@ -697,24 +752,25 @@ export function GanttChart({
         ? data.tasks[task.parentTaskId]
         : undefined
     onToggleRow(groupKeyForPhaseId((parent ?? task).phaseId), false)
-    onToggleRow(UNSCHEDULED_KEY, false)
     if (parent) onToggleRow(taskRowKey(parent.id), false)
     revealRow(taskRowKey(taskId))
   })
-
-  /**
-   * Unscheduled button: expand the group and scroll its header to the top of the chart. The
-   * rows below it then fill the view (the browser clamps the scroll at the bottom, so a short
-   * group still shows in full). Scrolling to the header *before* it expands, or just "into
-   * view", left only the header visible at the bottom edge with its tasks below the fold.
-   * The expanded rows only exist after the next render, hence the pending key + nonce.
-   */
-  const showUnscheduled = useEvent(() => {
-    onToggleRow(UNSCHEDULED_KEY, false)
-    revealKey.current = UNSCHEDULED_KEY
-    revealAlign.current = 'start'
-    setRevealNonce((n) => n + 1)
+  /** A task the filter hides: the filter goes off first, then the reveal runs on the full model. */
+  const revealAfterFilterOff = useRef<string | null>(null)
+  const revealTask = useEvent((taskId: string) => {
+    if (unscheduledOnly && !latest.current.model.taskRowIndex.has(taskId)) {
+      revealAfterFilterOff.current = taskId
+      changeUnscheduledOnly(false)
+      return
+    }
+    expandAndReveal(taskId)
   })
+  useEffect(() => {
+    const taskId = revealAfterFilterOff.current
+    if (unscheduledOnly || !taskId) return
+    revealAfterFilterOff.current = null
+    expandAndReveal(taskId)
+  }, [unscheduledOnly, expandAndReveal])
 
   /**
    * Keyboard focus must never land behind the sticky outline or time header. The browser only
@@ -793,7 +849,8 @@ export function GanttChart({
         const title = latest.current.tasksById[taskId]?.title ?? 'Task'
         const label = datesLabel(dates, today)
         setAnnouncement(`${title}: ${label}`)
-        if (how === 'draw') revealRow(rowKey)
+        // In filter mode the drawn task leaves the list: there is no row left to reveal.
+        if (how === 'draw' && !unscheduledOnly) revealRow(rowKey)
         const written = record as ScheduleWriteRecord | null // set by onWritten above
         if (written) {
           announceDateChange({
@@ -1339,7 +1396,9 @@ export function GanttChart({
       )
     : null
 
-  const nothingScheduled = model.scheduledTaskCount === 0 && milestones.length === 0
+  const nothingScheduled =
+    !unscheduledOnly && model.scheduledTaskCount === 0 && milestones.length === 0
+  const noUnscheduledTasks = unscheduledOnly && rows.length === 0
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1356,7 +1415,9 @@ export function GanttChart({
           onOpenConflict={onOpenConflict}
           onResolveAll={onResolveAll}
           unscheduledCount={model.unscheduledCount}
-          onShowUnscheduled={showUnscheduled}
+          unscheduledOnly={unscheduledOnly}
+          onUnscheduledOnlyChange={changeUnscheduledOnly}
+          registerUnscheduledToggle={registerUnscheduledToggle}
         />
       </ViewBarActions>
 
@@ -1522,6 +1583,21 @@ export function GanttChart({
               double-click a row for a one-day task.
             </span>
           </p>
+        </div>
+      ) : null}
+
+      {noUnscheduledTasks ? (
+        <div
+          className="pointer-events-none absolute right-4 z-30 flex justify-center"
+          style={{ left: paneWidth + 16, top: HEADER_HEIGHT + 24 }}
+        >
+          <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-default bg-elevated px-3 py-2 text-ui text-fg-secondary shadow-popover">
+            <CalendarOff className="size-4 shrink-0 text-fg-tertiary" aria-hidden />
+            <span className="font-medium text-fg">No tasks without dates</span>
+            <Button size="xs" variant="secondary" onClick={showAllTasks}>
+              Show all tasks
+            </Button>
+          </div>
         </div>
       ) : null}
 

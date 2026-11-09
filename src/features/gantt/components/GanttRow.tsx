@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
-import { CalendarOff, ChevronRight } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { DueLabel } from '@/components/task/DueLabel'
 import { phaseColorLabel, PROJECT_COLOR_VAR } from '@/components/task/labels'
 import { PhaseColorPopover } from '@/components/task/PhaseColorPicker'
@@ -159,7 +159,7 @@ const chevron = (open: boolean) =>
 
 function GanttRowViewImpl(props: GanttRowViewProps) {
   const { row, index, paneWidth, timelineWidth, selected, top = index * ROW_HEIGHT } = props
-  const header = row.kind === 'group' || row.kind === 'unscheduled'
+  const header = row.kind === 'group'
   return (
     <div
       data-row-index={index}
@@ -181,7 +181,7 @@ function GanttRowViewImpl(props: GanttRowViewProps) {
         data-row-index={index}
         className={cn(
           'relative flex h-full shrink-0 items-center',
-          // Phase / Unscheduled header lanes are transparent: only the outline cell carries the
+          // Phase header lanes are transparent: only the outline cell carries the
           // header tint, so the time grid runs unbroken through the whole chart.
           header
             ? null
@@ -211,10 +211,9 @@ function LeftCell({
   projectColor,
   onPhaseColor,
 }: GanttRowViewProps) {
-  if (row.kind === 'group' || row.kind === 'unscheduled') {
-    const label = row.kind === 'group' ? row.label : 'Unscheduled'
-    const count = row.kind === 'group' ? row.taskCount : row.count
-    const phase = row.kind === 'group' ? row.phase : null
+  if (row.kind === 'group') {
+    const { label, phase } = row
+    const count = row.taskCount
     // A phase's dot sits over the gap the toggle button leaves for it (pl-2 + px-1 + chevron + gap).
     const canColor = phase !== null && projectColor !== undefined && onPhaseColor !== undefined
     return (
@@ -230,14 +229,11 @@ function LeftCell({
           )}
         >
           <ChevronRight className={chevron(!row.collapsed)} aria-hidden />
-          {row.kind === 'unscheduled' ? (
-            <CalendarOff className="size-3.5 shrink-0 text-fg-tertiary" aria-hidden />
-          ) : null}
           {canColor ? <span className="w-2 shrink-0" aria-hidden /> : null}
           <span className="truncate text-meta font-semibold text-fg-secondary">{label}</span>
           <span
             className="text-meta text-fg-tertiary tabular-nums"
-            title={`${plural(count, 'task')} ${row.kind === 'group' ? 'with dates' : 'without dates'}, subtasks included`}
+            title={`${plural(count, 'task')}${row.unscheduledOnly ? ' without dates' : ''}, subtasks included`}
           >
             {count}
           </span>
@@ -323,10 +319,15 @@ function LeftCell({
       <button
         type="button"
         onClick={() => onOpenTask(task.id)}
-        title={task.title}
+        title={row.context ? `${task.title} (has dates, shown for its subtasks)` : task.title}
+        aria-label={row.context ? `${task.title}, has dates, shown for its subtasks` : undefined}
         className={cn(
           'min-w-0 flex-1 truncate rounded-sm text-left text-ui',
-          task.status === 'done' ? 'text-fg-secondary' : 'text-fg',
+          row.context
+            ? 'text-fg-tertiary'
+            : task.status === 'done'
+              ? 'text-fg-secondary'
+              : 'text-fg',
           insetFocus,
         )}
       >
@@ -340,7 +341,7 @@ function LeftCell({
 }
 
 function Lane(props: GanttRowViewProps) {
-  const { row, geometry, paneWidth, today } = props
+  const { row, geometry, today } = props
   if (row.kind === 'group') {
     return row.rollup ? (
       <RollupBracket
@@ -348,20 +349,6 @@ function Lane(props: GanttRowViewProps) {
         title={rangeTitle(row.label, row.rollup, today)}
       />
     ) : null
-  }
-  if (row.kind === 'unscheduled') {
-    return (
-      // Above the today line (z-[1]). A halo in the chart colour, not a chip: this label is
-      // sticky, so a weekend band under a chip could not be matched and it would show as a patch.
-      <span
-        className="pointer-events-none sticky z-[2] px-1 text-meta whitespace-nowrap text-fg-tertiary [text-shadow:0_0_2px_var(--gantt-bg),0_0_4px_var(--gantt-bg),0_0_6px_var(--gantt-bg)]"
-        style={{ left: paneWidth + 8 }}
-      >
-        {row.collapsed
-          ? 'Tasks without dates'
-          : 'Drag across a row to schedule it · double-click for a one-day task'}
-      </span>
-    )
   }
   if (row.kind === 'milestone') {
     const day = props.override?.dates.start ?? row.day
@@ -534,7 +521,7 @@ function sameRow(a: GanttRow, b: GanttRow): boolean {
         a.subtaskCount === other.subtaskCount &&
         a.collapsed === other.collapsed &&
         a.drawable === other.drawable &&
-        a.inUnscheduledGroup === other.inUnscheduledGroup &&
+        a.context === other.context &&
         sameRange(a.rollup, other.rollup) &&
         sameRange(a.subtaskRollup, other.subtaskRollup)
       )
@@ -545,16 +532,13 @@ function sameRow(a: GanttRow, b: GanttRow): boolean {
         a.phase === other.phase &&
         a.label === other.label &&
         a.taskCount === other.taskCount &&
+        a.unscheduledOnly === other.unscheduledOnly &&
         a.collapsed === other.collapsed &&
         sameRange(a.rollup, other.rollup)
       )
     }
     case 'milestone':
       return a.milestone === (b as typeof a).milestone
-    case 'unscheduled': {
-      const other = b as typeof a
-      return a.count === other.count && a.collapsed === other.collapsed
-    }
   }
 }
 

@@ -3,7 +3,7 @@
  * project. Reads the project's outline through the data hooks and hands the row model to the
  * chart; an empty project shows an empty state with "New task".
  */
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useParams } from 'react-router'
 import { ChartGantt, Plus } from 'lucide-react'
 import { useUIStore } from '@/app/uiStore'
@@ -26,6 +26,8 @@ import { useCollapsedRows } from './ganttPrefs'
 import { buildGanttRows } from './model/rows'
 import { dataBounds } from './model/viewport'
 
+const NONE: ReadonlySet<string> = new Set()
+
 export function GanttView() {
   const { projectId } = useParams()
   const project = useProject(projectId)
@@ -43,12 +45,37 @@ function ProjectGantt({ project }: { project: Project }) {
   const today = useToday()
   const openNewTask = useUIStore((s) => s.openNewTask)
   const [collapsed, toggleRow] = useCollapsedRows(project.id)
+  // The Unscheduled filter is view state of this mount only (reset with the project, never
+  // stored). While it is on, rows are built from its own collapsed set (empty to start with, so
+  // every match is visible) and the saved collapse prefs are neither read nor written.
+  const [unscheduledOnly, setUnscheduledOnly] = useState(false)
+  const [filterCollapsed, setFilterCollapsed] = useState<ReadonlySet<string>>(NONE)
+  const toggleFilterRow = useCallback((key: string, collapse?: boolean) => {
+    setFilterCollapsed((previous) => {
+      const next = collapse ?? !previous.has(key)
+      if (next === previous.has(key)) return previous
+      const updated = new Set(previous)
+      if (next) updated.add(key)
+      else updated.delete(key)
+      return updated
+    })
+  }, [])
+  const changeUnscheduledOnly = useCallback((on: boolean) => {
+    setFilterCollapsed(NONE)
+    setUnscheduledOnly(on)
+  }, [])
 
   const outline = useMemo(
     () => buildProjectOutline(project, phases, tasks, milestones),
     [project, phases, tasks, milestones],
   )
-  const model = useMemo(() => buildGanttRows(outline, collapsed), [outline, collapsed])
+  const model = useMemo(
+    () =>
+      unscheduledOnly
+        ? buildGanttRows(outline, filterCollapsed, { unscheduledOnly: true })
+        : buildGanttRows(outline, collapsed),
+    [outline, collapsed, filterCollapsed, unscheduledOnly],
+  )
   const { startDate, dueDate } = project
   const bounds = useMemo(
     () => dataBounds(tasks, milestones, { startDate, dueDate }),
@@ -62,7 +89,7 @@ function ProjectGantt({ project }: { project: Project }) {
         <EmptyState
           icon={ChartGantt}
           title="No tasks yet"
-          description="Add a task to start planning. Tasks with dates appear as bars; tasks without dates wait under Unscheduled."
+          description="Add a task to start planning. Tasks with dates appear as bars; tasks without dates keep an empty row: drag across it to schedule."
           action={
             <Button
               variant="secondary"
@@ -88,7 +115,9 @@ function ProjectGantt({ project }: { project: Project }) {
       bounds={bounds}
       today={today}
       weekStartsOn={weekStartsOn}
-      onToggleRow={toggleRow}
+      onToggleRow={unscheduledOnly ? toggleFilterRow : toggleRow}
+      unscheduledOnly={unscheduledOnly}
+      onUnscheduledOnlyChange={changeUnscheduledOnly}
     />
   )
 }
