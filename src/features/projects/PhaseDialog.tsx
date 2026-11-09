@@ -1,6 +1,8 @@
 /**
  * "Add phase" dialog, opened from the project header menu (any view). The List view also adds
- * phases inline; both go through actions.createPhase.
+ * phases inline; both go through actions.createPhase. The colour starts on the one suggested for
+ * the project's current phases (suggestPhaseColor, computed once when the form opens); whatever is
+ * chosen, including "Use project color" (null), is what gets saved.
  */
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { ErrorState } from '@/components/layout/ErrorState'
@@ -18,6 +20,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useActions, usePhases, useProject, useSyncState } from '@/data/hooks'
+import { suggestPhaseColor } from '@/domain/phaseColors'
 import { NAME_MAX_LENGTH, type PhaseColor } from '@/domain/types'
 import { validateName } from '@/domain/validation'
 import { usePhaseDialog } from './phaseDialogStore'
@@ -54,12 +57,16 @@ export function PhaseDialogHost() {
 function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => void }) {
   const actions = useActions()
   const [name, setName] = useState('')
-  const [color, setColor] = useState<PhaseColor | null>(null)
   const project = useProject(projectId)
+  const phases = usePhases(projectId)
+  // undefined = not seeded yet (the project is not loaded); null = "Use project color".
+  const [color, setColor] = useState<PhaseColor | null | undefined>(() =>
+    project ? suggestPhaseColor(phases, project.color) : undefined,
+  )
+  if (color === undefined && project) setColor(suggestPhaseColor(phases, project.color))
   const [error, setError] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const phases = usePhases(projectId)
   const sync = useSyncState()
   // A failed save can still be sent by a Retry from outside the form (the toast's, the sidebar's):
   // the phase that shows up that way under the attempted name is this form's, so the form finishes
@@ -90,7 +97,7 @@ function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => voi
     setSubmitting(true)
     setFailed(false)
     setAttemptedName(name.trim())
-    const result = await actions.createPhase({ projectId, name: name.trim(), color })
+    const result = await actions.createPhase({ projectId, name: name.trim(), color: color ?? null })
     setSubmitting(false)
     if (result.ok) onDone()
     else if (result.error.kind === 'validation') setError(result.error.message)
@@ -144,7 +151,7 @@ function PhaseForm({ projectId, onDone }: { projectId: string; onDone: () => voi
                 Color <span className="font-normal text-fg-tertiary">(optional)</span>
               </Label>
               <PhaseColorPicker
-                value={color}
+                value={color ?? null}
                 projectColor={project.color}
                 onChange={setColor}
                 disabled={submitting}

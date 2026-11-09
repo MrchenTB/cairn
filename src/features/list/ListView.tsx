@@ -44,6 +44,7 @@ import {
   type Result,
   type Task,
 } from '@/domain/types'
+import { suggestPhaseColor } from '@/domain/phaseColors'
 import { validateName } from '@/domain/validation'
 import { planScheduleChangeDetailed } from '@/features/gantt/planner'
 import {
@@ -516,7 +517,11 @@ function ProjectList({ project }: { project: Project }) {
                 onOpenChange={(open) => setEditingRow(open ? addRowKey.phase : null)}
                 validate={validatePhaseName}
                 onSubmit={async (name) => {
-                  const result = await actions.createPhase({ projectId: project.id, name })
+                  const result = await actions.createPhase({
+                    projectId: project.id,
+                    name,
+                    color: suggestPhaseColor(phases, project.color),
+                  })
                   return !result.ok && result.error.kind === 'validation'
                     ? result.error.message
                     : null

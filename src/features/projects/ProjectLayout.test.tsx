@@ -205,20 +205,87 @@ describe('ProjectLayout — menu', () => {
     })
   })
 
-  it('adds a phase without a colour: it follows the project colour', async () => {
-    const { project } = await seedResearch()
-    const { user } = renderLayout(`/projects/${project.id}/list`)
+  async function openPhaseDialog(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByRole('button', { name: 'Project actions' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Add phase…' }))
-    const dialog = await screen.findByRole('dialog', { name: 'New phase' })
+    return screen.findByRole('dialog', { name: 'New phase' })
+  }
+  const phaseNamed = (name: string) =>
+    Object.values(useWorkspaceStore.getState().data.phases).find((phase) => phase.name === name)
+
+  it('preselects the suggested colour in the dialog and saves it', async () => {
+    // The project is gray and Discovery follows it, so the first free colour is blue.
+    const { project, phase } = await seedResearch()
+    const { user } = renderLayout(`/projects/${project.id}/list`)
+    const dialog = await openPhaseDialog(user)
+    expect(within(dialog).getByRole('radio', { name: 'Blue' })).toBeChecked()
+    expect(within(dialog).getByRole('button', { name: 'Use project color' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Plan{Enter}')
+    await waitFor(() => expect(phaseNamed('Plan')?.color).toBe('blue'))
+    // The existing phase is untouched.
+    expect(useWorkspaceStore.getState().data.phases[phase.id].color).toBeNull()
+
+    // The next one moves on (Plan is blue now).
+    const second = await openPhaseDialog(user)
+    expect(within(second).getByRole('radio', { name: 'Violet' })).toBeChecked()
+    await user.click(within(second).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('saves another colour when one is picked instead of the suggestion', async () => {
+    const { project } = await seedResearch()
+    const { user } = renderLayout(`/projects/${project.id}/list`)
+    const dialog = await openPhaseDialog(user)
+    await user.click(within(dialog).getByRole('radio', { name: 'Teal' }))
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Wrap-up{Enter}')
+    await waitFor(() => expect(phaseNamed('Wrap-up')?.color).toBe('teal'))
+  })
+
+  it('adds a phase without a colour of its own when "Use project color" is chosen', async () => {
+    const { project } = await seedResearch()
+    const { user } = renderLayout(`/projects/${project.id}/list`)
+    const dialog = await openPhaseDialog(user)
+    await user.click(within(dialog).getByRole('button', { name: 'Use project color' }))
+    expect(within(dialog).getByRole('radio', { name: 'Blue' })).not.toBeChecked()
     await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Plain{Enter}')
     await waitFor(() => {
-      const plain = Object.values(useWorkspaceStore.getState().data.phases).find(
-        (phase) => phase.name === 'Plain',
-      )
-      expect(plain).toBeDefined()
-      expect(plain?.color).toBeNull()
+      expect(phaseNamed('Plain')).toBeDefined()
+      expect(phaseNamed('Plain')?.color).toBeNull()
     })
+  })
+
+  it('keeps the suggested colour when a failed create is tried again', async () => {
+    const { project } = await seedResearch()
+    const { user } = renderLayout(`/projects/${project.id}/list`)
+    const dialog = await openPhaseDialog(user)
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Plan')
+    window.__cairnTest?.failNextWrites(1)
+    await user.keyboard('{Enter}')
+    await within(dialog).findByText('Couldn’t add the phase')
+    expect(phaseNamed('Plan')).toBeUndefined()
+    // Still the same colour in the form, even though the phase is not there to count.
+    expect(within(dialog).getByRole('radio', { name: 'Blue' })).toBeChecked()
+    await user.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(phaseNamed('Plan')?.color).toBe('blue')
+  })
+
+  it('keeps the suggested colour when a Retry from outside the dialog sends the phase', async () => {
+    const { project } = await seedResearch()
+    const { user } = renderLayout(`/projects/${project.id}/list`)
+    const dialog = await openPhaseDialog(user)
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Plan')
+    window.__cairnTest?.failNextWrites(1)
+    await user.keyboard('{Enter}')
+    await within(dialog).findByText('Couldn’t add the phase')
+    await act(async () => {
+      await getWorkspaceActions().retryLastFailed()
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(phaseNamed('Plan')?.color).toBe('blue')
   })
 
   it('adds a failed phase once: a Retry from outside the dialog finishes it', async () => {
