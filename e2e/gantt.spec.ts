@@ -1238,6 +1238,10 @@ test.describe('gantt (local mode)', () => {
     await page.getByRole('button', { name: 'Show all tasks' }).click()
     expect(await keys()).toEqual(all)
     await expect(page.getByRole('button', { name: /^Show only unscheduled tasks/ })).toHaveCount(0)
+    // The overlay and the toggle are gone: focus lands on a row in view, not on <body>.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.closest('[data-row-key]') !== null))
+      .toBe(true)
     // The rows did not move, and the scheduled tasks now have bars.
     await expect(bar(page, ids.p1)).toHaveAccessibleName(
       'Phase idea, Nov 12 – Nov 14, 3 days, To Do',

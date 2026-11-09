@@ -320,6 +320,7 @@ function LeftCell({
         type="button"
         onClick={() => onOpenTask(task.id)}
         title={row.context ? `${task.title} (has dates, shown for its subtasks)` : task.title}
+        aria-label={row.context ? `${task.title}, has dates, shown for its subtasks` : undefined}
         className={cn(
           'min-w-0 flex-1 truncate rounded-sm text-left text-ui',
           row.context
@@ -331,7 +332,6 @@ function LeftCell({
         )}
       >
         {task.title}
-        {row.context ? <span className="sr-only">, has dates, shown for its subtasks</span> : null}
       </button>
       <span className="flex shrink-0 justify-end" style={{ width: DUE_COLUMN_WIDTH }}>
         <DueLabel dueDate={task.dueDate} status={task.status} />

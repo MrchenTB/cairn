@@ -723,7 +723,26 @@ export function GanttChart({
       unscheduledToggleRef.current?.focus()
     }
   }, [unscheduledOnly, focusedRowKey, model])
-  const showAllTasks = useEvent(() => changeUnscheduledOnly(false))
+  // "Show all tasks" in the empty-filter overlay: the overlay and (at a count of 0) the toggle
+  // both go away, so focus moves to the first row in view instead of falling to <body>.
+  const focusRowAfterShowAll = useRef(false)
+  const showAllTasks = useEvent(() => {
+    focusRowAfterShowAll.current = true
+    changeUnscheduledOnly(false)
+  })
+  useEffect(() => {
+    if (unscheduledOnly || !focusRowAfterShowAll.current) return
+    focusRowAfterShowAll.current = false
+    const scroller = scrollerRef.current
+    if (!scroller) return
+    // Below the sticky time header, i.e. a row the user can see.
+    const top = scroller.getBoundingClientRect().top + HEADER_HEIGHT - 1
+    const firstInView = [...scroller.querySelectorAll<HTMLElement>('[data-row-key]')]
+      .map((row) => ({ row, y: row.getBoundingClientRect().top }))
+      .filter(({ y }) => y >= top)
+      .sort((a, b) => a.y - b.y)[0]?.row
+    firstInView?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true })
+  }, [unscheduledOnly])
 
   const expandAndReveal = useEvent((taskId: string) => {
     const task = Object.hasOwn(data.tasks, taskId) ? data.tasks[taskId] : undefined
