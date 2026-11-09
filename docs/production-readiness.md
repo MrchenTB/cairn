@@ -169,4 +169,4 @@
 | F3  | 啟動時的網路錯誤可能被當成登出        | 離線開啟時被帶到登入頁         | 已修（D35），待 Preview 驗收與發布          |
 | F4  | `VITE_DATA_MODE=local` 可繞過建置防護 | 正式站可能變成本機模式         | 已修，待 Preview 驗收與發布；建置擋下 local |
 
-**下一次修改前要補：** Vercel 的 Preview 變數（Staging），以及 `deployment.md` 階段 4（Staging 的 Preview 網址與驗收帳號）。在那之前 Preview 建置會被環境防護擋下。
+**Preview 設定（2026-11-07 完成）：** Vercel 的 Preview 變數（Staging，套用到所有 Preview 分支）、Staging 的 Preview Redirect URLs、Preview 驗收帳號、Vercel Toolbar 在 Preview 關閉、Staging 公開註冊關閉。Preview 與 Production 的 key 已比對為不同，且各自只被自己的 Supabase 專案接受。
