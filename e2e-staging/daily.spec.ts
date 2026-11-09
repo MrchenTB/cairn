@@ -87,6 +87,7 @@ test.describe('the first day of use, through the app (C)', () => {
       )
       .toEqual(['Alpha 任務', 'Beta', 'Gamma'])
 
+    // A new phase gets its own default colour (D37): the first phase of a project is blue.
     await addPhase(page, 'Design')
     await expect
       .poll(async () =>
@@ -95,7 +96,7 @@ test.describe('the first day of use, through the app (C)', () => {
           `phases?project_id=eq.${project.id}&select=name,color`,
         ),
       )
-      .toEqual([{ name: 'Design', color: null }])
+      .toEqual([{ name: 'Design', color: 'blue' }])
 
     // Pick a colour for the phase in the list.
     await page.reload()

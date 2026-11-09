@@ -52,6 +52,16 @@ const wrapped = seedWorkspace({
   ],
 })
 
+const outlined = seedWorkspace({
+  tasks: [
+    { key: 'a', title: 'Parent task', start: '2026-11-02', due: '2026-11-09', phase: true },
+    { key: 'a1', title: 'First subtask', due: '2026-11-05', parent: 'a', phase: true },
+    { key: 'a2', title: 'Second subtask', parent: 'a', phase: true },
+    { key: 'b', title: 'Loose task', due: '2026-11-12' },
+  ],
+  milestones: [{ key: 'm', name: 'Review', date: '2026-11-10', phase: true }],
+})
+
 test.use({ timezoneId: 'Asia/Taipei', locale: 'en-US' })
 
 test.beforeEach(async ({ page }) => {
@@ -71,7 +81,9 @@ test.beforeEach(async ({ page }) => {
           ? wrapped
           : test.info().title.includes('conflict list')
             ? conflicting
-            : seed
+            : test.info().title.includes('row dividers')
+              ? outlined
+              : seed
       ).db,
     },
   )
@@ -149,4 +161,43 @@ test('the conflict list shows both task names in full at 1280px (conflict list)'
     const clipped = await name.evaluate((el) => el.scrollWidth > el.clientWidth)
     expect(clipped, await name.innerText()).toBe(false)
   }
+})
+
+test('list row dividers keep every row 36px and leave the phase header plain', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto(`/projects/${outlined.projectId}/list`)
+  await page.getByRole('button', { name: 'Show subtasks of Parent task' }).click()
+  const rows = page.locator('[data-task-row]')
+  await expect(rows).toHaveCount(4)
+  const milestone = page.getByRole('button', { name: /^Milestone Review/ })
+  await expect(milestone).toBeVisible()
+
+  const measure = (el: Element) => {
+    const box = el.getBoundingClientRect()
+    return { top: box.top, height: box.height, shadow: getComputedStyle(el).boxShadow }
+  }
+  const taskRows = await rows.evaluateAll((els) =>
+    els.map((el) => {
+      const box = el.getBoundingClientRect()
+      return { top: box.top, height: box.height, shadow: getComputedStyle(el).boxShadow }
+    }),
+  )
+  const milestoneRow = await milestone.evaluate(measure)
+  for (const row of [...taskRows, milestoneRow]) {
+    expect(row.height).toBe(36)
+    // A 1px hairline along the bottom edge, drawn inside the row (no extra height).
+    expect(row.shadow).toMatch(/inset/)
+    expect(row.shadow).toMatch(/0px -1px 0px/)
+  }
+  // Parent and its two subtasks sit back to back: the divider adds no space between rows.
+  expect(taskRows[1]!.top - taskRows[0]!.top).toBe(36)
+  expect(taskRows[2]!.top - taskRows[1]!.top).toBe(36)
+
+  const header = page.locator('section').filter({ has: rows.first() }).locator('.sticky').first()
+  const headerStyle = await header.evaluate((el) => ({
+    shadow: getComputedStyle(el).boxShadow,
+    background: getComputedStyle(el).backgroundColor,
+  }))
+  expect(headerStyle.shadow).toBe('none')
+  expect(headerStyle.background).not.toBe('rgba(0, 0, 0, 0)')
 })

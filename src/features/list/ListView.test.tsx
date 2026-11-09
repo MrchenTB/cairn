@@ -10,7 +10,10 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { getWorkspaceActions, useWorkspaceStore } from '@/data/store'
 import { addDays, todayInTimeZone } from '@/domain/dates'
 import { bySortOrder } from '@/domain/ordering'
+import { suggestPhaseColor } from '@/domain/phaseColors'
 import type { Result, Task } from '@/domain/types'
+import { PhaseDialogHost } from '@/features/projects/PhaseDialog'
+import { usePhaseDialog } from '@/features/projects/phaseDialogStore'
 import { ViewBarSlotProvider } from '@/features/projects/viewBar'
 import { resetListPrefsForTests } from './listPrefs'
 import { ListView } from './ListView'
@@ -24,6 +27,7 @@ function Harness() {
         <ListView />
       </ViewBarSlotProvider>
       <ConfirmHost />
+      <PhaseDialogHost />
     </TooltipProvider>
   )
 }
@@ -556,5 +560,79 @@ describe('ListView — empty project', () => {
     await waitFor(() => expect(rowTitles()).toEqual(['Sketch idea']))
     // The list keeps an add row open for the next one.
     expect(screen.getByRole('textbox', { name: 'New task' })).toHaveFocus()
+  })
+})
+
+describe('ListView — default phase colours', () => {
+  const phasesOf = (projectId: string) =>
+    Object.values(useWorkspaceStore.getState().data.phases)
+      .filter((phase) => phase.projectId === projectId)
+      .sort(bySortOrder)
+  const colorsOf = (projectId: string) => phasesOf(projectId).map((phase) => phase.color)
+  const namesOf = (projectId: string) => phasesOf(projectId).map((phase) => phase.name)
+
+  async function seedTwoInherited() {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research' }))
+    must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
+    must(await a.createPhase({ projectId: project.id, name: 'Report' }))
+    return project
+  }
+
+  it('gives phases added inline distinct colours, in palette order', async () => {
+    // A new project is gray, which no phase colour is spent on.
+    const project = must(await getWorkspaceActions().createProject({ name: 'Side project' }))
+    const { user } = renderList(project.id)
+
+    await user.click(screen.getByRole('button', { name: 'Add a phase first' }))
+    for (const [index, name] of ['Research', 'Build', 'Launch'].entries()) {
+      await user.type(screen.getByRole('textbox', { name: 'New phase name' }), `${name}{Enter}`)
+      await waitFor(() => expect(phasesOf(project.id)).toHaveLength(index + 1))
+    }
+    expect(namesOf(project.id)).toEqual(['Research', 'Build', 'Launch'])
+    expect(colorsOf(project.id)).toEqual(['blue', 'violet', 'pink'])
+  })
+
+  it('leaves existing phases alone, and moving phases around never recolours them', async () => {
+    const project = await seedTwoInherited()
+    expect(colorsOf(project.id)).toEqual([null, null])
+    const { user } = renderList(project.id)
+
+    await user.click(screen.getByRole('button', { name: 'Add phase' }))
+    await user.type(screen.getByRole('textbox', { name: 'New phase name' }), 'Launch{Enter}')
+    await waitFor(() => expect(phasesOf(project.id)).toHaveLength(3))
+    // Both existing phases show the (gray) project colour, so the new one is blue.
+    expect(namesOf(project.id)).toEqual(['Discovery', 'Report', 'Launch'])
+    expect(colorsOf(project.id)).toEqual([null, null, 'blue'])
+
+    await user.click(screen.getByRole('button', { name: 'Actions for phase Launch' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Move phase up' }))
+    await waitFor(() => expect(namesOf(project.id)).toEqual(['Discovery', 'Launch', 'Report']))
+    await user.click(screen.getByRole('button', { name: 'Actions for phase Discovery' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Move phase down' }))
+    await waitFor(() => expect(namesOf(project.id)).toEqual(['Launch', 'Discovery', 'Report']))
+    // Each phase kept its own colour through the moves.
+    expect(colorsOf(project.id)).toEqual(['blue', null, null])
+  })
+
+  it('suggests the same colour in the dialog as the inline add does for the same state', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Research', color: 'blue' }))
+    must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
+    must(await a.createPhase({ projectId: project.id, name: 'Report', color: 'violet' }))
+    const { user } = renderList(project.id)
+    const expected = suggestPhaseColor(phasesOf(project.id), 'blue')
+    expect(expected).toBe('pink')
+
+    act(() => usePhaseDialog.getState().open(project.id))
+    const dialog = await screen.findByRole('dialog', { name: 'New phase' })
+    expect(within(dialog).getByRole('radio', { name: 'Pink' })).toBeChecked()
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: 'Add phase' }))
+    await user.type(screen.getByRole('textbox', { name: 'New phase name' }), 'Launch{Enter}')
+    await waitFor(() => expect(phasesOf(project.id)).toHaveLength(3))
+    expect(phasesOf(project.id)[2].color).toBe(expected)
   })
 })
