@@ -441,6 +441,42 @@ describe('SettingsPage: exports', () => {
     })
   })
 
+  it('says when the saved data was read, and that a change made during the read is not in the file', async () => {
+    await seedWorkspace()
+    const task = Object.values(useWorkspaceStore.getState().data.tasks)[0]
+    const { blobs } = captureDownloads()
+    const success = vi.spyOn(notify, 'success')
+    const { user } = renderSettings('data')
+    window.__cairnTest?.setLatency(150) // the read takes a while…
+    await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+    // …and the user changes something meanwhile (another tab, the search palette)
+    const change = actions().updateTask(task.id, { title: 'Changed during the export' })
+
+    await waitFor(() => expect(blobs).toHaveLength(1))
+    expect((await change).ok).toBe(true)
+    window.__cairnTest?.setLatency(0)
+    const file = JSON.parse(await blobText(blobs[0])) as BackupFile
+    expect(file.data.tasks.map((t) => t.title)).not.toContain('Changed during the export')
+    expect(useWorkspaceStore.getState().data.tasks[task.id].title).toBe('Changed during the export')
+    expect(success).toHaveBeenCalledWith('Backup exported', {
+      description: expect.stringMatching(
+        /saved data as of Today, \d{1,2}:\d{2} [AP]M\. Changes made after that aren’t included\.$/,
+      ),
+    })
+  })
+
+  it('does not mention later changes when there were none', async () => {
+    await seedWorkspace()
+    captureDownloads()
+    const success = vi.spyOn(notify, 'success')
+    const { user } = renderSettings('data')
+    await user.click(screen.getByRole('button', { name: 'Export JSON backup' }))
+    await waitFor(() => expect(success).toHaveBeenCalled())
+    const { description } = success.mock.calls.at(-1)?.[1] as { description: string }
+    expect(description).toMatch(/saved data as of Today, \d{1,2}:\d{2} [AP]M\.$/)
+    expect(description).not.toMatch(/Changes made after/)
+  })
+
   it('asks first when a write still in flight fails while the export waits for it', async () => {
     await seedWorkspace()
     const task = Object.values(useWorkspaceStore.getState().data.tasks)[0]
@@ -558,7 +594,7 @@ describe('SettingsPage: exports', () => {
 
     expect(success).toHaveBeenCalledWith('Backup exported', {
       description: expect.stringMatching(
-        /^cairn-backup-\d{4}-\d{2}-\d{2}\.json · no projects or tasks yet$/,
+        /^cairn-backup-\d{4}-\d{2}-\d{2}\.json · no projects or tasks yet · saved data as of Today, \d{1,2}:\d{2} [AP]M\.$/,
       ),
     })
   })

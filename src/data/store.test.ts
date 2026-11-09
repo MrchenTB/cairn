@@ -2305,6 +2305,48 @@ describe('exportSavedBackup', () => {
 
   const titleOf = (file: BackupFile, id: string) => file.data.tasks.find((t) => t.id === id)?.title
 
+  it('a change made while it waits for an earlier write is waited for too, and included', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(30)
+    const first = h.actions.updateTask('a', { title: 'First' })
+    const exported = h.actions.exportSavedBackup()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const second = h.actions.updateTask('b', { title: 'Made while waiting' }) // before the read
+    const result = await exported
+    if (!result.ok) throw new Error(result.error.message)
+    expect((await first).ok && (await second).ok).toBe(true)
+    expect(titleOf(result.value, 'a')).toBe('First')
+    expect(titleOf(result.value, 'b')).toBe('Made while waiting')
+  })
+
+  it('a change made while the snapshot is read is not in the file, and the file says when it was read', async () => {
+    let clock = Date.UTC(2026, 10, 9, 10, 0, 0)
+    const storage = createMemoryStorage()
+    const repo = new GatedLoadRepository({ storage, now: serverClock })
+    const h = await setup({ rows: workspaceRows(), repo, storage, now: () => clock })
+    const reading = gate()
+    repo.gate = reading.promise
+    const readsBefore = repo.reads
+    const exported = h.actions.exportSavedBackup()
+    await vi.waitFor(() => expect(repo.reads).toBe(readsBefore + 1)) // the read has started
+    clock += 60_000
+    const changedAt = clock
+    const change = h.actions.updateTask('a', { title: 'Changed during the read' })
+    clock += 60_000 // the read answers a minute later
+    reading.release()
+    const result = await exported
+    if (!result.ok) throw new Error(result.error.message)
+    // Not in the backup: it was made after the read began, and exportedAt says so.
+    expect(titleOf(result.value, 'a')).toBe('A')
+    expect(Date.parse(result.value.exportedAt)).toBeLessThan(changedAt)
+    // Not lost either: saved, and still on screen.
+    expect((await change).ok).toBe(true)
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('Changed during the read')
+    expect((await storedTask(h, 'a'))?.title).toBe('Changed during the read')
+    expect(h.state().sync.lastSavedAt).toBeGreaterThan(Date.parse(result.value.exportedAt))
+  })
+
   it('waits for writes in flight and includes them', async () => {
     const h = await setup({ rows: workspaceRows() })
     const gate = deferred()

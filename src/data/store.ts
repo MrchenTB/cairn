@@ -2180,11 +2180,17 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       }
       if (startEpoch !== epoch) return signedOut()
       try {
-        // Read behind the writes already sent (same queue), so the snapshot includes them.
-        const snapshot = await enqueue(() => repository().loadWorkspace())
+        // Read behind the writes already sent (same queue), so the snapshot includes them. The
+        // file is dated when the read starts: every change made in this tab before that moment is
+        // in it, and none made after (those wait behind the read), even if the read is slow.
+        let readAt = ''
+        const snapshot = await enqueue(() => {
+          readAt = isoNow()
+          return repository().loadWorkspace()
+        })
         if (startEpoch !== epoch) return signedOut()
         const preferences = snapshot.preferences ?? get().preferences
-        return { ok: true, value: backupFrom(toWorkspaceData(snapshot), preferences, isoNow()) }
+        return { ok: true, value: backupFrom(toWorkspaceData(snapshot), preferences, readAt) }
       } catch (thrown) {
         return failed(toAppError(thrown))
       }

@@ -270,7 +270,8 @@ export interface WorkspaceActions {
    * workspace through the write queue, so it holds every confirmed write and another device's
    * newer changes, and never an unconfirmed or rolled-back change. Fails (no file) when the writes
    * don't finish in time, the read fails, or the session changes meanwhile. Does not touch the
-   * store's data, sync state or toasts.
+   * store's data, sync state or toasts. `exportedAt` is when the read started: changes made in this
+   * tab before it are in the file, changes made after it (saved normally) are not.
    */
   exportSavedBackup(): Promise<Result<BackupFile>>
   /** Imports as NEW copies (fresh ids); never modifies or deletes existing data. */

@@ -20,7 +20,7 @@ import { taskDrafts } from '@/features/task-modal/autosave/taskDrafts'
 import type { AppError, BackupFile, ImportSummary } from '@/domain/types'
 import { notify } from '@/lib/notify'
 import { BusyButton } from './BusyButton'
-import { describeAge, describeCounts, countRows } from './format'
+import { describeAge, describeCounts, countRows, formatMoment } from './format'
 import { ImportBackupDialog } from './ImportBackupDialog'
 import { readLastBackupAt, writeLastBackupAt } from './lastBackup'
 import { SettingRow, SettingsGroup, SettingsNotice } from './SettingsLayout'
@@ -75,26 +75,31 @@ export function BackupCard() {
         notify.error("Couldn't export the backup", { description: result.error.message })
         return
       }
+      const file = result.value
+      // The file holds what was saved when the read started (its exportedAt); say when.
+      const readAt = Date.parse(file.exportedAt)
+      const asOf = formatMoment(readAt)
       // Only now is it known what could not be saved: say so before handing out the file.
       const unsavedText = taskDrafts.getOutstanding().length > 0
       const failedWrites = useWorkspaceStore.getState().sync.canRetry
       if (unsavedText || failedWrites) {
         const agreed = await confirm({
           title: "Some changes aren't saved",
-          description:
-            "The backup will contain what's saved, without the changes that couldn't be saved. Retry them first to include them.",
+          description: `The backup holds what was saved as of ${asOf}, without the changes that couldn't be saved. Retry them first to include them.`,
           confirmLabel: 'Export anyway',
         })
         if (!agreed) return
       }
-      const file = result.value
       downloadBackup(file)
       const now = Date.now()
       writeLastBackupAt(now)
       setLastBackupAt(now)
+      // Changes this tab made after the read began are saved normally but not in this file.
+      const { sync } = useWorkspaceStore.getState()
+      const changedSince = sync.pending > 0 || (sync.lastSavedAt ?? 0) > readAt
       const contents = describeCounts(countRows(file.data))
       notify.success('Backup exported', {
-        description: `${backupFileName()} · ${contents === 'nothing' ? 'no projects or tasks yet' : contents}`,
+        description: `${backupFileName()} · ${contents === 'nothing' ? 'no projects or tasks yet' : contents} · saved data as of ${asOf}.${changedSince ? ' Changes made after that aren’t included.' : ''}`,
       })
     } catch (error) {
       notify.error("Couldn't export the backup", {
