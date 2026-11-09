@@ -58,6 +58,7 @@ function checkSupabaseTarget(): Plugin {
         vercelEnv,
         url: VITE_SUPABASE_URL,
         hasKey: Boolean(VITE_SUPABASE_PUBLISHABLE_KEY || VITE_SUPABASE_ANON_KEY),
+        dataMode: config.env.VITE_DATA_MODE,
       })
       if (problem) throw new Error(`Refusing to start: ${problem}`)
       if (vercelEnv) {
@@ -87,7 +88,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'unit',
-          include: ['src/**/*.test.ts', 'tests/staging/**/*.test.ts'],
+          include: ['src/**/*.test.ts', 'tests/staging/**/*.test.ts', 'tests/build/**/*.test.ts'],
           environment: 'node',
         },
       },

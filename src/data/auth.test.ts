@@ -825,3 +825,156 @@ describe('third review', () => {
     }
   })
 })
+
+describe('a server that cannot be reached is not a sign-out', () => {
+  const OFFLINE = { name: 'AuthRetryableFetchError', status: 0, message: 'Failed to fetch' }
+  const GATEWAY = { name: 'AuthRetryableFetchError', status: 503, message: 'Service Unavailable' }
+  const ME = { user: { id: 'u1', email: 'me@example.com' } }
+
+  /** supabase-js keeps a session it could not refresh for the network, yet reports none. */
+  function startingUnreachable(error: object = OFFLINE) {
+    const fake = fakeSupabaseAuth()
+    fake.setSession(ME)
+    fake.auth.getSession.mockResolvedValueOnce({ data: { session: null }, error } as never)
+    const workspace = fakeWorkspace()
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: fake.service,
+      workspace: workspace.store,
+    })
+    return { fake, workspace, store }
+  }
+
+  it.each([
+    ['offline', OFFLINE],
+    ['a gateway error', GATEWAY],
+  ])(
+    'starting %s with a stored session waits for the server, never shows sign-in',
+    async (_why, error) => {
+      vi.useFakeTimers()
+      try {
+        const { fake, workspace, store } = startingUnreachable(error)
+        await store.getState().actions.init()
+        fake.emit('INITIAL_SESSION', null) // what supabase-js reports alongside the failure
+        await vi.runAllTimersAsync()
+        expect(store.getState()).toMatchObject({ status: 'unreachable', user: null })
+        expect(workspace.actions.load).not.toHaveBeenCalled()
+        expect(workspace.actions.reset).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it('trying again once the server answers restores the session and loads the data', async () => {
+    const { workspace, store } = startingUnreachable()
+    await store.getState().actions.init()
+    expect(store.getState().status).toBe('unreachable')
+    await store.getState().actions.retrySession()
+    expect(store.getState()).toMatchObject({ status: 'signed_in', user: { id: 'u1' } })
+    expect(workspace.actions.load).toHaveBeenCalledOnce()
+  })
+
+  it('trying again while still offline stays put: one request per try, no loop', async () => {
+    const { fake, store } = startingUnreachable()
+    await store.getState().actions.init()
+    fake.auth.getSession.mockResolvedValueOnce({ data: { session: null }, error: OFFLINE } as never)
+    await Promise.all([
+      store.getState().actions.retrySession(),
+      store.getState().actions.retrySession(),
+    ])
+    expect(store.getState().status).toBe('unreachable')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(fake.auth.getSession).toHaveBeenCalledTimes(2) // the start, and one try
+  })
+
+  it('the library renewing the session by itself signs in', async () => {
+    vi.useFakeTimers()
+    try {
+      const { fake, workspace, store } = startingUnreachable()
+      await store.getState().actions.init()
+      fake.emit('TOKEN_REFRESHED', ME)
+      await vi.runAllTimersAsync()
+      expect(store.getState().status).toBe('signed_in')
+      expect(workspace.actions.load).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the library ending the session (the server refused it) shows sign-in', async () => {
+    vi.useFakeTimers()
+    try {
+      const { fake, store } = startingUnreachable()
+      await store.getState().actions.init()
+      fake.emit('SIGNED_OUT', null)
+      await vi.runAllTimersAsync()
+      expect(store.getState().status).toBe('signed_out')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('another account signing in next sees only its own data', async () => {
+    vi.useFakeTimers()
+    try {
+      const { fake, workspace, store } = startingUnreachable()
+      await store.getState().actions.init()
+      fake.emit('SIGNED_IN', { user: { id: 'u2', email: 'other@example.com' } })
+      await vi.runAllTimersAsync()
+      expect(store.getState()).toMatchObject({ status: 'signed_in', user: { id: 'u2' } })
+      expect(workspace.actions.load).toHaveBeenCalledOnce()
+      expect(workspace.actions.reset).not.toHaveBeenCalled() // nothing of u1 was ever loaded
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('without any stored session, starting offline shows sign-in as before', async () => {
+    const fake = fakeSupabaseAuth() // nothing stored: supabase-js answers without the network
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: fake.service,
+      workspace: fakeWorkspace().store,
+    })
+    await store.getState().actions.init()
+    expect(store.getState().status).toBe('signed_out')
+  })
+
+  it('a token renewal that fails for the network while signed in keeps the user signed in', async () => {
+    const auth = controllableService({ id: 'u1', email: 'me@example.com' })
+    const workspace = fakeWorkspace()
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: auth.service,
+      workspace: workspace.store,
+    })
+    await store.getState().actions.init()
+    vi.mocked(auth.service.getUser).mockRejectedValue(
+      new RepositoryError('network', 'Network error — check your connection.'),
+    )
+    await store.getState().actions.retrySession() // nothing to retry while signed in
+    expect(store.getState().status).toBe('signed_in')
+    expect(workspace.actions.reset).not.toHaveBeenCalled()
+  })
+
+  it('signing out while the server cannot be reached still signs this device out', async () => {
+    const auth = controllableService({ id: 'u1', email: 'me@example.com' })
+    const workspace = fakeWorkspace()
+    const store = createAuthStore({
+      mode: 'supabase',
+      auth: auth.service,
+      workspace: workspace.store,
+    })
+    await store.getState().actions.init()
+    vi.mocked(auth.service.signOut).mockRejectedValueOnce(
+      new RepositoryError('network', 'Network error — check your connection.'),
+    )
+    vi.mocked(auth.service.getUser).mockRejectedValueOnce(
+      new RepositoryError('network', 'Network error — check your connection.'),
+    )
+    await store.getState().actions.signOut()
+    expect(store.getState().status).toBe('signed_out')
+    expect(workspace.actions.reset).toHaveBeenCalledOnce()
+  })
+})

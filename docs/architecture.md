@@ -154,16 +154,24 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
   `VITE_SUPABASE_PUBLISHABLE_KEY` (or legacy `VITE_SUPABASE_ANON_KEY`) are set, unless
   `VITE_DATA_MODE=local`. Otherwise **local mode**: data in `localStorage` of this browser only, no
   login, and the UI always shows a "Local only — not synced" indicator. Local mode exists so the app
-  runs and E2E-tests without keys; it is never presented as cloud sync.
+  runs and E2E-tests without keys; it is never presented as cloud sync. A Vercel deployment
+  (production or preview) cannot force local mode with `VITE_DATA_MODE=local`: the build fails.
 - Store (`src/data/store.ts`): zustand + immer. Optimistic update → repository call → reconcile or
   rollback (inverse patches) + toast with Retry. `sync` state drives the sidebar indicator
-  ("Saving…", "Saved", "Couldn't save · Retry", "Offline", "Local only").
+  ("Saving…", "Saved", "Couldn't save · Retry", "Offline", "Local only"). A retryable failure
+  ends only when Retry saves it, a newer change replaces it (same field, the whole entity, or an
+  edit of an entity whose deletion failed), or a refresh shows it was stored; a save of other data
+  never ends it, so "Saved" never covers an unsaved change (D34).
 - Cross-device freshness: `refresh({ silent: true })` on window focus / visibility / coming back online
   (throttled to 30 s, `AUTO_REFRESH_INTERVAL_MS`; skipped while writes are pending; a refresh started
   before a write is discarded). This is refresh-on-return, **not** live push: another device that stays
   in the foreground shows changes only after focus or reload. While a schedule preview is open the
   throttle is bypassed on focus (decision D15). A refresh the server refuses (auth) re-checks the
   session instead of silently showing old data.
+- Session at startup (D35): only an answer that refuses the session signs out. When the server cannot
+  be reached (offline, timeout, 502/503/504) supabase-js keeps the stored session but reports none;
+  the auth store then says `unreachable` (no data loaded or cleared) and `AuthGate` / `/login` show
+  "Can't reach Cairn" with Try again, retried once more when the browser comes back online (no timer of its own; supabase-js keeps renewing in the background and the app continues when that succeeds). An explicit sign-out still signs this device out.
 - Network deadline: `src/data/supabaseClient.ts` gives the Supabase client a custom `fetch`
   (`fetchWithDeadline`): every request, including a response body that never finishes, is aborted
   after `REQUEST_TIMEOUT_MS` (30 s) so a hung request cannot block the write queue or a form; the
@@ -189,6 +197,9 @@ Loading uses `.range()` pagination (PostgREST max rows = 1000 per request).
 - Test hooks (local mode; installed only when `import.meta.env.DEV` or Vite mode `e2e`, and absent from normal production bundles): `window.__cairnTest = { failNextWrites(n), setLatency(ms), reset() }`.
 - Backup: JSON export of everything (+ preferences), CSV export of tasks; import = validated
   (`parseBackupFile`), ids remapped, inserted atomically as new copies.
+  The JSON export is built from the saved data (`exportSavedBackup()`: waits for pending writes, then re-reads the
+  workspace through the write queue), never from unconfirmed screen state; once that read has its answer, Settings asks before
+  downloading when a failed write or unsaved task text is waiting (D36).
 
 ## 7. App shell, routing, UI contracts
 

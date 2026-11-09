@@ -22,9 +22,11 @@
  * - a full load reads behind the writes already sent (same queue) and re-applies the writes made
  *   meanwhile on top of the snapshot, so it never reverts or loses them.
  *
- * Retry re-sends the retryable failures not followed by a successful write, in the order they
- * were made (an edit of a task whose creation failed goes after the creation). A newer change of
- * the same fields withdraws an older failure's Retry, so a Retry never overwrites newer work.
+ * Retry re-sends the retryable failures, in the order they were made (an edit of a task whose
+ * creation failed goes after the creation). A failure stays until it is saved by a Retry, replaced
+ * by a newer change of the same fields (or of an entity whose deletion failed), or shown as stored
+ * by a refresh; a save of other data does not end it, so "Saved" never covers an unsaved change.
+ * Withdrawing on a newer change means a Retry never overwrites newer work.
  */
 import {
   applyPatches,
@@ -160,6 +162,8 @@ export interface WorkspaceStoreOptions {
   randomId?: () => string
   /** Aborting it removes the store's event listeners (HMR, tests). */
   signal?: AbortSignal
+  /** Longest wait for writes in flight before `exportSavedBackup` fails (default 15 s). */
+  savedBackupTimeoutMs?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +275,20 @@ function replaces(newer: readonly Path[], older: readonly Path[]): boolean {
   return older.some((path) => newer.some((candidate) => isPrefix(candidate, path)))
 }
 
+/**
+ * True when a change of `newer` works on an entity whose deletion `older` (forward patches) was:
+ * the deletion failed and was undone, and the user went on using the entity. Sending the deletion
+ * again would throw that newer work away.
+ */
+function revives(newer: readonly Path[], older: readonly Patch[]): boolean {
+  return older.some(
+    (patch) =>
+      patch.op === 'remove' &&
+      patch.path.length === 3 &&
+      newer.some((path) => path.length > 3 && isPrefix(patch.path, path)),
+  )
+}
+
 /** A stored row to merge into the state at `path` (['data', table, id] or ['preferences']). */
 interface RowUpdate {
   path: readonly string[]
@@ -367,6 +385,41 @@ function toWorkspaceData(snapshot: WorkspaceSnapshot): WorkspaceData {
     },
     true,
   )
+}
+
+/** The backup file for `data`: one fixed order and shape, shared by every way of exporting. */
+function backupFrom(data: WorkspaceData, preferences: Preferences, exportedAt: string): BackupFile {
+  const byProjectThenOrder = (
+    a: Ordered & { projectId: string },
+    b: Ordered & { projectId: string },
+  ) => (a.projectId < b.projectId ? -1 : a.projectId > b.projectId ? 1 : bySortOrder(a, b))
+  const backup: BackupData = {
+    projects: sortByOrder(Object.values(data.projects)),
+    phases: Object.values(data.phases).sort(byProjectThenOrder),
+    tasks: Object.values(data.tasks).sort(byProjectThenOrder),
+    milestones: Object.values(data.milestones).sort((a, b) =>
+      a.projectId !== b.projectId
+        ? a.projectId < b.projectId
+          ? -1
+          : 1
+        : a.date < b.date
+          ? -1
+          : a.date > b.date
+            ? 1
+            : 0,
+    ),
+    dependencies: Object.values(data.dependencies).sort((a, b) =>
+      a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+    ),
+  }
+  const file: BackupFile = {
+    app: 'cairn',
+    formatVersion: BACKUP_FORMAT_VERSION,
+    exportedAt,
+    data: backup,
+    preferences: { ...preferences },
+  }
+  return structuredClone(file)
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +685,9 @@ function keysUntied<T extends Ordered>(
 }
 
 /** Creates an independent workspace store (the app uses `useWorkspaceStore`; tests make their own). */
+/** Default longest wait for writes in flight before a saved backup is exported. */
+export const SAVED_BACKUP_TIMEOUT_MS = 15_000
+
 export function createWorkspaceStore(options: WorkspaceStoreOptions) {
   const notifier = options.notify ?? notify
   const now = options.now ?? (() => Date.now())
@@ -639,6 +695,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
   const storage = options.storage === undefined ? getBrowserStorage() : options.storage
   const environment = options.environment ?? null
   const signal = options.signal
+  const savedBackupTimeoutMs = options.savedBackupTimeoutMs ?? SAVED_BACKUP_TIMEOUT_MS
   const source = options.repository
   let repositoryInstance: Repository | null = typeof source === 'function' ? null : source
   const repository = (): Repository => (repositoryInstance ??= (source as () => Repository)())
@@ -775,6 +832,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       return failedWrites.length > 0
     }
 
+    /** The error to report for the failures still waiting for Retry (the newest), or null. */
+    function failedWriteError(): AppError | null {
+      return failedWrites.at(-1)?.error ?? null
+    }
+
     /**
      * The failed creation (still waiting for Retry) of an entity that `write` changes. The server
      * refused such a change with "not found" only because it never got the creation (only that
@@ -810,7 +872,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         !handle.stale &&
         !handle.used &&
         handle.seq < seq &&
-        (replaces(paths, handle.paths) || (intent !== undefined && handle.intent === intent))
+        (replaces(paths, handle.paths) ||
+          revives(paths, handle.patches) ||
+          (intent !== undefined && handle.intent === intent))
       let withdrawn = false
       for (const handle of failedWrites) {
         if (replaced(handle)) {
@@ -842,7 +906,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         Number.POSITIVE_INFINITY,
       )
       const withdrew = failedWrites.length !== before || toastRetry !== toastBefore
-      if (withdrew && !hasFailedWrites() && !lastErrorFromLoad) updateSync({ lastError: null })
+      if (withdrew && !lastErrorFromLoad) updateSync({ lastError: failedWriteError() })
     }
 
     function onWriteFailed<T>(
@@ -901,7 +965,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         action: handle
           ? {
               label: 'Retry',
-              // Everything that failed since the last save, or (after an unrelated save) this.
+              // Every failure still waiting for Retry, in the order made (this one included).
               onClick: () => void runRetry([...failedWrites, handle]),
             }
           : undefined,
@@ -909,19 +973,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       })
     }
 
-    function onWriteSucceeded<T>(spec: WriteSpec<T>, seq: number): void {
+    function onWriteSucceeded<T>(spec: WriteSpec<T>): void {
       if (!spec.background) userWritesPending -= 1
       if (spec.background) {
         updateSync({ pending: get().sync.pending - 1 })
         return
       }
-      // A save ends the failures made before it (contract: lastError is cleared by a success).
-      failedWrites = failedWrites.filter((handle) => handle.seq > seq)
+      // A save says nothing about other changes: a failure still waiting for Retry stays reported
+      // until it is saved, replaced by a newer change (supersedeFailures) or shown as stored by a
+      // refresh (withdrawAppliedFailures). Only a refused write's or a load's error ends here.
       lastErrorFromLoad = false
       updateSync({
         pending: get().sync.pending - 1,
         lastSavedAt: now(),
-        lastError: null,
+        lastError: failedWriteError(),
         canRetry: hasFailedWrites(),
       })
     }
@@ -960,7 +1025,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             if (startEpoch === epoch) {
               settle(pending)
               requestResync()
-              onWriteSucceeded(spec, seq)
+              onWriteSucceeded(spec)
             }
             return { ok: true, value: alreadyDone.value() }
           }
@@ -985,7 +1050,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
             const { afterSuccess } = spec
             safely(() => afterSuccess(value))
           }
-          onWriteSucceeded(spec, seq)
+          onWriteSucceeded(spec)
         }
         return { ok: true, value }
       })
@@ -1078,12 +1143,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
      * change failed. Others stay.
      */
     function withdrawAppliedFailures(stored: Doc): void {
-      // The toast's failure too: an unrelated save took it off the Retry list, not off the toast.
-      const candidates =
-        toastRetry && !failedWrites.includes(toastRetry)
-          ? [...failedWrites, toastRetry]
-          : failedWrites
-      const applied = candidates.filter(
+      const applied = failedWrites.filter(
         (handle) =>
           handle.epoch === epoch &&
           !handle.stale &&
@@ -1099,7 +1159,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       }
       const { lastError } = get().sync
       const cleared = applied.some((handle) => handle.error === lastError)
-      updateSync({ canRetry: hasFailedWrites(), ...(cleared ? { lastError: null } : {}) })
+      // The failures it did not show as stored are still reported (their newest error).
+      updateSync({
+        canRetry: hasFailedWrites(),
+        ...(cleared ? { lastError: failedWriteError() } : {}),
+      })
     }
 
     /**
@@ -1109,9 +1173,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
      */
     function loadedSync(sync: SyncState): SyncState {
       let cleared: Partial<SyncState> = {}
-      if (lastErrorFromLoad) cleared = { lastError: null, canRetry: false }
+      if (lastErrorFromLoad)
+        cleared = { lastError: failedWriteError(), canRetry: hasFailedWrites() }
       else if (sync.lastError && !isRetryable(sync.lastError)) {
-        cleared = { lastError: failedWrites.at(-1)?.error ?? null }
+        cleared = { lastError: failedWriteError() }
       }
       lastErrorFromLoad = false
       return { ...sync, ...cleared, lastLoadedAt: now() }
@@ -1178,7 +1243,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
         set((state) => ({
           status: 'error',
           loadError: error,
-          sync: { ...state.sync, lastError: error, canRetry: false },
+          // A failed write waiting for Retry is still unsaved (closing the tab still asks).
+          sync: { ...state.sync, lastError: error, canRetry: hasFailedWrites() },
         }))
         return failed(error)
       }
@@ -2104,37 +2170,55 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
 
     function exportBackup(): BackupFile {
       const { data, preferences } = get()
-      const byProjectThenOrder = (
-        a: Ordered & { projectId: string },
-        b: Ordered & { projectId: string },
-      ) => (a.projectId < b.projectId ? -1 : a.projectId > b.projectId ? 1 : bySortOrder(a, b))
-      const backup: BackupData = {
-        projects: sortByOrder(Object.values(data.projects)),
-        phases: Object.values(data.phases).sort(byProjectThenOrder),
-        tasks: Object.values(data.tasks).sort(byProjectThenOrder),
-        milestones: Object.values(data.milestones).sort((a, b) =>
-          a.projectId !== b.projectId
-            ? a.projectId < b.projectId
-              ? -1
-              : 1
-            : a.date < b.date
-              ? -1
-              : a.date > b.date
-                ? 1
-                : 0,
-        ),
-        dependencies: Object.values(data.dependencies).sort((a, b) =>
-          a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
-        ),
+      return backupFrom(data, preferences, isoNow())
+    }
+
+    /** Resolves true once no write is pending, false after the export wait limit. */
+    function writesSaved(): Promise<boolean> {
+      if (get().sync.pending === 0) return Promise.resolve(true)
+      return new Promise((resolve) => {
+        let unsubscribe = () => {}
+        const done = (saved: boolean) => {
+          clearTimeout(timer)
+          unsubscribe()
+          resolve(saved)
+        }
+        const timer = setTimeout(() => done(false), savedBackupTimeoutMs)
+        unsubscribe = store.subscribe((state) => {
+          if (state.sync.pending === 0) done(true)
+        })
+      })
+    }
+
+    async function exportSavedBackup(): Promise<Result<BackupFile>> {
+      const startEpoch = epoch
+      const signedOut = () =>
+        failed({
+          kind: 'auth',
+          message: 'You were signed out before the backup was exported.',
+        })
+      if (!(await writesSaved())) {
+        return failed({
+          kind: 'network',
+          message: 'Changes are still being saved. Try again in a moment.',
+        })
       }
-      const file: BackupFile = {
-        app: 'cairn',
-        formatVersion: BACKUP_FORMAT_VERSION,
-        exportedAt: isoNow(),
-        data: backup,
-        preferences: { ...preferences },
+      if (startEpoch !== epoch) return signedOut()
+      try {
+        // Read behind the writes already sent (same queue), so the snapshot includes them. The
+        // file is dated when the read starts: every change made in this tab before that moment is
+        // in it, and none made after (those wait behind the read), even if the read is slow.
+        let readAt = ''
+        const snapshot = await enqueue(() => {
+          readAt = isoNow()
+          return repository().loadWorkspace()
+        })
+        if (startEpoch !== epoch) return signedOut()
+        const preferences = snapshot.preferences ?? get().preferences
+        return { ok: true, value: backupFrom(toWorkspaceData(snapshot), preferences, readAt) }
+      } catch (thrown) {
+        return failed(toAppError(thrown))
       }
-      return structuredClone(file)
     }
 
     /**
@@ -2270,7 +2354,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       })
     }
 
-    /** Re-sends every failed write not followed by a successful one, in order (see runRetry). */
+    /** Re-sends every failed write still waiting for Retry, in order (see runRetry). */
     function retryLastFailed(): Promise<Result> {
       return runRetry(failedWrites)
     }
@@ -2299,6 +2383,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions) {
       applySchedule,
       updatePreferences,
       exportBackup,
+      exportSavedBackup,
       importBackup,
       retryLastFailed,
       withdrawFailedChanges,
@@ -2465,13 +2550,28 @@ export function createAuthStore(options: AuthStoreOptions) {
       }
     }
 
-    async function syncUser(): Promise<void> {
+    /**
+     * Reads the session and follows it. A failure without an answer from the server (offline, a
+     * timeout, a gateway error) says nothing about the session: supabase-js keeps it stored, so
+     * this does not sign out ('unreachable' until it can be read, unless signed in already).
+     * Any other failure means there is no usable session. `signingOut`: the user asked to leave,
+     * so this device signs out whatever the server says.
+     */
+    async function syncUser(signingOut = false): Promise<void> {
+      let user: AuthUser | null
       try {
-        applyUser(await service().getUser())
-      } catch {
-        applyUser(null)
+        user = await service().getUser()
+      } catch (error) {
+        if (!signingOut && toAppError(error).kind === 'network') {
+          if (get().status !== 'signed_in') set({ status: 'unreachable', user: null })
+          return
+        }
+        user = null
       }
+      applyUser(user)
     }
+
+    let retrying: Promise<void> | null = null
 
     /**
      * The server rejected the session, which this device may still consider valid (its clock is
@@ -2523,7 +2623,12 @@ export function createAuthStore(options: AuthStoreOptions) {
           if (options.signal?.aborted) return
           let unsubscribe: () => void
           try {
-            unsubscribe = service().onChange((user, event) => applyUser(user, event))
+            unsubscribe = service().onChange((user, event) => {
+              // supabase-js reports "no session" first when it could not refresh a stored one for
+              // the network; syncUser() reads the same session and tells the two apart.
+              if (!user && event === 'initial_session') return
+              applyUser(user, event)
+            })
           } catch (error) {
             // No auth client (e.g. it refused the configuration): never a splash forever.
             console.error('[cairn] Authentication could not start.', error)
@@ -2567,7 +2672,7 @@ export function createAuthStore(options: AuthStoreOptions) {
         } catch (error) {
           failure = toAppError(error)
         }
-        await syncUser()
+        await syncUser(true)
         // Telling the server can fail (offline) after this device already dropped its session:
         // the user is signed out here, which is what they asked for.
         return failure && get().status !== 'signed_out' ? failed(failure) : OK
@@ -2596,6 +2701,13 @@ export function createAuthStore(options: AuthStoreOptions) {
       },
       dismissPasswordRecovery() {
         if (get().passwordRecovery) set({ passwordRecovery: false })
+      },
+      retrySession() {
+        if (get().status !== 'unreachable') return Promise.resolve()
+        retrying ??= syncUser().finally(() => {
+          retrying = null
+        })
+        return retrying
       },
     }
 

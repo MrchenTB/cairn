@@ -286,11 +286,12 @@ test.describe('every request takes 200 to 400 ms', () => {
     await expect(failure).toBeVisible({ timeout: 15_000 })
     await expect(statusButton(page, ids.a)).toHaveAccessibleName('Status: To Do')
     await expect(statusButton(page, ids.b)).toHaveAccessibleName('Status: In Progress')
-    // Beta's later write saved, which by design ends the earlier failure's sidebar state; the
-    // toast's Retry still sends Alpha's change.
+    // Beta's later write saved, but that says nothing about Alpha: the sidebar keeps saying
+    // Alpha's change is not saved (D34), and the toast's Retry still sends it.
     expect((await dbStatuses(projectId)).Alpha).toBe('todo')
 
-    await expect(syncIndicator(page, 'Saved')).toBeVisible({ timeout: 15_000 })
+    await expect(syncIndicator(page, "Couldn't save")).toBeVisible({ timeout: 15_000 })
+    await expect(syncIndicator(page, 'Saved')).toHaveCount(0)
     const applied = async () =>
       (await sim.requests()).filter(
         (r) => r.method === 'PATCH' && r.path === '/rest/v1/tasks' && r.status === 200,

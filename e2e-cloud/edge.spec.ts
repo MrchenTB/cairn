@@ -375,7 +375,7 @@ test.describe('auth requests that hang', () => {
     expect(await storedSession(page)).toBeNull()
   })
 
-  test('restoring the session at startup: the splash says so, the app opens, and it recovers by itself', async ({
+  test('restoring the session at startup: the splash says so, then that the server cannot be reached; it recovers by itself', async ({
     page,
   }) => {
     await page.clock.install()
@@ -397,34 +397,38 @@ test.describe('auth requests that hang', () => {
     await page.clock.fastForward('00:11')
     await expect(splash).toContainText('longer than usual')
 
-    // Past the request timeouts: never a splash forever. The session is kept: it is not refused.
+    // Past the request timeouts: never a splash forever. The session is kept, it was not refused,
+    // so this is not a sign-out: no sign-in page, the address stays (D35).
     await expect
       .poll(
         async () => {
           await page.clock.fastForward('00:31')
-          return page.getByRole('heading', { name: 'Welcome to Cairn' }).isVisible()
+          return page.getByRole('heading', { name: 'Can’t reach Cairn' }).isVisible()
         },
         { timeout: 20_000 },
       )
       .toBe(true)
-    await expect(page).toHaveURL(/\/login/)
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/list$`))
+    await expect(page.getByRole('heading', { name: 'Welcome to Cairn' })).toHaveCount(0)
     expect((await storedSession(page))?.refresh_token).toBeTruthy()
 
     // The server answers again: back to the page that was open, with its data.
     await sim.clearFaults()
+    // (The address never left the page; it is the data appearing that shows the recovery.)
     await expect
       .poll(
         async () => {
           await page.clock.fastForward('00:31')
-          return new URL(page.url()).pathname
+          return page.getByRole('heading', { name: 'Kept project' }).isVisible()
         },
-        { timeout: 30_000 },
+        { timeout: 60_000 },
       )
-      .toBe(`/projects/${projectId}/list`)
-    await expect(page.getByRole('heading', { name: 'Kept project' })).toBeVisible()
+      .toBe(true)
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/list$`))
+    await expect(page.getByRole('heading', { name: 'Can’t reach Cairn' })).toHaveCount(0)
   })
 
-  test('auth server down at startup with a long expired token: sign-in page, session kept, back when it answers', async ({
+  test('auth server down at startup with a long expired token: cannot reach Cairn (not sign-in), session kept, back when it answers', async ({
     page,
   }) => {
     await page.clock.install()
@@ -444,25 +448,28 @@ test.describe('auth requests that hang', () => {
       .poll(
         async () => {
           await page.clock.fastForward('00:10')
-          return page.getByRole('heading', { name: 'Welcome to Cairn' }).isVisible()
+          return page.getByRole('heading', { name: 'Can’t reach Cairn' }).isVisible()
         },
         { timeout: 30_000 },
       )
       .toBe(true)
-    await expect(page.getByText('Kept project')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Welcome to Cairn' })).toHaveCount(0)
+    await expect(page.getByText('Kept project')).toHaveCount(0) // nothing shown until confirmed
     expect((await storedSession(page))?.refresh_token).toBeTruthy()
 
     await sim.clearFaults()
+    // (The address never left the page; it is the data appearing that shows the recovery.)
     await expect
       .poll(
         async () => {
           await page.clock.fastForward('00:31')
-          return new URL(page.url()).pathname
+          return page.getByRole('heading', { name: 'Kept project' }).isVisible()
         },
-        { timeout: 30_000 },
+        { timeout: 60_000 },
       )
-      .toBe(`/projects/${projectId}/list`)
-    await expect(page.getByRole('heading', { name: 'Kept project' })).toBeVisible()
+      .toBe(true)
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/list$`))
+    await expect(page.getByRole('heading', { name: 'Can’t reach Cairn' })).toHaveCount(0)
   })
 })
 

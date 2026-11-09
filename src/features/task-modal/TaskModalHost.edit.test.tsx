@@ -277,6 +277,87 @@ describe('Task Modal · edit', { timeout: 20_000 }, () => {
     )
   })
 
+  describe('a line typed into "Add subtask" becomes one subtask, however the modal is left', () => {
+    const titled = (title: string) => storeTasks().filter((task) => task.title === title)
+    /** Long enough for the close animation, the unmount and any write it set off. */
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 400))
+
+    async function openWithLine(line: string) {
+      const { project, tasks } = await seedWorkspace()
+      const review = tasks['Write literature review']
+      const rendered = renderHosts(`/projects/${project.id}/list?task=${review.id}`)
+      await findModal('Write literature review')
+      await rendered.user.type(screen.getByRole('textbox', { name: 'Add subtask' }), line)
+      return { ...rendered, review }
+    }
+
+    it.each([
+      ['Done', (user: UserEvent) => user.click(doneButton())],
+      ['Esc', (user: UserEvent) => user.keyboard('{Escape}')],
+      ['the X', (user: UserEvent) => user.click(screen.getByRole('button', { name: 'Close' }))],
+      ['⌘↵', (user: UserEvent) => user.keyboard('{Control>}{Enter}{/Control}')],
+    ])('leaving with %s', async (_way, leave) => {
+      const { user, review } = await openWithLine('Only once')
+      // ⌘↵ in the line adds it and stays; leave from the title instead
+      await user.click(titleBox())
+      await leave(user)
+      await expectClosed()
+      await settle()
+      expect(titled('Only once')).toHaveLength(1)
+      expect(titled('Only once')[0].parentTaskId).toBe(review.id)
+    })
+
+    it('leaving by navigation (Back, a link)', async () => {
+      const { router } = await openWithLine('Navigated away')
+      await router.navigate('/overview')
+      await expectClosed()
+      await settle()
+      expect(titled('Navigated away')).toHaveLength(1)
+    })
+
+    it('pressing Esc twice in a row', async () => {
+      const { user } = await openWithLine('Twice closed')
+      await user.click(titleBox())
+      await user.keyboard('{Escape}{Escape}')
+      await expectClosed()
+      await settle()
+      expect(titled('Twice closed')).toHaveLength(1)
+    })
+
+    it('Enter, then leaving: the added line is not added again', async () => {
+      const { user } = await openWithLine('Entered{Enter}')
+      await waitFor(() => expect(titled('Entered')).toHaveLength(1))
+      await user.click(doneButton())
+      await expectClosed()
+      await settle()
+      expect(titled('Entered')).toHaveLength(1)
+    })
+
+    it('a close whose add fails: Retry stores it once', async () => {
+      const { user } = await openWithLine('Failed on close')
+      testHooks().failNextWrites(1)
+      await user.click(doneButton())
+      await expectClosed()
+      await settle()
+      expect(titled('Failed on close')).toHaveLength(0)
+      must(await useWorkspaceStore.getState().actions.retryLastFailed())
+      await settle()
+      expect(titled('Failed on close')).toHaveLength(1)
+    })
+
+    it('two subtasks with the same name, added on purpose, are both kept', async () => {
+      const { user } = await openWithLine('Same name{Enter}')
+      const add = screen.getByRole('textbox', { name: 'Add subtask' })
+      await waitFor(() => expect(add).toHaveValue(''))
+      await user.type(add, 'Same name{Enter}')
+      await waitFor(() => expect(titled('Same name')).toHaveLength(2))
+      await user.click(doneButton())
+      await expectClosed()
+      await settle()
+      expect(titled('Same name')).toHaveLength(2)
+    })
+  })
+
   it('dependency picker: same-project tasks only, and an invalid link says why', async () => {
     const { project, other, tasks } = await seedWorkspace()
     const review = tasks['Write literature review']

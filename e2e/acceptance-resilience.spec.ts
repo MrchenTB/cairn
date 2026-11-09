@@ -1631,14 +1631,19 @@ test.describe('AC-15: awkward failures', () => {
     await expect(
       taskRow(page, 'Alpha').getByRole('button', { name: 'Priority: High' }),
     ).toBeVisible()
-    await expect(syncIndicator(page)).toHaveAttribute('data-sync', 'local')
-    // The toast still tells the truth about Delta (it was not saved); its Retry sends it once.
+    await expect.poll(async () => (await readDb(page)).tasks['f-alpha'].priority).toBe('high')
+    // Alpha's save says nothing about Delta: the sidebar and the toast still tell the truth
+    // (Delta was not saved) and offer Retry; the toast's Retry sends it once.
+    await expect(syncIndicator(page)).toHaveAttribute('data-sync', 'failed')
+    await expect(sidebarRetry(page)).toBeVisible()
     await expect(failure).toBeVisible()
     await retryButton(failure).click()
     await expect(taskRow(page, 'Delta').getByRole('button', { name: 'Status: Done' })).toBeVisible()
     await expect.poll(async () => (await readDb(page)).tasks['f-delta'].status).toBe('done')
     expect((await readDb(page)).tasks['f-alpha'].priority).toBe('high')
     await expect(failure).toHaveCount(0)
+    await expect(syncIndicator(page)).toHaveAttribute('data-sync', 'local')
+    await expect(sidebarRetry(page)).toHaveCount(0)
 
     // Beta → Done fails, then the user sets Beta to To Do and that is saved: the old toast is gone
     // (its Retry would overwrite the newer choice).

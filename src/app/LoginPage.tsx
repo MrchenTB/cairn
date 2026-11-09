@@ -11,6 +11,7 @@ import { AuthLayout, FormAlert } from './AuthLayout'
 import type { LoginRedirectState } from './AuthGate'
 import { clearAuthRedirectError, peekAuthRedirectError } from './authRedirectError'
 import { safeReturnPath } from './loginRedirect'
+import { SessionUnreachable } from './SessionUnreachable'
 import { MIN_PASSWORD_LENGTH } from './passwordRules'
 
 type FormMode = 'sign-in' | 'sign-up'
@@ -274,6 +275,7 @@ export function LoginPage() {
   if (mode === 'local') return <Navigate to="/overview" replace />
   if (status === 'signed_in') return <Navigate to={safeReturnPath(from)} replace />
   if (status === 'loading') return <AppSplash />
+  if (status === 'unreachable') return <SessionUnreachable />
 
   return (
     <AuthLayout

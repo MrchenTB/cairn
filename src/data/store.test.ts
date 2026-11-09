@@ -393,11 +393,22 @@ describe('retry', () => {
     expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
   })
 
-  it('a successful write clears the last error', async () => {
+  it('a successful write of other data does not clear the error of a failed one', async () => {
     const h = await setup({ rows: workspaceRows() })
     h.repo.failNextWrites(1)
     await h.actions.updateTask('a', { title: 'x' })
     expect(h.state().sync.lastError).not.toBeNull()
+    await h.actions.updateTask('b', { title: 'y' })
+    // "a" was never saved: the error and its Retry stay until it is
+    expect(h.state().sync.lastError).not.toBeNull()
+    expect(h.state().sync.canRetry).toBe(true)
+  })
+
+  it('a successful write clears the error of a refused write (nothing left to retry)', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    await new LocalRepository({ storage: h.storage }).deleteTask('a', { keepSubtasks: false })
+    expect((await h.actions.updateTask('a', { title: 'gone' })).ok).toBe(false)
+    await idle(h)
     await h.actions.updateTask('b', { title: 'y' })
     expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
   })
@@ -2012,6 +2023,186 @@ describe('text the database cannot store', () => {
   })
 })
 
+/** The order in which the repository was asked to change tasks, as "kind:id". */
+function recordTaskWrites(h: Harness): string[] {
+  const calls: string[] = []
+  const insert = h.repo.insertTask.bind(h.repo)
+  const update = h.repo.updateTask.bind(h.repo)
+  vi.spyOn(h.repo, 'insertTask').mockImplementation(async (task) => {
+    calls.push(`insert:${task.id}`)
+    return insert(task)
+  })
+  vi.spyOn(h.repo, 'updateTask').mockImplementation(async (id, patch) => {
+    calls.push(`update:${id}`)
+    return update(id, patch)
+  })
+  return calls
+}
+
+describe('a failed write stays failed until it is saved, replaced or shown as stored', () => {
+  it('A: a save of unrelated data keeps the failure, its error and its Retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Never stored' })).ok).toBe(false)
+    expect((await h.actions.updateTask('b', { priority: 'high' })).ok).toBe(true)
+    await idle(h)
+    await h.actions.refresh({ silent: true }) // the server does not have it either
+    expect(h.state().data.tasks.a.title).toBe('A')
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(h.state().sync.lastError).not.toBeNull()
+
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedTask(h, 'a'))?.title).toBe('Never stored')
+    expect((await storedTask(h, 'b'))?.priority).toBe('high')
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    expect(h.notifier.success).toHaveBeenCalledWith('Saved')
+  })
+
+  it('A: the toast Retry of a failure made before an unrelated save still sends it', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Retry from the toast' })
+    const retry = lastToastAction(h)
+    await h.actions.updateProject('p1', { name: 'Alpha 2' })
+    retry?.onClick()
+    await vi.waitFor(async () =>
+      expect((await storedTask(h, 'a'))?.title).toBe('Retry from the toast'),
+    )
+    await idle(h)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+  })
+
+  it('B: a newer save of the same field replaces the failure; Retry never sends the old value', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Old' })).ok).toBe(false)
+    expect((await h.actions.updateTask('a', { title: 'New' })).ok).toBe(true)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    const writes = recordTaskWrites(h)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect(writes).toEqual([])
+    expect((await storedTask(h, 'a'))?.title).toBe('New')
+  })
+
+  it('B: editing a task whose deletion failed withdraws the deletion', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.deleteTask('a', { keepSubtasks: false })).ok).toBe(false)
+    expect(h.state().data.tasks.a).toBeDefined() // rolled back
+    expect((await h.actions.updateTask('a', { title: 'Still needed' })).ok).toBe(true)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedTask(h, 'a'))?.title).toBe('Still needed')
+  })
+
+  it('C: a create stored without an answer is found by the refresh, and Retry adds no copy', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const insert = h.repo.insertTask.bind(h.repo)
+    vi.spyOn(h.repo, 'insertTask').mockImplementationOnce(async (task) => {
+      await insert(task)
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+    })
+    expect((await h.actions.createTask({ projectId: 'p1', title: 'Stored' })).ok).toBe(false)
+    expect((await h.actions.updateTask('b', { priority: 'low' })).ok).toBe(true)
+    await idle(h)
+    await h.actions.refresh({ silent: true })
+    expect(h.state().data.tasks['new-1']).toMatchObject({ title: 'Stored' })
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedSnapshot(h)).tasks.filter((t) => t.title === 'Stored')).toHaveLength(1)
+  })
+
+  it('D: several failures between saves are re-sent once, in the order they were made', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'First' })).ok).toBe(false)
+    expect((await h.actions.updateTask('c', { priority: 'low' })).ok).toBe(true)
+    h.repo.failNextWrites(1)
+    expect((await h.actions.createTask({ projectId: 'p1', title: 'Second' })).ok).toBe(false)
+    expect((await h.actions.updateTask('d', { priority: 'low' })).ok).toBe(true)
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('b', { title: 'Third' })).ok).toBe(false)
+    expect(h.state().sync.canRetry).toBe(true)
+
+    // The first Retry fails again at the first change: nothing after it is sent out of order.
+    const writes = recordTaskWrites(h)
+    h.repo.failNextWrites(1)
+    expect((await h.actions.retryLastFailed()).ok).toBe(false)
+    expect(writes).toEqual(['update:a'])
+    expect(h.state().sync).toMatchObject({ canRetry: true })
+    expect(h.state().sync.lastError).not.toBeNull()
+
+    writes.length = 0
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect(writes).toEqual(['update:a', 'insert:new-1', 'update:b'])
+    const stored = await storedSnapshot(h)
+    expect(stored.tasks.find((t) => t.id === 'a')?.title).toBe('First')
+    expect(stored.tasks.filter((t) => t.title === 'Second')).toHaveLength(1)
+    expect(stored.tasks.find((t) => t.id === 'b')?.title).toBe('Third')
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    // nothing is sent twice
+    writes.length = 0
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    expect(writes).toEqual([])
+  })
+
+  it('E: a failure of the previous session is never retried for the next one', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Account A' })
+    h.actions.reset() // signed out; another account signs in on the same store
+    await h.actions.load()
+    await idle(h)
+    expect(h.state().sync).toMatchObject({ lastError: null, canRetry: false })
+    const writes = recordTaskWrites(h)
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(writes).toEqual([])
+    expect((await storedTask(h, 'a'))?.title).toBe('A')
+  })
+
+  it('F: a refresh withdraws only the failures it shows as stored; the rest stay reported', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    expect((await h.actions.updateTask('a', { title: 'Really failed' })).ok).toBe(false)
+    const update = h.repo.updateTask.bind(h.repo)
+    vi.spyOn(h.repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await update(id, patch)
+      throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+    })
+    // the newest failure is the one that was stored after all
+    expect((await h.actions.updateTask('b', { priority: 'urgent' })).ok).toBe(false)
+    await vi.waitFor(() => expect(h.state().data.tasks.b.priority).toBe('urgent'))
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('A')
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(h.state().sync.lastError).not.toBeNull()
+  })
+
+  it('a failed load in between does not hide a failure still waiting for Retry', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.failNextWrites(1)
+    await h.actions.updateTask('a', { title: 'Waiting' })
+    await idle(h)
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(
+      new RepositoryError('network', NETWORK_ERROR_MESSAGE),
+    )
+    expect((await h.actions.load()).ok).toBe(false)
+    expect(h.state().sync.canRetry).toBe(true)
+    expect((await h.actions.load()).ok).toBe(true)
+    expect(h.state().sync.canRetry).toBe(true)
+    expect(h.state().sync.lastError).not.toBeNull()
+    expect(await h.actions.retryLastFailed()).toEqual(OK)
+    await idle(h)
+    expect((await storedTask(h, 'a'))?.title).toBe('Waiting')
+  })
+})
+
 describe('a failure without an answer, after an unrelated save', () => {
   it('the toast of a change the server shows as applied goes away too', async () => {
     const h = await setup({ rows: workspaceRows() })
@@ -2288,5 +2479,196 @@ describe('Saved toast after Retry', () => {
     h.actions.reset()
     await retrying
     expect(h.notifier.success).not.toHaveBeenCalled()
+  })
+})
+
+describe('exportSavedBackup', () => {
+  const net = () => new RepositoryError('network', NETWORK_ERROR_MESSAGE)
+
+  /** A promise that settles from outside. */
+  function deferred() {
+    let release!: () => void
+    const promise = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return { promise, release }
+  }
+
+  const titleOf = (file: BackupFile, id: string) => file.data.tasks.find((t) => t.id === id)?.title
+
+  it('a change made while it waits for an earlier write is waited for too, and included', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    h.repo.setLatency(30)
+    const first = h.actions.updateTask('a', { title: 'First' })
+    const exported = h.actions.exportSavedBackup()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const second = h.actions.updateTask('b', { title: 'Made while waiting' }) // before the read
+    const result = await exported
+    if (!result.ok) throw new Error(result.error.message)
+    expect((await first).ok && (await second).ok).toBe(true)
+    expect(titleOf(result.value, 'a')).toBe('First')
+    expect(titleOf(result.value, 'b')).toBe('Made while waiting')
+  })
+
+  it('a change made while the snapshot is read is not in the file, and the file says when it was read', async () => {
+    let clock = Date.UTC(2026, 10, 9, 10, 0, 0)
+    const storage = createMemoryStorage()
+    const repo = new GatedLoadRepository({ storage, now: serverClock })
+    const h = await setup({ rows: workspaceRows(), repo, storage, now: () => clock })
+    const reading = gate()
+    repo.gate = reading.promise
+    const readsBefore = repo.reads
+    const exported = h.actions.exportSavedBackup()
+    await vi.waitFor(() => expect(repo.reads).toBe(readsBefore + 1)) // the read has started
+    clock += 60_000
+    const changedAt = clock
+    const change = h.actions.updateTask('a', { title: 'Changed during the read' })
+    clock += 60_000 // the read answers a minute later
+    reading.release()
+    const result = await exported
+    if (!result.ok) throw new Error(result.error.message)
+    // Not in the backup: it was made after the read began, and exportedAt says so.
+    expect(titleOf(result.value, 'a')).toBe('A')
+    expect(Date.parse(result.value.exportedAt)).toBeLessThan(changedAt)
+    // Not lost either: saved, and still on screen.
+    expect((await change).ok).toBe(true)
+    await idle(h)
+    expect(h.state().data.tasks.a.title).toBe('Changed during the read')
+    expect((await storedTask(h, 'a'))?.title).toBe('Changed during the read')
+    expect(h.state().sync.lastSavedAt).toBeGreaterThan(Date.parse(result.value.exportedAt))
+  })
+
+  it('waits for writes in flight and includes them', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const gate = deferred()
+    const original = h.repo.updateTask.bind(h.repo)
+    vi.spyOn(h.repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await gate.promise
+      return original(id, patch)
+    })
+    const write = h.actions.updateTask('a', { title: 'Renamed' })
+    await vi.waitFor(() => expect(h.state().sync.pending).toBe(1))
+
+    let settled = false
+    const exported = h.actions.exportSavedBackup().then((result) => {
+      settled = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(settled).toBe(false)
+
+    gate.release()
+    expect((await write).ok).toBe(true)
+    const result = await exported
+    if (!result.ok) throw new Error(result.error.message)
+    expect(titleOf(result.value, 'a')).toBe('Renamed')
+  })
+
+  it('leaves out a failed write that was rolled back', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    vi.spyOn(h.repo, 'updateTask').mockRejectedValueOnce(net())
+    expect((await h.actions.updateTask('a', { title: 'Never saved' })).ok).toBe(false)
+    expect(h.state().sync.canRetry).toBe(true)
+
+    const result = await h.actions.exportSavedBackup()
+    if (!result.ok) throw new Error(result.error.message)
+    expect(titleOf(result.value, 'a')).toBe('A')
+  })
+
+  it("includes another device's update the screen has not refreshed to yet", async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const other = new LocalRepository({ storage: h.storage, now: serverClock })
+    await other.updateTask('b', { title: 'From another device' })
+    expect(h.state().data.tasks.b.title).toBe('B') // not refreshed
+
+    const result = await h.actions.exportSavedBackup()
+    if (!result.ok) throw new Error(result.error.message)
+    expect(titleOf(result.value, 'b')).toBe('From another device')
+    expect(h.state().data.tasks.b.title).toBe('B') // the screen is left alone
+  })
+
+  it('fails when the saved data cannot be read, and changes nothing', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const before = h.state()
+    vi.spyOn(h.repo, 'loadWorkspace').mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    const result = await h.actions.exportSavedBackup()
+
+    expect(result).toMatchObject({ ok: false, error: { kind: 'network' } })
+    expect(h.state().data).toBe(before.data)
+    expect(h.state().sync).toEqual(before.sync)
+    expect(h.notifier.error).not.toHaveBeenCalled()
+    expect(h.notifier.success).not.toHaveBeenCalled()
+  })
+
+  it('fails instead of waiting forever for a write that never finishes', async () => {
+    const storage = createMemoryStorage()
+    const repo = new LocalRepository({ storage, now: serverClock })
+    await seed(repo, workspaceRows())
+    const store = createWorkspaceStore({
+      mode: 'local',
+      repository: repo,
+      notify: { error: vi.fn(), dismiss: vi.fn(), success: vi.fn() },
+      storage: null,
+      savedBackupTimeoutMs: 40,
+    })
+    await store.getState().actions.load()
+    const gate = deferred()
+    const original = repo.updateTask.bind(repo)
+    vi.spyOn(repo, 'updateTask').mockImplementationOnce(async (id, patch) => {
+      await gate.promise
+      return original(id, patch)
+    })
+    const write = store.getState().actions.updateTask('a', { title: 'Slow' })
+    await vi.waitFor(() => expect(store.getState().sync.pending).toBe(1))
+
+    const result = await store.getState().actions.exportSavedBackup()
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: 'network', message: expect.stringContaining('still being saved') },
+    })
+    gate.release()
+    await write
+  })
+
+  it('fails when the session ends while it reads, instead of exporting that data', async () => {
+    const h = await setup({ rows: workspaceRows() })
+    const gate = deferred()
+    const original = h.repo.loadWorkspace.bind(h.repo)
+    vi.spyOn(h.repo, 'loadWorkspace').mockImplementationOnce(async () => {
+      const snapshot = await original()
+      await gate.promise
+      return snapshot
+    })
+    const exported = h.actions.exportSavedBackup()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    h.actions.reset() // sign-out (or another account) while the read is under way
+    gate.release()
+
+    expect(await exported).toMatchObject({ ok: false, error: { kind: 'auth' } })
+  })
+
+  it('produces the same file as exportBackup when nothing differs, and it parses', async () => {
+    const h = await setup({
+      rows: {
+        ...workspaceRows(),
+        milestones: [makeMilestone({ id: 'm1', projectId: 'p1', date: '2030-03-01' })],
+        dependencies: [
+          makeDependency({ id: 'd1', projectId: 'p1', predecessorId: 'a', successorId: 'b' }),
+        ],
+      },
+    })
+    const result = await h.actions.exportSavedBackup()
+    if (!result.ok) throw new Error(result.error.message)
+    const local = h.actions.exportBackup()
+
+    expect(parseBackupFile(JSON.parse(JSON.stringify(result.value))).ok).toBe(true)
+    expect(Object.keys(result.value)).toEqual(Object.keys(local))
+    expect(result.value.app).toBe('cairn')
+    expect(result.value.formatVersion).toBe(local.formatVersion)
+    expect(result.value.data).toEqual(local.data)
+    expect(result.value.preferences).toEqual(local.preferences)
   })
 })

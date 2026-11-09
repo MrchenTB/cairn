@@ -114,7 +114,12 @@ export interface AuthUser {
   email: string | null
 }
 
-export type AuthStatus = 'loading' | 'signed_out' | 'signed_in'
+/**
+ * `unreachable`: a session may be stored on this device, but the server could not be reached to
+ * confirm it (offline, a timeout, a gateway error). Not a sign-out: nothing is loaded or cleared,
+ * and `retrySession()` (or the library renewing the session by itself) continues.
+ */
+export type AuthStatus = 'loading' | 'signed_out' | 'signed_in' | 'unreachable'
 
 /**
  * What an auth change was. 'password_recovery' = the user opened a password-reset link: they
@@ -170,6 +175,11 @@ export interface AuthState {
     updatePassword(newPassword: string): Promise<Result>
     /** The user chose not to set a new password now (clears passwordRecovery). */
     dismissPasswordRecovery(): void
+    /**
+     * Reads the session again after the server could not be reached (status `unreachable`); does
+     * nothing in any other status. One request per call; calls made meanwhile share it.
+     */
+    retrySession(): Promise<void>
   }
 }
 
@@ -183,10 +193,11 @@ export interface SyncState {
   /** Remote writes currently in flight. > 0 → UI shows "Saving…". */
   pending: number
   /**
-   * Most recent failed write/load that has not been followed by a successful write (a failed
-   * write that a later refresh shows the server applied after all — its answer was lost — no
-   * longer counts, and neither does a write the server refused once a refresh has shown the
-   * current data).
+   * The error to report: the newest failed write still waiting for Retry, otherwise the most
+   * recent failed load or refused write not yet followed by a success. A failed write ends only
+   * when it is saved, replaced by a newer change of the same data, or shown by a refresh to be
+   * stored after all (its answer was lost); a save of other data does not end it. A refused write
+   * (it would fail the same way again) ends with the next success or with a refresh.
    */
   lastError: AppError | null
   /** epoch ms of the last successful write */
@@ -195,7 +206,7 @@ export interface SyncState {
   lastLoadedAt: number | null
   /** navigator.onLine, kept up to date */
   online: boolean
-  /** true when a failed write can be retried with actions.retryLastFailed() */
+  /** true while a failed write waits for actions.retryLastFailed() (then lastError is set too) */
   canRetry: boolean
 }
 
@@ -263,13 +274,23 @@ export interface WorkspaceActions {
 
   updatePreferences(patch: Partial<Preferences>): Promise<Result>
 
+  /** The backup from what is on the screen (synchronous; may hold changes not saved yet). */
   exportBackup(): BackupFile
+  /**
+   * The backup from what is SAVED: waits (up to 15 s) for writes in flight, then reads the
+   * workspace through the write queue, so it holds every confirmed write and another device's
+   * newer changes, and never an unconfirmed or rolled-back change. Fails (no file) when the writes
+   * don't finish in time, the read fails, or the session changes meanwhile. Does not touch the
+   * store's data, sync state or toasts. `exportedAt` is when the read started: changes made in this
+   * tab before it are in the file, changes made after it (saved normally) are not.
+   */
+  exportSavedBackup(): Promise<Result<BackupFile>>
   /** Imports as NEW copies (fresh ids); never modifies or deletes existing data. */
   importBackup(file: BackupFile): Promise<Result<ImportSummary>>
 
   /**
-   * Re-runs the failed writes not followed by a successful one (usually just the most recent;
-   * several after an outage), one at a time in the order they were made, stopping at the first
+   * Re-runs the failed writes still waiting for Retry (usually just the most recent; several
+   * after an outage), one at a time in the order they were made, stopping at the first
    * that fails again. A failed write that a newer change of the same fields replaced is never
    * re-sent (it would overwrite that newer change), nor one a refresh showed the server applied.
    */
