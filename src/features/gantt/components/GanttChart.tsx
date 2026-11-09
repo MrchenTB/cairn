@@ -272,7 +272,10 @@ export function GanttChart({
   const helpId = useId()
 
   const scrollerRef = useRef<HTMLDivElement>(null)
-  const unscheduledToggleRef = useRef<HTMLButtonElement>(null)
+  const unscheduledToggleRef = useRef<HTMLButtonElement | null>(null)
+  const registerUnscheduledToggle = useCallback((element: HTMLButtonElement | null) => {
+    unscheduledToggleRef.current = element
+  }, [])
   const removeButtonRef = useRef<HTMLButtonElement>(null)
   const [scrollPosition] = useState(createScrollPosition)
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
@@ -720,11 +723,7 @@ export function GanttChart({
       unscheduledToggleRef.current?.focus()
     }
   }, [unscheduledOnly, focusedRowKey, model])
-  const showAllTasks = useEvent(() => {
-    changeUnscheduledOnly(false)
-    // The overlay button that was clicked is about to unmount.
-    unscheduledToggleRef.current?.focus()
-  })
+  const showAllTasks = useEvent(() => changeUnscheduledOnly(false))
 
   const expandAndReveal = useEvent((taskId: string) => {
     const task = Object.hasOwn(data.tasks, taskId) ? data.tasks[taskId] : undefined
@@ -1399,7 +1398,7 @@ export function GanttChart({
           unscheduledCount={model.unscheduledCount}
           unscheduledOnly={unscheduledOnly}
           onUnscheduledOnlyChange={changeUnscheduledOnly}
-          unscheduledToggleRef={unscheduledToggleRef}
+          registerUnscheduledToggle={registerUnscheduledToggle}
         />
       </ViewBarActions>
 

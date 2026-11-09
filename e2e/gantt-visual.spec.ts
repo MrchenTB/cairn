@@ -3,8 +3,8 @@
  * Gantt visual refinements (UX iteration 1, docs/ux-audit.md G-1 / G-3 / G-6 / G-7 / G-9), checked
  * against computed styles and geometry of the real page: a quiet grid (no weekend bands, header
  * lanes see-through), opaque bars and label chips (nothing shows through the letters), bar
- * tooltips that never get in the way of drag / resize, and the Unscheduled jump landing on the
- * tasks. Time is pinned to Wed 2026-11-04 (Asia/Taipei) by the shared helpers.
+ * tooltips that never get in the way of drag / resize, and the Unscheduled filter (UX-09) landing
+ * on the tasks. Time is pinned to Wed 2026-11-04 (Asia/Taipei) by the shared helpers.
  */
 import {
   bar,
@@ -187,7 +187,7 @@ test.describe('bar tooltip (G-7)', () => {
   })
 })
 
-test.describe('Unscheduled jump (G-9)', () => {
+test.describe('Unscheduled filter (UX-09)', () => {
   /** Enough dated rows to need scrolling, with undated tasks at the end. */
   function manyRows() {
     const tasks = Array.from({ length: 22 }, (_, i) => ({
@@ -205,9 +205,9 @@ test.describe('Unscheduled jump (G-9)', () => {
     })
   }
 
-  /** The toolbar's "Unscheduled n" button (the outline's group header has its own, longer name). */
-  const jumpToUnscheduled = (page: Page) =>
-    page.getByRole('button', { name: 'Unscheduled 2', exact: true }).click()
+  /** The toolbar toggle (the count is part of its name). */
+  const toggle = (page: Page) =>
+    page.getByRole('button', { name: 'Show only unscheduled tasks, 2', exact: true })
 
   async function rowsInView(page: Page, keys: string[]) {
     return chart(page).evaluate((el, wanted) => {
@@ -220,36 +220,37 @@ test.describe('Unscheduled jump (G-9)', () => {
     }, keys)
   }
 
-  test('the header and every unscheduled task are on screen after the jump', async ({ page }) => {
+  test('the matches are on screen right under the header after turning it on', async ({ page }) => {
     const seed = manyRows()
     await openGantt(page, seed, 'week')
-    await jumpToUnscheduled(page)
+    // Scrolled down in the full list first: the filter must still start at the top.
+    await chart(page).evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+    })
+    await toggle(page).click()
+    await expect(toggle(page)).toHaveAttribute('aria-pressed', 'true')
     await expect
-      .poll(() => rowsInView(page, ['unscheduled', `task:${seed.ids.u1}`, `task:${seed.ids.u2}`]))
-      .toEqual([true, true, true])
+      .poll(() => rowsInView(page, [`task:${seed.ids.u1}`, `task:${seed.ids.u2}`]))
+      .toEqual([true, true])
+    await expect.poll(() => chart(page).evaluate((el) => el.scrollTop)).toBe(0)
   })
 
-  test('a collapsed group is expanded first, and a second click still lands on the tasks', async ({
+  test('turning it off restores the vertical position and the filter saves nothing', async ({
     page,
   }) => {
     const seed = manyRows()
     await openGantt(page, seed, 'week')
-    const toggle = page.getByRole('button', { name: /^Unscheduled, 2 tasks/ })
-    // Reach the group, collapse it, scroll away, then jump.
-    await jumpToUnscheduled(page)
-    await toggle.click()
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    await chart(page).evaluate((el) => {
-      el.scrollTop = 0
+    const scroller = chart(page)
+    await scroller.evaluate((el) => {
+      el.scrollTop = 120
     })
-    await jumpToUnscheduled(page)
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    await expect
-      .poll(() => rowsInView(page, ['unscheduled', `task:${seed.ids.u1}`, `task:${seed.ids.u2}`]))
-      .toEqual([true, true, true])
-    await jumpToUnscheduled(page)
-    await expect
-      .poll(() => rowsInView(page, [`task:${seed.ids.u1}`, `task:${seed.ids.u2}`]))
-      .toEqual([true, true])
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(120)
+    await toggle(page).click()
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(0)
+    // Filter mode never writes the saved collapse state.
+    expect(await page.evaluate(() => localStorage.getItem('cairn:gantt-collapsed'))).toBeNull()
+    await toggle(page).click()
+    await expect(toggle(page)).toHaveAttribute('aria-pressed', 'false')
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(120)
   })
 })

@@ -628,7 +628,7 @@ describe('GanttView: Unscheduled filter', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('the empty state button shows all tasks again and returns focus to the toggle', async () => {
+  it('the empty state button shows all tasks again', async () => {
     const a = getWorkspaceActions()
     const project = must(await a.createProject({ name: 'One' }))
     const only = must(await a.createTask({ projectId: project.id, title: 'Only' }))
