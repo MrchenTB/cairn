@@ -2,7 +2,7 @@ import { formatDate, formatDateSmart } from '@/domain/dates'
 import type { ISODate, Milestone } from '@/domain/types'
 import { insetFocus } from '@/components/ui/styles'
 import { cn } from '@/lib/utils'
-import { listColumn } from './listColumns'
+import { listColumn, rowDivider } from './listColumns'
 
 /** Diamond glyph: filled for upcoming milestones, outlined once the date has passed. */
 export function MilestoneGlyph({ past, className }: { past: boolean; className?: string }) {
@@ -48,6 +48,7 @@ export function MilestoneRow({
         aria-label={`Milestone ${milestone.name}, ${formatDate(milestone.date, 'long')}${past ? ' (passed)' : ''}`}
         className={cn(
           'flex h-9 w-full items-center pr-3 pl-1 text-left text-ui',
+          rowDivider,
           'transition-colors duration-fast hover:bg-hover hover:duration-instant',
           insetFocus,
         )}

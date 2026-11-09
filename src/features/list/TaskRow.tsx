@@ -40,7 +40,7 @@ import { dueBucket } from '@/domain/buckets'
 import type { ISODate, Phase, Task, TaskPriority, TaskStatus } from '@/domain/types'
 import { cn } from '@/lib/utils'
 import { contextKit, dropdownKit, type MenuKit } from '@/features/projects/menuKit'
-import { listColumn } from './listColumns'
+import { listColumn, rowDivider } from './listColumns'
 
 /** Row actions. The List view passes ONE stable object (it reads the latest data when called). */
 export interface TaskCommands {
@@ -135,6 +135,7 @@ export const TaskRow = memo(function TaskRow({
           data-depth={depth}
           className={cn(
             'group/row relative flex h-9 items-center pr-3 pl-1 text-ui',
+            rowDivider,
             // Rows are a fixed 36px high: off-screen rows skip style and layout work, which keeps a
             // menu, a status change or a drag pick-up cheap in a project with hundreds of tasks.
             '[contain-intrinsic-size:auto_36px] [content-visibility:auto]',
