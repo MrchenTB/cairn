@@ -11,6 +11,7 @@ export function ListColumnHeader() {
   return (
     <div
       aria-hidden
+      data-list-column-header
       className={cn(
         'sticky top-0 z-[4] flex items-center bg-main pr-3 text-meta text-fg-tertiary select-none',
         listHeaderHeight,

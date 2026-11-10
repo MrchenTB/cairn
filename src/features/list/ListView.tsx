@@ -71,6 +71,7 @@ import {
 } from './listDnd'
 import { ListColumnHeader } from './ListColumnHeader'
 import { ListGroup, NoPhaseDropZone } from './ListGroup'
+import { useListKeyboardNav } from './listNav'
 import {
   groupKey,
   setGroupCollapsed,
@@ -189,6 +190,15 @@ function ProjectList({ project }: { project: Project }) {
   )
 
   const dnd = useListDnd({ containers: baseContainers, subtaskIds, isAppendOnly, onMove: moveTask })
+
+  // ↑ / ↓ between the visible phase headers, tasks, subtasks and milestones (see ./listNav).
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const dragging = useRef(false)
+  useLayoutEffect(() => {
+    dragging.current = dnd.drag !== null
+  })
+  const isDragging = useCallback(() => dragging.current, [])
+  const onListKeyDown = useListKeyboardNav({ scrollerRef, isDragging })
 
   const siblingOrder = useCallback(
     (task: Task): readonly string[] =>
@@ -485,7 +495,12 @@ function ProjectList({ project }: { project: Project }) {
           accessibility={{ announcements, screenReaderInstructions: SCREEN_READER_INSTRUCTIONS }}
           {...dnd.handlers}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto pb-16" data-list-scroll>
+          <div
+            ref={scrollerRef}
+            className="min-h-0 flex-1 overflow-y-auto pb-16"
+            data-list-scroll
+            onKeyDown={onListKeyDown}
+          >
             <ListColumnHeader />
             {showNoPhaseDropZone ? <NoPhaseDropZone containerId={NO_PHASE_CONTAINER} /> : null}
             {outline.groups.map((group, index) => {

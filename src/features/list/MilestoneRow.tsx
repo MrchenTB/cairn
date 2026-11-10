@@ -3,6 +3,7 @@ import type { ISODate, Milestone } from '@/domain/types'
 import { insetFocus } from '@/components/ui/styles'
 import { cn } from '@/lib/utils'
 import { listColumn, rowDivider } from './listColumns'
+import { listNavKey, listNavProps } from './listNav'
 
 /** Diamond glyph: filled for upcoming milestones, outlined once the date has passed. */
 export function MilestoneGlyph({ past, className }: { past: boolean; className?: string }) {
@@ -44,6 +45,7 @@ export function MilestoneRow({
     <li>
       <button
         type="button"
+        {...listNavProps('milestone', listNavKey.milestone(milestone.id))}
         onClick={() => onOpen(milestone.id)}
         aria-label={`Milestone ${milestone.name}, ${formatDate(milestone.date, 'long')}${past ? ' (passed)' : ''}`}
         className={cn(

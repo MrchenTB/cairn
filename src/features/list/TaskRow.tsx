@@ -41,6 +41,7 @@ import type { ISODate, Phase, Task, TaskPriority, TaskStatus } from '@/domain/ty
 import { cn } from '@/lib/utils'
 import { contextKit, dropdownKit, type MenuKit } from '@/features/projects/menuKit'
 import { listColumn, rowDivider } from './listColumns'
+import { listNavKey, listNavProps } from './listNav'
 
 /** Row actions. The List view passes ONE stable object (it reads the latest data when called). */
 export interface TaskCommands {
@@ -201,6 +202,7 @@ export const TaskRow = memo(function TaskRow({
             />
             <button
               type="button"
+              {...listNavProps('task', listNavKey.task(task.id))}
               onClick={() => commands.open(task.id)}
               className={cn(
                 'flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left',
