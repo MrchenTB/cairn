@@ -175,6 +175,9 @@ describe('TimelinePage rows', () => {
     renderTimeline()
     expect(screen.getByRole('separator', { name: 'Resize project list' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /task list$/ })).toBeNull()
+    // Its header is the old one: no toggle and no motion state on the chart.
+    expect(chart()).not.toHaveAttribute('data-outline')
+    expect(chart().querySelector('.sticky.top-0.z-20 button')).toBeNull()
     expect(within(chart()).getByRole('link', { name: /Launch/ })).toBeInTheDocument()
     expect(rowKeys()).toContain(`project:${s.launch.id}`)
     expect(screen.getByRole('separator', { name: 'Resize project list' })).toHaveAttribute(

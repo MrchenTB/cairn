@@ -2,8 +2,12 @@
  * Sticky two-tier time header, the background grid (CSS gradients + a few boundary lines, no
  * per-day nodes) and the today line. Only cells inside the render window exist in the DOM.
  */
-import { memo, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { memo, useSyncExternalStore, type CSSProperties, type ReactNode, type Ref } from 'react'
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import type { GanttScale } from '@/app/viewPrefs'
+import { Button } from '@/components/ui/button'
+import { insetFocus } from '@/components/ui/styles'
+import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { DUE_COLUMN_WIDTH, HEADER_HEIGHT } from '../model/constants'
 import type { TimelineGeometry } from '../model/geometry'
@@ -14,6 +18,9 @@ import { measureLabelWidth } from './measure'
 
 /** px-1.5 of a lower-tier cell: where its label starts. */
 const CELL_PADDING = 6
+
+/** Width of the corner that holds "Show task list" while the outline is hidden (upper tier only). */
+export const OUTLINE_CORNER_WIDTH = 32
 
 export interface TimeHeaderProps {
   tiers: HeaderTiers
@@ -27,6 +34,20 @@ export interface TimeHeaderProps {
   scroll: ScrollPosition
   /** Column labels of the left pane (default: Task / Due). Keep it stable: the header is memoised. */
   paneHeader?: ReactNode
+  /**
+   * Gantt only (the Timeline passes none of these and renders exactly as before). The pane's
+   * content keeps this full width and slides while `paneWidth` animates. With `onToggleOutline`,
+   * the upper tier of the pane header holds "Hide task list" and, while the outline is hidden
+   * (or moving), the timeline's top-left corner holds "Show task list".
+   */
+  paneFullWidth?: number
+  /** The outline pane is moving (the pane header exists even at width 0). */
+  paneAnimating?: boolean
+  /** The target state is hidden (so the corner button is the one shown). */
+  outlineHidden?: boolean
+  onToggleOutline?: () => void
+  hideButtonRef?: Ref<HTMLButtonElement>
+  showButtonRef?: Ref<HTMLButtonElement>
 }
 
 const GANTT_PANE_HEADER = (
@@ -48,6 +69,12 @@ export const TimeHeader = memo(function TimeHeader({
   todayLabel,
   scroll,
   paneHeader = GANTT_PANE_HEADER,
+  paneFullWidth,
+  paneAnimating = false,
+  outlineHidden = false,
+  onToggleOutline,
+  hideButtonRef,
+  showButtonRef,
 }: TimeHeaderProps) {
   // The first visible day: a top-tier label sticks to the pane edge while its unit scrolls out,
   // and is hidden once the visible rest of the unit is too narrow to hold it.
@@ -60,19 +87,60 @@ export const TimeHeader = memo(function TimeHeader({
   // Month it would cover (part of) the label of the week / month it falls in, so that label is
   // left out: the pill names the date itself, and a half-hidden "No" next to it reads as a glitch.
   const pillHalf = todayX === null ? 0 : (measureLabelWidth(todayLabel) + 12) / 2
+  // Sticky month labels stop at the pane edge, or right of the corner while the outline is hidden
+  // (and while it moves, so a label does not jump when the corner appears or goes).
+  const cornerWidth = onToggleOutline && (outlineHidden || paneAnimating) ? OUTLINE_CORNER_WIDTH : 0
+  const labelLeft = Math.max(paneWidth, cornerWidth)
   return (
     <div
       className="sticky top-0 z-20 flex border-b border-default bg-(--gantt-header-bg)"
       style={{ width: paneWidth + timelineWidth, height: HEADER_HEIGHT }}
     >
+      {/* Outside the aria-hidden timeline, first in the row and zero wide: it sticks to the
+          left edge whatever the pane does. Covers only the top-left 32px of the upper tier. */}
+      {onToggleOutline && outlineHidden ? (
+        <div className="sticky left-0 z-[3] h-6 w-0 shrink-0">
+          <div
+            className="absolute inset-y-0 left-0 flex items-center justify-center border-r border-(--gantt-grid) bg-(--gantt-header-bg)"
+            style={{ width: OUTLINE_CORNER_WIDTH }}
+          >
+            <OutlineButton hidden ref={showButtonRef} onClick={onToggleOutline} />
+          </div>
+        </div>
+      ) : null}
       {/* A hidden outline (width 0, Gantt only) has no corner at all. */}
-      {paneWidth > 0 ? (
+      {paneWidth > 0 || paneAnimating ? (
         <div
-          className="sticky left-0 z-[2] flex shrink-0 flex-col justify-end border-r border-default bg-(--gantt-header-bg) pr-3 pl-3"
+          className={cn(
+            'sticky left-0 z-[2] shrink-0 border-r border-default bg-(--gantt-header-bg)',
+            paneFullWidth !== undefined && 'overflow-hidden',
+          )}
           style={{ width: paneWidth }}
         >
-          <div className="flex h-6 items-center justify-between text-meta font-medium text-fg-tertiary">
-            {paneHeader}
+          <div
+            className="flex flex-col justify-end pr-3 pl-3"
+            style={
+              paneFullWidth === undefined
+                ? { height: '100%' }
+                : {
+                    height: '100%',
+                    // The outer box has a 1px right border: its content box is one narrower.
+                    width: paneFullWidth - 1,
+                    transform:
+                      paneWidth === paneFullWidth
+                        ? undefined
+                        : `translateX(${paneWidth - paneFullWidth}px)`,
+                  }
+            }
+          >
+            {onToggleOutline && !outlineHidden ? (
+              <div className="flex h-6 items-center justify-end">
+                <OutlineButton hidden={false} ref={hideButtonRef} onClick={onToggleOutline} />
+              </div>
+            ) : null}
+            <div className="flex h-6 items-center justify-between text-meta font-medium text-fg-tertiary">
+              {paneHeader}
+            </div>
           </div>
         </div>
       ) : null}
@@ -92,7 +160,7 @@ export const TimeHeader = memo(function TimeHeader({
               {fits ? (
                 <span
                   className="sticky px-2 text-meta font-medium whitespace-nowrap text-fg-secondary"
-                  style={{ left: paneWidth }}
+                  style={{ left: labelLeft }}
                 >
                   {cell.label}
                 </span>
@@ -138,6 +206,33 @@ export const TimeHeader = memo(function TimeHeader({
     </div>
   )
 })
+
+function OutlineButton({
+  hidden,
+  onClick,
+  ref,
+}: {
+  hidden: boolean
+  onClick: () => void
+  ref?: Ref<HTMLButtonElement>
+}) {
+  const label = hidden ? 'Show task list' : 'Hide task list'
+  const Icon = hidden ? PanelLeftOpen : PanelLeftClose
+  return (
+    <Tooltip content={label}>
+      <Button
+        ref={ref}
+        variant="ghost"
+        size="icon-sm"
+        aria-label={label}
+        onClick={onClick}
+        className={cn('size-5 rounded-md text-fg-tertiary', insetFocus)}
+      >
+        <Icon className="size-3.5" strokeWidth={1.75} aria-hidden />
+      </Button>
+    </Tooltip>
+  )
+}
 
 export interface GridBackgroundProps {
   style: GridBackgroundStyle | null

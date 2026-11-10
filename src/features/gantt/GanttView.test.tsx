@@ -710,6 +710,23 @@ describe('outline pane toggle', () => {
     )
   const PANE_KEY = 'cairn:gantt-pane-width'
   const OUTLINE_KEY = 'cairn:gantt-outline-collapsed'
+  /** prefers-reduced-motion on (the pane switches at once) or off (it animates over 200ms). */
+  const reducedMotion = (reduce: boolean) =>
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: reduce && query.includes('prefers-reduced-motion'),
+          media: query,
+          addEventListener() {},
+          removeEventListener() {},
+        }) as unknown as MediaQueryList,
+    )
+  beforeEach(() => {
+    // The animation has its own tests below; the rest check the settled states.
+    reducedMotion(true)
+  })
+  const outlineState = () => chart().getAttribute('data-outline')
+  const paneWidthNow = () => Number(chart().getAttribute('data-pane-width'))
   /** The sticky outline cell of a row (the lane's sibling) and the row's own width. */
   const cellOf = (key: string) => {
     const row = chart().querySelector<HTMLElement>(`[data-row-key="${key}"]`) as HTMLElement
@@ -727,6 +744,23 @@ describe('outline pane toggle', () => {
     expect(splitter()).toBeInTheDocument()
     expect(outlineButton('Wireframes')).toBeInTheDocument()
     expect(localStorage.getItem(OUTLINE_KEY)).toBeNull()
+    expect(outlineState()).toBe('shown')
+    expect(paneWidthNow()).toBe(300)
+  })
+
+  it('puts the buttons in the Gantt header, never in the toolbar', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    // Shown: in the pane header, on the upper tier above "Task" / "Due".
+    expect(chart()).toContainElement(hideButton())
+    expect(hideButton().parentElement?.className).toContain('h-6')
+    expect(hideButton().closest('[data-row-key]')).toBeNull()
+    expect(screen.getAllByRole('button', { name: /task list$/ })).toHaveLength(1)
+    await user.click(hideButton())
+    // Hidden: in the top-left corner of the timeline header, outside its aria-hidden cells.
+    expect(chart()).toContainElement(showButton())
+    expect(showButton().closest('[aria-hidden="true"]')).toBeNull()
+    expect(screen.getAllByRole('button', { name: /task list$/ })).toHaveLength(1)
   })
 
   it('names the button and its tooltip after what a press does', async () => {
@@ -886,5 +920,148 @@ describe('outline pane toggle', () => {
     expect(name).toHaveFocus()
     fireEvent.click(hideButton())
     expect(showButton()).toHaveFocus()
+  })
+
+  it('moves focus to the other button on every toggle, by click or by Enter', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    await user.click(hideButton())
+    expect(showButton()).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(hideButton()).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(showButton()).toHaveFocus()
+  })
+
+  it('with reduced motion switches at once: no hiding / showing state', async () => {
+    const s = await seed()
+    renderGantt(s.project.id)
+    fireEvent.click(hideButton())
+    expect(outlineState()).toBe('hidden')
+    expect(paneWidthNow()).toBe(0)
+    fireEvent.click(showButton())
+    expect(outlineState()).toBe('shown')
+    expect(paneWidthNow()).toBe(300)
+    expect(s.project.id).toBeTruthy()
+  })
+
+  describe('animated', () => {
+    beforeEach(() => {
+      reducedMotion(false)
+      localStorage.setItem(PANE_KEY, '340')
+      reloadGanttPrefsForTests()
+    })
+
+    it('slides the pane through widths between 0 and the stored width and lands exactly', async () => {
+      const s = await seed()
+      renderGantt(s.project.id)
+      const before = chart().scrollLeft
+      expect(paneWidthNow()).toBe(340)
+      fireEvent.click(hideButton())
+      expect(outlineState()).toBe('hiding')
+      // Under way: strictly between the two ends, the pane's own cell as wide as the attribute,
+      // the splitter gone, the cells out of the Tab order.
+      await waitFor(() => {
+        const width = paneWidthNow()
+        expect(width).toBeGreaterThan(0)
+        expect(width).toBeLessThan(340)
+        expect(outlineState()).toBe('hiding')
+      })
+      const cell = cellOf(`task:${s.wire.id}`).cell
+      expect(cell).not.toBeNull()
+      expect(cell?.hasAttribute('inert')).toBe(true)
+      expect(splitter()).not.toBeInTheDocument()
+      await waitFor(() => expect(outlineState()).toBe('hidden'), { timeout: 3000 })
+      expect(paneWidthNow()).toBe(0)
+      expect(chart().scrollLeft).toBe(before - 340)
+      expect(cellOf(`task:${s.wire.id}`).cell).toBeNull()
+      expect(localStorage.getItem(PANE_KEY)).toBe('340')
+
+      fireEvent.click(showButton())
+      expect(outlineState()).toBe('showing')
+      await waitFor(() => expect(outlineState()).toBe('shown'), { timeout: 3000 })
+      expect(paneWidthNow()).toBe(340)
+      expect(chart().scrollLeft).toBe(before)
+      expect(splitter()).toHaveAttribute('aria-valuenow', '340')
+      expect(cellOf(`task:${s.wire.id}`).cell?.hasAttribute('inert')).toBe(false)
+      expect(cellOf(`task:${s.wire.id}`).cell?.style.width).toBe('340px')
+    })
+
+    it('keeps the content at its full width and slides it by what the pane lacks', async () => {
+      const s = await seed()
+      renderGantt(s.project.id)
+      fireEvent.click(hideButton())
+      await waitFor(() => {
+        const width = paneWidthNow()
+        expect(width).toBeGreaterThan(0)
+        expect(width).toBeLessThan(340)
+      })
+      const { cell } = cellOf(`task:${s.wire.id}`)
+      const inner = cell?.firstElementChild as HTMLElement
+      expect(inner.style.width).toBe('340px')
+      expect(cell?.style.width).toBe(`${chart().getAttribute('data-pane-width')}px`)
+      expect(inner.style.transform).toMatch(/^translateX\(-/)
+      await waitFor(() => expect(outlineState()).toBe('hidden'), { timeout: 3000 })
+    })
+
+    it('rapid toggling ends exactly at the target with the right scroll position', async () => {
+      const s = await seed()
+      renderGantt(s.project.id)
+      const before = chart().scrollLeft
+      for (let i = 0; i < 5; i++) {
+        fireEvent.click(i % 2 === 0 ? hideButton() : showButton())
+      }
+      await waitFor(() => expect(outlineState()).toBe('hidden'), { timeout: 3000 })
+      expect(paneWidthNow()).toBe(0)
+      expect(chart().scrollLeft).toBe(before - 340)
+      for (let i = 0; i < 5; i++) {
+        fireEvent.click(i % 2 === 0 ? showButton() : hideButton())
+      }
+      await waitFor(() => expect(outlineState()).toBe('shown'), { timeout: 3000 })
+      expect(paneWidthNow()).toBe(340)
+      expect(chart().scrollLeft).toBe(before)
+      expect(localStorage.getItem(PANE_KEY)).toBe('340')
+      expect(localStorage.getItem(OUTLINE_KEY)).toBe('false')
+      expect(storeTask(s.wire.id)).toMatchObject({ startDate: at(2), dueDate: at(5) })
+    })
+
+    it('ignores a press on a bar and a nudge while the pane moves, and accepts them after', async () => {
+      const s = await seed()
+      const { router } = renderGantt(s.project.id)
+      const scroller = chart()
+      const before = { ...storeTask(s.wire.id) }
+      fireEvent.click(hideButton())
+      expect(outlineState()).toBe('hiding')
+      fireEvent.pointerDown(barOf(s.wire.id), {
+        button: 0,
+        pointerId: 1,
+        clientX: 500,
+        clientY: 100,
+      })
+      fireEvent.pointerMove(scroller, { pointerId: 1, clientX: 530, clientY: 100 })
+      fireEvent.pointerMove(scroller, { pointerId: 1, clientX: 548, clientY: 100 })
+      fireEvent.pointerUp(scroller, { pointerId: 1, clientX: 548, clientY: 100 })
+      fireEvent.keyDown(barOf(s.wire.id), { key: 'ArrowRight', altKey: true })
+      await act(async () => {})
+      await waitFor(() => expect(outlineState()).toBe('hidden'), { timeout: 3000 })
+      expect(storeTask(s.wire.id)).toMatchObject({
+        startDate: before.startDate,
+        dueDate: before.dueDate,
+      })
+      expect(router.state.location.search).toBe('')
+      // Settled: the same drag now moves the task by +3 days (Week scale, 16px a day).
+      fireEvent.pointerDown(barOf(s.wire.id), {
+        button: 0,
+        pointerId: 2,
+        clientX: 500,
+        clientY: 100,
+      })
+      fireEvent.pointerMove(scroller, { pointerId: 2, clientX: 530, clientY: 100 })
+      fireEvent.pointerMove(scroller, { pointerId: 2, clientX: 548, clientY: 100 })
+      fireEvent.pointerUp(scroller, { pointerId: 2, clientX: 548, clientY: 100 })
+      await waitFor(() =>
+        expect(storeTask(s.wire.id)).toMatchObject({ startDate: at(5), dueDate: at(8) }),
+      )
+    })
   })
 })
