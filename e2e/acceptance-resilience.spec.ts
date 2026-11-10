@@ -334,7 +334,12 @@ async function openApp(
 // Test hooks, stored data, claims
 // ---------------------------------------------------------------------------
 
-type TestHooks = { failNextWrites(count: number): void; setLatency(ms: number): void }
+type TestHooks = {
+  failNextWrites(count: number): void
+  setLatency(ms: number): void
+  holdWrites(): void
+  releaseWrites(): void
+}
 
 function failNextWrites(page: Page, count = 1): Promise<void> {
   return page.evaluate((n) => {
@@ -346,6 +351,19 @@ function setLatency(page: Page, ms: number): Promise<void> {
   return page.evaluate((n) => {
     ;(window as Window & { __cairnTest?: TestHooks }).__cairnTest?.setLatency(n)
   }, ms)
+}
+
+/** Writes from now on get no answer until `releaseWrites` ("the server has not answered yet"). */
+function holdWrites(page: Page): Promise<void> {
+  return page.evaluate(() => {
+    ;(window as Window & { __cairnTest?: TestHooks }).__cairnTest?.holdWrites()
+  })
+}
+
+function releaseWrites(page: Page): Promise<void> {
+  return page.evaluate(() => {
+    ;(window as Window & { __cairnTest?: TestHooks }).__cairnTest?.releaseWrites()
+  })
 }
 
 interface StoredDb {
@@ -1572,8 +1590,9 @@ test.describe('AC-15: awkward failures', () => {
   }) => {
     await openApp(page, `/projects/${ID.flat}/list`)
     await recordClaims(page)
-    await setLatency(page, 1500)
+    // The create will fail, but the server answers only once the task has also been edited.
     await failNextWrites(page)
+    await holdWrites(page)
     const before = await rawDb(page)
     await page.getByRole('button', { name: 'Add task', exact: true }).click()
     const input = page.getByRole('textbox', { name: 'New task' })
@@ -1587,29 +1606,42 @@ test.describe('AC-15: awkward failures', () => {
     await expect(
       taskRow(page, 'Ghost task').getByRole('button', { name: 'Status: In Progress' }),
     ).toBeVisible()
+    // Both changes were made while nothing had been answered: still saving, nothing stored.
+    await expect(syncIndicator(page)).toHaveAttribute('data-sync', 'saving')
+    expect(await rawDb(page)).toBe(before)
+    expect((await claims(page)).toasts).toEqual([])
+    await releaseWrites(page)
 
     // The create fails; the edit that followed it cannot be stored either. One failure, one Retry.
     const failure = page.locator('[data-sonner-toast]').filter({ hasText: /Couldn.t/ })
-    await expect(failure.first()).toBeVisible({ timeout: 15_000 })
-    await expect(syncIndicator(page)).toHaveAttribute('data-sync', 'failed', { timeout: 15_000 })
+    await expect(failure).toHaveCount(1)
+    await expect(syncIndicator(page)).toHaveAttribute('data-sync', 'failed')
     await expect(taskRow(page, 'Ghost task')).toHaveCount(0)
-    await setLatency(page, 0)
     expect(await rawDb(page)).toBe(before)
     const visible = await page.locator('[data-sonner-toast]').allInnerTexts()
     expect(visible.join(' ')).not.toMatch(/not found/i) // not a confusing "Task not found"
-    await expect(retryButton(page.locator('[data-sonner-toast]').last())).toBeVisible()
+    await expect(retryButton(failure)).toBeVisible()
 
-    await retryButton(page.locator('[data-sonner-toast]').last()).click()
+    await retryButton(failure).click()
     await expect(
       taskRow(page, 'Ghost task').getByRole('button', { name: 'Status: In Progress' }),
     ).toBeVisible()
+    await expect(taskRow(page, 'Ghost task')).toHaveCount(1)
     await expect.poll(() => titlesStored(page, 'Ghost task')).toBe(1)
     const [ghost] = Object.values((await readDb(page)).tasks).filter(
       (task) => task.title === 'Ghost task',
     )
     expect(ghost.status).toBe('in_progress') // the edit was not lost
     await expect(syncIndicator(page)).toHaveAttribute('data-sync', 'local')
-    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+    // Nothing is left to retry: the failure toast is gone and no Retry is offered anywhere. The
+    // Retry was confirmed exactly once (the "Saved" toast closes by itself, so it is read from the
+    // recorded claims rather than from the screen).
+    await expect(failure).toHaveCount(0)
+    await expect(retryButton(page.locator('[data-sonner-toast]'))).toHaveCount(0)
+    await expect(sidebarRetry(page)).toHaveCount(0)
+    const shown = (await claims(page)).toasts
+    expect(shown.filter((text) => !/^Couldn.t /.test(text))).toEqual(['Saved'])
+    expect(await titlesStored(page, 'Ghost task')).toBe(1)
   })
 
   test('AC-15: a failed change keeps its toast Retry after an unrelated save, but never overwrites a newer change', async ({

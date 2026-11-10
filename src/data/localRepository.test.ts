@@ -461,6 +461,38 @@ describe('test hooks', () => {
     expect(done).toBe(true)
   })
 
+  it('holdWrites keeps writes unanswered until releaseWrites; reads and a planned failure still work', async () => {
+    await seed()
+    repo.holdWrites()
+    repo.failNextWrites(1)
+    const settled: string[] = []
+    const failing = repo.insertTask(task('t1')).then(
+      () => settled.push('t1 stored'),
+      (error: unknown) => settled.push(`t1 ${(error as RepositoryError).kind}`),
+    )
+    const storing = repo.insertTask(task('t22')).then(() => settled.push('t22 stored'))
+    for (let i = 0; i < 5; i += 1) await Promise.resolve()
+    expect(settled).toEqual([])
+    expect((await stored()).tasks).toEqual([]) // reads answer while writes are held
+    repo.releaseWrites()
+    await Promise.all([failing, storing])
+    expect(settled).toEqual(['t1 network', 't22 stored'])
+    expect((await stored()).tasks.map((t) => t.id)).toEqual(['t22'])
+    // Released means released: the next write is answered right away.
+    await repo.insertTask(task('t333'))
+    expect(await storedTask('t333')).toBeDefined()
+  })
+
+  it('reset releases held writes', async () => {
+    await seed()
+    const hooks = installTestHooks(repo, { target: {} })
+    hooks.holdWrites()
+    const pending = repo.insertTask(task('t1'))
+    await hooks.reset()
+    // Answered, not stuck behind a gate nobody can open any more (its project is gone now).
+    await expect(pending).rejects.toBeInstanceOf(RepositoryError)
+  })
+
   it('reset clears data and test settings; installTestHooks exposes them', async () => {
     await seed()
     const target: { __cairnTest?: CairnTestHooks } = {}
