@@ -43,6 +43,7 @@ import { InlineCreate } from './InlineCreate'
 import { addRowKey, useListContext } from './listContext'
 import { subtaskContainerId } from './listDnd'
 import { belowListHeader } from './listColumns'
+import { listNavKey, listNavProps } from './listNav'
 import { MilestoneRow } from './MilestoneRow'
 import { TaskRow } from './TaskRow'
 import type { ListDragData } from './useListDnd'
@@ -116,6 +117,7 @@ export function ListGroup({
       {showHeader ? (
         <GroupHeader
           group={group}
+          containerId={containerId}
           name={name}
           bodyId={bodyId}
           collapsed={collapsed}
@@ -212,6 +214,7 @@ export function NoPhaseDropZone({ containerId }: { containerId: string }) {
 
 interface GroupHeaderProps {
   group: OutlineGroup
+  containerId: string
   name: string
   bodyId: string
   collapsed: boolean
@@ -227,6 +230,7 @@ interface GroupHeaderProps {
 
 function GroupHeader({
   group,
+  containerId,
   name,
   bodyId,
   collapsed,
@@ -261,6 +265,7 @@ function GroupHeader({
 
   return (
     <div
+      data-list-group-header=""
       data-drop-target={isDropTarget || undefined}
       className={cn(
         'group/header sticky z-[2] flex h-8 items-center gap-1 bg-muted pr-3 pl-6',
@@ -286,6 +291,7 @@ function GroupHeader({
         <button
           ref={toggleRef}
           type="button"
+          {...listNavProps('group', listNavKey.group(containerId))}
           aria-label={`${name}, ${taskCountLabel(count)}`}
           // The number counts top-level tasks only; the tooltip spells out what else is inside.
           title={groupContentsLabel(count, subtaskCount, group.milestones.length)}

@@ -250,6 +250,9 @@ Shared UI contracts (provided by the foundation):
   (project view 1/2/3, Gantt T = today), via `useViewShortcut`. Shortcuts never fire while typing in
   inputs. Custom Enter and Esc handlers must ignore keys that belong to an IME composition (Chinese
   input): use `isImeKeyEvent` from `src/lib/keyboard.ts`.
+- List ↑ / ↓ (`src/features/list/listNav.ts`, D41): not a shortcut. One keydown handler on the List's
+  scroll container moves focus between the elements marked `data-list-nav` (phase toggle, task
+  title, milestone row), only when the key comes from one of them.
 - `src/features/projects/viewBar.tsx` — `ProjectLayout` renders the view bar (List/Board/Gantt tabs)
   with a slot; views put their controls there with `<ViewBarActions>…</ViewBarActions>`.
 - `src/features/gantt/planner.ts` — `planScheduleChange(change, { source })` (boolean) and
