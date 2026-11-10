@@ -211,8 +211,26 @@ export function useListKeyboardNav({ scrollerRef, isDragging }: ListKeyboardNavO
       if (target.closest(OVERLAY_SELECTOR)) return
       current.current = null
     }
+    // An overlay that closes onto a stop that is gone (the confirm dialog of "Delete task…": its
+    // origin, the row's ⋯ button, went with the row) drops focus to <body> without the List
+    // rendering again. The focused element's removal fires focusout with no relatedTarget: check
+    // once the overlay has finished moving focus.
+    let frame = 0
+    const onFocusOut = (event: FocusEvent) => {
+      if (event.relatedTarget !== null || !current.current) return
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const active = document.activeElement
+        if (active === null || active === document.body) restore()
+      })
+    }
     document.addEventListener('focusin', onFocusIn)
-    return () => document.removeEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
+    }
   }, [remember, restore, scrollerRef])
 
   // After every render: the focused stop was removed (focus fell to <body>) — put it back.
