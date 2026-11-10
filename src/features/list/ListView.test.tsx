@@ -636,3 +636,204 @@ describe('ListView — default phase colours', () => {
     expect(phasesOf(project.id)[2].color).toBe(expected)
   })
 })
+
+describe('ListView — keyboard navigation (↑ / ↓)', () => {
+  /** Names of the navigation stops, in the order they are drawn. */
+  const stopLabel = (element: Element | null) =>
+    element?.getAttribute('data-list-nav') === 'task'
+      ? (element.querySelector('span')?.textContent ?? null)
+      : (element?.getAttribute('aria-label') ?? null)
+  const stops = () =>
+    Array.from(document.querySelectorAll('[data-list-nav]')).map((element) => stopLabel(element))
+  const focusedLabel = () => stopLabel(document.activeElement)
+
+  async function seedNav() {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Nav' }))
+    const discovery = must(await a.createPhase({ projectId: project.id, name: 'Discovery' }))
+    const report = must(await a.createPhase({ projectId: project.id, name: 'Report' }))
+    must(await a.createTask({ projectId: project.id, title: 'Loose', phaseId: null }))
+    const interview = must(
+      await a.createTask({ projectId: project.id, title: 'Interview', phaseId: discovery.id }),
+    )
+    must(
+      await a.createTask({
+        projectId: project.id,
+        title: 'Transcribe',
+        parentTaskId: interview.id,
+      }),
+    )
+    must(await a.createTask({ projectId: project.id, title: 'Write', phaseId: report.id }))
+    must(
+      await a.createMilestone({
+        projectId: project.id,
+        name: 'Kick-off',
+        date: '2026-10-20',
+        phaseId: discovery.id,
+      }),
+    )
+    return { project, discovery, report, interview }
+  }
+
+  it('moves through headers, tasks and milestones in drawing order, across phases, and stops at both ends', async () => {
+    const { project } = await seedNav()
+    const { user } = renderList(project.id)
+    // Subtasks are collapsed (Transcribe is not a stop yet); "No phase" is drawn after the phases.
+    const order = [
+      'Discovery, 1 task',
+      'Interview',
+      expect.stringMatching(/^Milestone Kick-off/),
+      'Report, 1 task',
+      'Write',
+      'No phase, 1 task',
+      'Loose',
+    ]
+    expect(stops()).toEqual(order)
+
+    const first = screen.getByRole('button', { name: 'Discovery, 1 task' })
+    act(() => first.focus())
+    const seen: (string | null)[] = [focusedLabel()]
+    for (let i = 0; i < 9; i += 1) {
+      await user.keyboard('{ArrowDown}')
+      seen.push(focusedLabel())
+    }
+    // The last stop is "Loose": ↓ keeps focus there (no wrap-around).
+    expect(seen).toEqual([...order, 'Loose', 'Loose', 'Loose'])
+    for (let i = 0; i < 9; i += 1) await user.keyboard('{ArrowUp}')
+    expect(first).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
+    expect(first).toHaveFocus()
+  })
+
+  it('walks into subtasks once they are shown, and skips them (without opening) when hidden', async () => {
+    const { project } = await seedNav()
+    const { user } = renderList(project.id)
+    const interview = screen.getByRole('button', { name: /^Interview/ })
+    act(() => interview.focus())
+    await user.keyboard('{ArrowDown}')
+    expect(focusedLabel()).toMatch(/^Milestone Kick-off/)
+    expect(rowTitles()).not.toContain('Transcribe')
+
+    await user.click(screen.getByRole('button', { name: 'Show subtasks of Interview' }))
+    act(() => screen.getByRole('button', { name: /^Interview/ }).focus())
+    await user.keyboard('{ArrowDown}')
+    expect(focusedLabel()).toBe('Transcribe')
+    await user.keyboard('{ArrowDown}')
+    expect(focusedLabel()).toMatch(/^Milestone Kick-off/)
+    await user.keyboard('{ArrowUp}{ArrowUp}')
+    expect(focusedLabel()).toBe('Interview')
+  })
+
+  it('skips the rows of a collapsed phase and keeps its header as a stop', async () => {
+    const { project } = await seedNav()
+    const { user } = renderList(project.id)
+    const discovery = screen.getByRole('button', { name: 'Discovery, 1 task' })
+    await user.click(discovery)
+    expect(discovery).toHaveAttribute('aria-expanded', 'false')
+    await user.keyboard('{ArrowDown}')
+    expect(focusedLabel()).toBe('Report, 1 task')
+    await user.keyboard('{ArrowUp}')
+    expect(discovery).toHaveFocus()
+    // Discovery is the first stop: ↑ stays.
+    await user.keyboard('{ArrowUp}')
+    expect(discovery).toHaveFocus()
+    // Nothing was expanded on the way.
+    expect(discovery).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('does not take the arrow keys from a text field, and does not add a task row stop', async () => {
+    const { project } = await seedNav()
+    const { user } = renderList(project.id)
+    await user.click(screen.getByRole('button', { name: 'Add task to Report' }))
+    const input = await screen.findByRole('textbox', { name: 'New task in Report' })
+    await waitFor(() => expect(input).toHaveFocus())
+    await user.keyboard('abc{ArrowUp}{ArrowDown}{ArrowUp}')
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue('abc')
+    // The add row is not a navigation stop.
+    expect(input).not.toHaveAttribute('data-list-nav')
+    for (const add of screen.getAllByRole('button', { name: /^Add (task|phase)/ })) {
+      expect(add).not.toHaveAttribute('data-list-nav')
+    }
+  })
+
+  it('does not move on a modified arrow, and never writes data', async () => {
+    const { project } = await seedNav()
+    const { user } = renderList(project.id)
+    const before = JSON.stringify(useWorkspaceStore.getState().data)
+    const header = screen.getByRole('button', { name: 'Discovery, 1 task' })
+    act(() => header.focus())
+    await user.keyboard(
+      '{Shift>}{ArrowDown}{/Shift}{Alt>}{ArrowDown}{/Alt}{Control>}{ArrowDown}{/Control}',
+    )
+    expect(header).toHaveFocus()
+    for (let i = 0; i < 12; i += 1) await user.keyboard('{ArrowDown}')
+    for (let i = 0; i < 12; i += 1) await user.keyboard('{ArrowUp}')
+    expect(JSON.stringify(useWorkspaceStore.getState().data)).toBe(before)
+  })
+
+  it('Enter on a focused phase header collapses it, and Enter again expands it', async () => {
+    const { project } = await seedNav()
+    const { user } = renderList(project.id)
+    const header = screen.getByRole('button', { name: 'Report, 1 task' })
+    act(() => header.focus())
+    await user.keyboard('{Enter}')
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+    expect(rowTitles()).not.toContain('Write')
+    expect(header).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(header).toHaveAttribute('aria-expanded', 'true')
+    expect(rowTitles()).toContain('Write')
+  })
+
+  it('opens the milestone dialog with Enter on a focused milestone', async () => {
+    const { project } = await seedNav()
+    const { user } = renderList(project.id)
+    const milestone = screen.getByRole('button', { name: /^Milestone Kick-off/ })
+    act(() => milestone.focus())
+    await user.keyboard('{Enter}')
+    expect(useUIStore.getState().milestoneDialog).toMatchObject({ mode: 'edit' })
+  })
+
+  it('leaves the arrow keys alone during IME composition', async () => {
+    const { project } = await seedNav()
+    renderList(project.id)
+    const header = screen.getByRole('button', { name: 'Discovery, 1 task' })
+    act(() => header.focus())
+    const composing = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      header.dispatchEvent(composing)
+    })
+    expect(composing.defaultPrevented).toBe(false)
+    expect(header).toHaveFocus()
+    const process = new KeyboardEvent('keydown', {
+      key: 'Process',
+      keyCode: 229,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      header.dispatchEvent(process)
+    })
+    expect(header).toHaveFocus()
+  })
+
+  it('puts focus on the task that took its place when the focused task is deleted', async () => {
+    const a = getWorkspaceActions()
+    const project = must(await a.createProject({ name: 'Del' }))
+    must(await a.createTask({ projectId: project.id, title: 'One' }))
+    const two = must(await a.createTask({ projectId: project.id, title: 'Two' }))
+    must(await a.createTask({ projectId: project.id, title: 'Three' }))
+    renderList(project.id)
+    act(() => screen.getByRole('button', { name: /^Two/ }).focus())
+    await act(async () => {
+      await a.deleteTask(two.id, { keepSubtasks: false })
+    })
+    await waitFor(() => expect(focusedLabel()).toBe('Three'))
+  })
+})
