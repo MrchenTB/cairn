@@ -1103,6 +1103,54 @@ test.describe('gantt (local mode)', () => {
     await expect.poll(() => scroller.evaluate((el) => el.scrollLeft)).toBe(settled)
   })
 
+  test('a drop after auto-scrolling saves exactly the dates the tooltip showed, however fast the frames ran', async ({
+    page,
+  }) => {
+    const seed = seedWorkspace()
+    const { ids } = seed
+    await openGantt(page, seed)
+    const scroller = chart(page)
+    const before = await scroller.evaluate((el) => el.scrollLeft)
+    const box = await boxOf(bar(page, ids.charlie))
+    const area = await boxOf(scroller)
+    const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    // Into the right edge zone: the chart scrolls once per frame, so how far it gets depends on
+    // the machine. Then back to where the drag began, where it stops.
+    await dragBy(page, from, area.x + area.width - 12 - from.x, 0, { release: false })
+    await expect.poll(() => scroller.evaluate((el) => el.scrollLeft)).toBeGreaterThan(before + 100)
+    await page.mouse.move(from.x, from.y, { steps: 5 })
+    const scrolled = await scroller.evaluate(
+      (el) =>
+        new Promise<number>((resolve) => {
+          let last = -1
+          const check = () => {
+            if (el.scrollLeft === last) resolve(last)
+            else {
+              last = el.scrollLeft
+              requestAnimationFrame(check)
+            }
+          }
+          requestAnimationFrame(check)
+        }),
+    )
+    expect(scrolled).toBeGreaterThan(before + 100)
+    // The bar went along with the timeline: the pointer is back, the dates are not.
+    const tip = page.locator('div.pointer-events-none.fixed')
+    await expect(tip).toContainText('+')
+    const range = (await tip.innerText()).split(' · ')[0] // e.g. "Nov 18 – Nov 19"
+    const [start, due] = range.split(' – ').map((monthDay) => {
+      const [month, day] = monthDay.split(' ')
+      const m = ['Nov', 'Dec'].indexOf(month)
+      if (m < 0) throw new Error(`unexpected tooltip date ${monthDay}`)
+      return `2026-${String(11 + m)}-${day.padStart(2, '0')}`
+    })
+    expect(start > '2026-11-13').toBe(true)
+    await page.mouse.up()
+    // What was shown is what was saved, and the bar says the same.
+    await expect.poll(() => stored(page, ids.charlie)).toEqual({ start, due })
+    await expect(bar(page, ids.charlie)).toHaveAccessibleName(new RegExp(`, ${range}, `))
+  })
+
   test('the dependency mode menu switches Manual ↔ Auto and remembers it', async ({ page }) => {
     const seed = seedWorkspace()
     await openGantt(page, seed)

@@ -8,6 +8,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { expect, test as base, type Locator, type Page } from '@playwright/test'
+import { AUTO_SCROLL_EDGE_PX, RESIZE_HANDLE_WIDTH } from '../src/features/gantt/model/constants.ts'
 
 export const LOCAL_WORKSPACE_KEY = 'cairn:local:workspace:v1'
 export const SCALES_KEY = 'cairn:gantt-scales'
@@ -255,18 +256,82 @@ export async function dragBy(
   if (options.release !== false) await page.mouse.up()
 }
 
-/** Moves a bar by `days` (drag its body) at the given scale. */
+/** The element's box once it is the same on two animation frames in a row (layout and scroll settled). */
+async function settledBox(locator: Locator) {
+  await expect(locator).toBeVisible()
+  return locator.evaluate(
+    (element) =>
+      new Promise<{ x: number; y: number; width: number; height: number }>((resolve) => {
+        let last = ''
+        const check = () => {
+          const { x, y, width, height } = element.getBoundingClientRect()
+          const key = `${x},${y},${width},${height}`
+          if (key === last) resolve({ x, y, width, height })
+          else {
+            last = key
+            requestAnimationFrame(check)
+          }
+        }
+        requestAnimationFrame(check)
+      }),
+  )
+}
+
+/**
+ * The viewport x range where a drag can press and release without the chart auto-scrolling: right
+ * of the outline pane, left of a vertical scrollbar, and AUTO_SCROLL_EDGE_PX inside both ends of
+ * the visible timeline. Inside those edge zones the chart scrolls once per animation frame, so how
+ * far a drag lands there depends on the frame rate (a busy machine drops frames), not on the mouse.
+ */
+async function quietBand(page: Page): Promise<{ left: number; right: number }> {
+  const paneWidth = Number(
+    await page.getByRole('separator', { name: 'Resize task list' }).getAttribute('aria-valuenow'),
+  )
+  const scroller = await chart(page).evaluate((element) => ({
+    left: element.getBoundingClientRect().left,
+    width: element.clientWidth,
+  }))
+  // The same bounds as `autoScrollStep`: it scrolls only strictly closer than the edge distance.
+  return {
+    left: scroller.left + paneWidth + AUTO_SCROLL_EDGE_PX,
+    right: scroller.left + scroller.width - AUTO_SCROLL_EDGE_PX,
+  }
+}
+
+function outsideBand(band: { left: number; right: number }, x: number): boolean {
+  return x < band.left || x > band.right
+}
+
+/**
+ * Moves a bar by `days` (drag its body) at the given scale. It presses the bar's centre, or, when
+ * the centre is hidden under the outline pane or in an auto-scroll zone (or the release point
+ * would be), the nearest point of the bar where neither press nor release auto-scrolls; so the
+ * pointer travel alone decides the new dates.
+ */
 export async function moveBar(
   page: Page,
   id: string,
   days: number,
   scale: Scale = 'day',
 ): Promise<void> {
-  const box = await boxOf(bar(page, id))
-  await dragBy(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, days * PX[scale])
+  const box = await settledBox(bar(page, id))
+  const dx = days * PX[scale]
+  const band = await quietBand(page)
+  const grip = Math.min(RESIZE_HANDLE_WIDTH + 1, box.width / 2)
+  const lo = Math.max(box.x + grip, band.left, band.left - dx)
+  const hi = Math.min(box.x + box.width - grip, band.right, band.right - dx)
+  if (lo > hi) {
+    throw new Error(
+      `bar ${id} (x ${Math.round(box.x)}–${Math.round(box.x + box.width)}) cannot be moved ` +
+        `${days} days between ${Math.round(band.left)} and ${Math.round(band.right)} without ` +
+        'auto-scrolling: scroll it into view first',
+    )
+  }
+  const x = Math.min(hi, Math.max(lo, box.x + box.width / 2))
+  await dragBy(page, { x, y: box.y + box.height / 2 }, dx)
 }
 
-/** Resizes one end of a bar by `days` (drag its grip). */
+/** Resizes one end of a bar by `days` (drag its grip); the grip must not be in an auto-scroll zone. */
 export async function resizeBar(
   page: Page,
   id: string,
@@ -274,9 +339,17 @@ export async function resizeBar(
   days: number,
   scale: Scale = 'day',
 ): Promise<void> {
-  const box = await boxOf(bar(page, id))
+  const box = await settledBox(bar(page, id))
   const x = edge === 'start' ? box.x + 3 : box.x + box.width - 3
-  await dragBy(page, { x, y: box.y + box.height / 2 }, days * PX[scale])
+  const dx = days * PX[scale]
+  const band = await quietBand(page)
+  if (outsideBand(band, x) || outsideBand(band, x + dx)) {
+    throw new Error(
+      `the ${edge} grip of bar ${id} (x ${Math.round(x)} → ${Math.round(x + dx)}) is outside ` +
+        `${Math.round(band.left)}–${Math.round(band.right)}: the chart would auto-scroll`,
+    )
+  }
+  await dragBy(page, { x, y: box.y + box.height / 2 }, dx)
 }
 
 /**

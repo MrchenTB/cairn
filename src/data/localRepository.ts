@@ -662,6 +662,8 @@ export class LocalRepository implements Repository {
   private readonly onUnreadableData: ((info: UnreadableLocalData) => void) | undefined
   private latencyMs: number
   private failuresLeft = 0
+  /** Test hook: while set, writes wait here (after their latency) until `releaseWrites()`. */
+  private writeGate: { opened: Promise<void>; open: () => void } | null = null
   /** The last stored text known to be readable (skips re-validating unchanged data). */
   private trustedRaw: string | null = null
   /** The last unreadable text reported (each one is reported once). */
@@ -683,11 +685,30 @@ export class LocalRepository implements Repository {
   setLatency(ms: number): void {
     this.latencyMs = Math.max(0, Number(ms) || 0)
   }
+  /**
+   * Test hook: writes made from now on wait, without an answer, until `releaseWrites()`. A test can
+   * then finish what it does "before the server answered" without racing a fixed latency.
+   */
+  holdWrites(): void {
+    if (this.writeGate) return
+    let open = () => {}
+    const opened = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    this.writeGate = { opened, open }
+  }
+  /** Test hook: lets the held writes go on (in the order they were made). */
+  releaseWrites(): void {
+    const gate = this.writeGate
+    this.writeGate = null
+    gate?.open()
+  }
   /** Test hook: deletes all local data and clears the test settings. */
   reset(): void {
     this.storage.removeItem(this.storageKey)
     this.failuresLeft = 0
     this.latencyMs = 0
+    this.releaseWrites()
   }
 
   loadWorkspace(): Promise<WorkspaceSnapshot> {
@@ -987,6 +1008,7 @@ export class LocalRepository implements Repository {
     const simulateFailure = this.failuresLeft > 0
     if (simulateFailure) this.failuresLeft -= 1
     await this.delay()
+    while (this.writeGate) await this.writeGate.opened
     if (simulateFailure) throw new RepositoryError('network', NETWORK_ERROR_MESSAGE)
     const db = this.load()
     const result = change(db, this.now())
@@ -1087,6 +1109,10 @@ export interface CairnTestHooks {
   failNextWrites(n: number): void
   /** Adds `ms` of latency to every repository call (0 = none). */
   setLatency(ms: number): void
+  /** Writes made from now on wait (unanswered) until `releaseWrites()`. */
+  holdWrites(): void
+  /** Lets the held writes go on, in order. */
+  releaseWrites(): void
   /** Deletes all local data and test settings, then reloads the workspace. */
   reset(): Promise<void>
 }
@@ -1105,6 +1131,8 @@ export function installTestHooks(
   const hooks: CairnTestHooks = {
     failNextWrites: (n) => repository.failNextWrites(n),
     setLatency: (ms) => repository.setLatency(ms),
+    holdWrites: () => repository.holdWrites(),
+    releaseWrites: () => repository.releaseWrites(),
     reset: async () => {
       repository.reset()
       await options.onReset?.()
