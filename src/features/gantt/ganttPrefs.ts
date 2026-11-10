@@ -1,6 +1,6 @@
 /**
  * Per-device Gantt conveniences (localStorage via '@/lib/storage', never synced): the outline
- * pane width and which groups / parents are collapsed per project. The scale lives in
+ * pane width, whether the pane is hidden, and which groups / parents are collapsed per project. The scale lives in
  * src/app/viewPrefs.ts (shared with the cross-project Timeline).
  */
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
@@ -8,6 +8,7 @@ import { isPlainObject, onStorageKey, readJSON, writeJSON } from '@/lib/storage'
 import { PANE_WIDTH_DEFAULT, PANE_WIDTH_MAX, PANE_WIDTH_MIN } from './model/constants'
 
 const PANE_KEY = 'cairn:gantt-pane-width'
+const OUTLINE_COLLAPSED_KEY = 'cairn:gantt-outline-collapsed'
 const COLLAPSED_KEY = 'cairn:gantt-collapsed'
 /** Keys kept per project (oldest collapsed rows are dropped beyond this). */
 const MAX_COLLAPSED_PER_PROJECT = 500
@@ -29,6 +30,11 @@ function createStored<T>(key: string, parse: (raw: unknown) => T) {
   })
   return {
     get: () => snapshot,
+    /** Test helper: re-reads the key (the snapshot outlives a cleared localStorage). */
+    reload() {
+      snapshot = parse(readJSON(key))
+      emit()
+    },
     set(next: T, persist = true) {
       snapshot = next
       if (persist) writeJSON(key, next)
@@ -50,6 +56,9 @@ const paneWidth = createStored(PANE_KEY, (raw) =>
   typeof raw === 'number' ? clampPaneWidth(raw) : PANE_WIDTH_DEFAULT,
 )
 
+/** Only a stored `true` hides the pane; anything else (missing, invalid) shows it. */
+const outlineCollapsed = createStored(OUTLINE_COLLAPSED_KEY, (raw) => raw === true)
+
 const collapsed = createStored(COLLAPSED_KEY, (raw): Record<string, string[]> => {
   const result: Record<string, string[]> = {}
   if (!isPlainObject(raw)) return result
@@ -69,6 +78,27 @@ export function usePaneWidth(): [number, (width: number) => void, () => void] {
   const setWidth = useCallback((next: number) => paneWidth.set(clampPaneWidth(next), false), [])
   const commit = useCallback(() => paneWidth.persist(), [])
   return [width, setWidth, commit]
+}
+
+/**
+ * [hidden, setHidden]: whether the whole outline pane is hidden (global, not per project). The
+ * stored pane width is left alone, so showing the pane again restores it.
+ */
+export function useOutlineCollapsed(): [boolean, (hidden: boolean) => void] {
+  const hidden = useSyncExternalStore(
+    outlineCollapsed.subscribe,
+    outlineCollapsed.get,
+    outlineCollapsed.get,
+  )
+  const setHidden = useCallback((next: boolean) => outlineCollapsed.set(next), [])
+  return [hidden, setHidden]
+}
+
+/** Test helper: re-reads every key from localStorage. */
+export function reloadGanttPrefsForTests(): void {
+  paneWidth.reload()
+  outlineCollapsed.reload()
+  collapsed.reload()
 }
 
 const EMPTY: readonly string[] = []

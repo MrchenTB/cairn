@@ -24,6 +24,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { flushSync } from 'react-dom'
 import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual'
 import { CalendarOff, CalendarRange, X } from 'lucide-react'
 import { useViewShortcut } from '@/app/shortcuts'
@@ -54,7 +55,7 @@ import {
 import { ViewBarActions } from '@/features/projects/viewBar'
 import { useHotkeys } from '@/lib/keyboard'
 import { notify } from '@/lib/notify'
-import { usePaneWidth } from '../ganttPrefs'
+import { useOutlineCollapsed, usePaneWidth } from '../ganttPrefs'
 import { HEADER_HEIGHT, LINK_ROW_CHUNK, ROW_HEIGHT, ROW_OVERSCAN } from '../model/constants'
 import { conflictMessages, liveConflicts, type DateOverrides } from '../model/conflicts'
 import {
@@ -105,6 +106,7 @@ import {
   visibleDayRange,
   type DayRange,
 } from '../model/scale'
+import { anchoredPaneScroll, paneWidthAt } from '../model/paneAnimation'
 import { createScrollPosition } from '../model/scrollPosition'
 import { anchoredScrollLeft, autoScrollStep, extendSide, initialFocus } from '../model/viewport'
 import {
@@ -216,6 +218,14 @@ function prefersReducedMotion(): boolean {
   )
 }
 
+/** Finishes the CSS transitions running under `el`, so its layout is the final one right now. */
+function settleTransitions(el: HTMLElement): void {
+  if (typeof el.getAnimations !== 'function') return
+  for (const animation of el.getAnimations({ subtree: true })) {
+    if (animation instanceof CSSTransition) animation.finish()
+  }
+}
+
 function sameDates(a: DragDates, b: DragDates): boolean {
   return a.start === b.start && a.end === b.end
 }
@@ -267,7 +277,17 @@ export function GanttChart({
   const openMilestoneDialog = useUIStore((s) => s.openMilestoneDialog)
   const milestoneDialog = useUIStore((s) => s.milestoneDialog)
   const [scale, storeScale] = useGanttScale(project.id)
-  const [paneWidth, setPaneWidth, commitPaneWidth] = usePaneWidth()
+  const [storedPaneWidth, setPaneWidth, commitPaneWidth] = usePaneWidth()
+  const [outlineCollapsed, setOutlineCollapsed] = useOutlineCollapsed()
+  // Where the pane is heading: a hidden outline is a pane of width 0 (the stored width stays
+  // untouched, so showing it again restores it).
+  const targetPaneWidth = outlineCollapsed ? 0 : storedPaneWidth
+  // While the pane hides / shows, its width is animated here (null = at rest). The ONE width
+  // every consumer below uses is `paneWidth`, so the grid, bars, header, today line and links
+  // stay in step on every frame.
+  const [animatedPaneWidth, setAnimatedPaneWidth] = useState<number | null>(null)
+  const paneWidth = animatedPaneWidth ?? targetPaneWidth
+  const outlineMoving = animatedPaneWidth !== null
   const activeReschedule = useRescheduleStore((s) => s.active)
   const helpId = useId()
 
@@ -276,6 +296,8 @@ export function GanttChart({
   const registerUnscheduledToggle = useCallback((element: HTMLButtonElement | null) => {
     unscheduledToggleRef.current = element
   }, [])
+  const hideOutlineRef = useRef<HTMLButtonElement | null>(null)
+  const showOutlineRef = useRef<HTMLButtonElement | null>(null)
   const removeButtonRef = useRef<HTMLButtonElement>(null)
   const [scrollPosition] = useState(createScrollPosition)
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
@@ -284,7 +306,9 @@ export function GanttChart({
   const { rows } = model
   const { dayWidth } = SCALES[scale]
   const todayDay = toEpochDay(today)
-  const visibleTimelineWidth = Math.max(0, viewport.width - paneWidth)
+  // The range is sized for the narrower of the moving pane and its target, so it extends once
+  // when a motion starts, not on every frame (it never shrinks, and `minDays` only moves its end).
+  const visibleTimelineWidth = Math.max(0, viewport.width - Math.min(paneWidth, targetPaneWidth))
   const minDays = Math.ceil(visibleTimelineWidth / dayWidth) + 7
   const baseRange = useMemo(
     () => timelineRange(bounds, todayDay, scale, weekStartsOn, minDays),
@@ -549,6 +573,23 @@ export function GanttChart({
   const centerDay = useRef(todayDay + 0.5)
   const pendingCenter = useRef<number | null>(null)
   const growing = useRef(false)
+  /**
+   * The outline hide / show motion in progress (null = none). Hiding removes `from - width` px of
+   * pane to the left of the timeline, so the scroll position is `startScroll - (from - width)`
+   * on every frame (from where the motion started, never accumulated, so nothing drifts): the
+   * layout effect below applies it in the same commit as the width. `expected` is what that
+   * effect last wrote, to tell a scroll made by someone else (wheel, range growth) from its own.
+   */
+  const paneMotion = useRef<{
+    from: number
+    to: number
+    startScroll: number
+    expected: number
+    startTime: number | null
+    frame: number
+  } | null>(null)
+  /** Focus moves to the other toggle button after the next flip (each button leaves with its state). */
+  const focusOutlineToggle = useRef(false)
 
   const grow = useEvent((side: 'start' | 'end') => {
     const { geometry: g, rangeEnd: end, scale: s, weekStartsOn: w } = latest.current
@@ -599,6 +640,10 @@ export function GanttChart({
     const previous = prevGeometry.current
     prevGeometry.current = geometry
     let resetWindow = false
+    // With prefers-reduced-motion the global rule gives every element a 0.01ms transition, so a
+    // style change leaves the OLD width / left in force for this task: scrollWidth, the scroll
+    // clamp and the end-of-range check below would all read stale layout. Land them first.
+    if (prefersReducedMotion()) settleTransitions(el)
     if (!initialized.current) {
       if (visible <= 0) return
       initialized.current = true
@@ -620,9 +665,39 @@ export function GanttChart({
         geometry.dayWidth,
       )
     }
+    // After the anchoring above, so a range grown in the same render counts first.
+    const motion = paneMotion.current
+    if (motion && initialized.current) {
+      // Whatever else moved the scroll position since this effect's last write (a wheel scroll,
+      // a grown range, a scale switch) is the new base; the browser clamping it when the content
+      // shrank, and sub-pixel rounding, are not.
+      const maxScroll = el.scrollWidth - el.clientWidth
+      const reference = maxScroll > 0 ? Math.min(motion.expected, maxScroll) : motion.expected
+      const external = el.scrollLeft - reference
+      if (Math.abs(external) > 1) motion.startScroll += external
+      el.scrollLeft = anchoredPaneScroll(motion.startScroll, motion.from, paneWidth)
+      motion.expected = el.scrollLeft
+      if (!outlineMoving) paneMotion.current = null
+    }
     growing.current = false
     syncScroll(resetWindow)
-  }, [geometry, dayWidth, timelineWidth, paneWidth, viewport.width, syncScroll])
+  }, [geometry, dayWidth, timelineWidth, paneWidth, outlineMoving, viewport.width, syncScroll])
+
+  // Each toggle button leaves with its state: focus follows to the other one.
+  useLayoutEffect(() => {
+    if (!focusOutlineToggle.current) return
+    focusOutlineToggle.current = false
+    const button = outlineCollapsed ? showOutlineRef.current : hideOutlineRef.current
+    button?.focus({ preventScroll: true })
+  }, [outlineCollapsed])
+
+  useEffect(
+    () => () => {
+      const motion = paneMotion.current
+      if (motion && motion.frame) cancelAnimationFrame(motion.frame)
+    },
+    [],
+  )
 
   const changeScale = useEvent((next: GanttScale) => {
     if (next === scale) return
@@ -1183,6 +1258,57 @@ export function GanttChart({
     )
   })
 
+  /** One frame of the hide / show motion: set the width (the layout effect anchors the scroll). */
+  const stepPaneMotion = useEvent((now: number) => {
+    const motion = paneMotion.current
+    if (!motion) return
+    motion.frame = 0
+    motion.startTime ??= now
+    const { width, done } = paneWidthAt(motion.from, motion.to, now - motion.startTime)
+    // In this frame, so the width and the scroll position never show different states.
+    flushSync(() => setAnimatedPaneWidth(done ? null : width))
+    if (!done && paneMotion.current === motion) {
+      motion.frame = requestAnimationFrame(stepPaneMotion)
+    }
+  })
+
+  /**
+   * Hides / shows the outline pane, animating its width (instantly with reduced motion). A move,
+   * resize, draw or link in progress is cancelled first (the same path as Esc), so no date
+   * changes by accident. A toggle during a motion turns around from the width it has reached.
+   */
+  const toggleOutline = useEvent(() => {
+    const hiding = !outlineCollapsed
+    endInteraction(true)
+    const el = scrollerRef.current
+    const running = paneMotion.current
+    if (running?.frame) cancelAnimationFrame(running.frame)
+    const from = latest.current.paneWidth
+    const to = hiding ? 0 : storedPaneWidth
+    // The timeline needs the days under the pane that goes away to the left of the first one.
+    if (el && to < from && el.scrollLeft < from - to) grow('start')
+    const instant = prefersReducedMotion() || !el || from === to
+    paneMotion.current =
+      from === to
+        ? null
+        : {
+            from,
+            to,
+            startScroll: el?.scrollLeft ?? 0,
+            expected: el?.scrollLeft ?? 0,
+            startTime: null,
+            frame: 0,
+          }
+    focusOutlineToggle.current = true
+    setOutlineCollapsed(hiding)
+    if (instant) {
+      setAnimatedPaneWidth(null)
+      return
+    }
+    setAnimatedPaneWidth(from)
+    if (paneMotion.current) paneMotion.current.frame = requestAnimationFrame(stepPaneMotion)
+  })
+
   const dragOriginFor = (row: GanttRow, handle: string): DragOrigin | null => {
     if (row.kind === 'milestone') {
       return handle === 'point' && row.day !== null
@@ -1196,7 +1322,8 @@ export function GanttChart({
   }
 
   const onPointerDown = useEvent((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || interactionRef.current) return
+    // Nothing coordinate-sensitive starts while the pane is moving: the days are still sliding.
+    if (event.button !== 0 || interactionRef.current || paneMotion.current) return
     const el = scrollerRef.current
     if (!el) return
     const handleEl = (event.target as Element).closest('[data-handle]')
@@ -1284,6 +1411,7 @@ export function GanttChart({
    * scroller: with pointer capture there, the (dbl)click targets the scroller, not the lane.
    */
   const onDoubleClick = useEvent((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (paneMotion.current) return
     const hit = document.elementFromPoint(event.clientX, event.clientY)
     const lane = hit?.closest('[data-handle="lane"]')
     const el = scrollerRef.current
@@ -1323,6 +1451,7 @@ export function GanttChart({
     const nudge = nudgeFromKey(event)
     if (!nudge) return
     event.preventDefault()
+    if (paneMotion.current) return // the days are still sliding: wait for the pane to settle
     if (row.kind === 'task') {
       const next = nudgeSpan(row.span, nudge)
       if (!next) {
@@ -1425,6 +1554,17 @@ export function GanttChart({
         ref={scrollerRef}
         role="region"
         aria-label="Gantt chart"
+        // Test and tooling hooks: where the pane is (shown, hiding, hidden, showing) and its width.
+        data-outline={
+          outlineMoving
+            ? outlineCollapsed
+              ? 'hiding'
+              : 'showing'
+            : outlineCollapsed
+              ? 'hidden'
+              : 'shown'
+        }
+        data-pane-width={paneWidth}
         className="relative isolate min-h-0 flex-1 overflow-auto overscroll-contain border-t border-subtle bg-(--gantt-bg)"
         onScroll={() => {
           syncScroll()
@@ -1447,6 +1587,12 @@ export function GanttChart({
             geometry={geometry}
             scroll={scrollPosition}
             paneWidth={paneWidth}
+            paneFullWidth={storedPaneWidth}
+            paneAnimating={outlineMoving}
+            outlineHidden={outlineCollapsed}
+            onToggleOutline={toggleOutline}
+            hideButtonRef={hideOutlineRef}
+            showButtonRef={showOutlineRef}
             timelineWidth={timelineWidth}
             todayX={dayCenterX(todayDay, geometry)}
             todayLabel={formatDate(today, 'short')}
@@ -1469,11 +1615,13 @@ export function GanttChart({
             }}
           >
             {/* Opaque outline column below the last row (rows paint their own cells). */}
-            <div
-              aria-hidden
-              className="sticky left-0 z-[10] bg-(--gantt-bg)"
-              style={{ width: paneWidth, height: bodyHeight }}
-            />
+            {paneWidth > 0 ? (
+              <div
+                aria-hidden
+                className="sticky left-0 z-[10] bg-(--gantt-bg)"
+                style={{ width: paneWidth, height: bodyHeight }}
+              />
+            ) : null}
             <GridBackground
               style={gridStyle}
               lines={lines}
@@ -1502,6 +1650,8 @@ export function GanttChart({
                   index={item.index}
                   geometry={geometry}
                   paneWidth={paneWidth}
+                  paneFullWidth={storedPaneWidth}
+                  paneInert={outlineMoving}
                   timelineWidth={timelineWidth}
                   today={today}
                   todayDay={todayDay}
@@ -1558,12 +1708,14 @@ export function GanttChart({
         </div>
       </div>
 
-      <PaneResizer
-        width={paneWidth}
-        onResize={setPaneWidth}
-        onCommit={commitPaneWidth}
-        scrolled={scrolledX}
-      />
+      {outlineCollapsed || outlineMoving ? null : (
+        <PaneResizer
+          width={paneWidth}
+          onResize={setPaneWidth}
+          onCommit={commitPaneWidth}
+          scrolled={scrolledX}
+        />
+      )}
 
       {nothingScheduled ? (
         <div

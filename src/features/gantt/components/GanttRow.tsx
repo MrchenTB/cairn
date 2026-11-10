@@ -71,6 +71,14 @@ export interface GanttRowViewProps {
   index: number
   geometry: TimelineGeometry
   paneWidth: number
+  /**
+   * Gantt only: the full width of the outline cell. While `paneWidth` animates, the cell is a
+   * clipping box of `paneWidth` around content of this width that slides (nothing re-wraps or
+   * re-truncates). Unset (Timeline): the cell is simply `paneWidth` wide.
+   */
+  paneFullWidth?: number
+  /** The pane is moving: its controls are skipped by Tab and ignore the pointer. */
+  paneInert?: boolean
   timelineWidth: number
   today: ISODate
   todayDay: number
@@ -151,6 +159,54 @@ export const cellSurface =
   'bg-(--gantt-bg) group-hover/row:bg-[linear-gradient(var(--gantt-row-hover),var(--gantt-row-hover))]'
 const cellSelected =
   'bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))] shadow-[inset_2px_0_0_var(--accent)] group-hover/row:bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))]'
+
+/**
+ * Shell of an outline cell. With `fullWidth` (Gantt) it is always the same two boxes, so nothing
+ * remounts when a hide / show motion starts or ends: a sticky clipping box of `paneWidth` and the
+ * content at `fullWidth`, shifted left by what the pane lacks.
+ */
+function OutlineCell({
+  paneWidth,
+  fullWidth,
+  inert,
+  className,
+  style,
+  children,
+}: {
+  paneWidth: number
+  fullWidth: number | undefined
+  inert: boolean | undefined
+  className?: string
+  style?: CSSProperties
+  children: ReactNode
+}) {
+  if (fullWidth === undefined) {
+    return (
+      <div className={cn(cellBase, className)} style={{ ...style, width: paneWidth }}>
+        {children}
+      </div>
+    )
+  }
+  return (
+    <div
+      className="sticky left-0 z-[11] h-full shrink-0 overflow-hidden"
+      style={{ width: paneWidth }}
+      inert={inert}
+    >
+      <div
+        className={cn('relative flex h-full items-center', className)}
+        style={{
+          ...style,
+          width: fullWidth,
+          transform: paneWidth === fullWidth ? undefined : `translateX(${paneWidth - fullWidth}px)`,
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
 const chevron = (open: boolean) =>
   cn(
     'size-3.5 shrink-0 text-fg-tertiary motion-safe:transition-transform motion-safe:duration-fast',
@@ -201,6 +257,8 @@ function GanttRowViewImpl(props: GanttRowViewProps) {
 function LeftCell({
   row,
   paneWidth,
+  paneFullWidth,
+  paneInert,
   today,
   todayDay,
   selected,
@@ -211,13 +269,20 @@ function LeftCell({
   projectColor,
   onPhaseColor,
 }: GanttRowViewProps) {
+  // A hidden outline (width 0): no cell, so no focusable buttons stay behind in it.
+  if (paneWidth <= 0) return null
   if (row.kind === 'group') {
     const { label, phase } = row
     const count = row.taskCount
     // A phase's dot sits over the gap the toggle button leaves for it (pl-2 + px-1 + chevron + gap).
     const canColor = phase !== null && projectColor !== undefined && onPhaseColor !== undefined
     return (
-      <div className={cn(cellBase, 'bg-muted pr-3 pl-2')} style={{ width: paneWidth }}>
+      <OutlineCell
+        paneWidth={paneWidth}
+        fullWidth={paneFullWidth}
+        inert={paneInert}
+        className="bg-muted pr-3 pl-2"
+      >
         <button
           type="button"
           aria-expanded={!row.collapsed}
@@ -259,7 +324,7 @@ function LeftCell({
             </button>
           </PhaseColorPopover>
         ) : null}
-      </div>
+      </OutlineCell>
     )
   }
 
@@ -267,9 +332,12 @@ function LeftCell({
     const { milestone } = row
     const past = row.day !== null && row.day < todayDay
     return (
-      <div
-        className={cn(cellBase, 'gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
-        style={{ width: paneWidth, paddingLeft: 12 + indent }}
+      <OutlineCell
+        paneWidth={paneWidth}
+        fullWidth={paneFullWidth}
+        inert={paneInert}
+        className={cn('gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
+        style={{ paddingLeft: 12 + indent }}
       >
         <span className="w-4 shrink-0" aria-hidden />
         <MilestoneGlyph past={past} />
@@ -289,15 +357,18 @@ function LeftCell({
         >
           {row.day !== null ? formatDateSmart(milestone.date, today) : '—'}
         </span>
-      </div>
+      </OutlineCell>
     )
   }
 
   const { task } = row
   return (
-    <div
-      className={cn(cellBase, 'gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
-      style={{ width: paneWidth, paddingLeft: 12 + indent + row.depth * SUBTASK_INDENT }}
+    <OutlineCell
+      paneWidth={paneWidth}
+      fullWidth={paneFullWidth}
+      inert={paneInert}
+      className={cn('gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
+      style={{ paddingLeft: 12 + indent + row.depth * SUBTASK_INDENT }}
     >
       {row.subtaskCount > 0 ? (
         <button
@@ -336,7 +407,7 @@ function LeftCell({
       <span className="flex shrink-0 justify-end" style={{ width: DUE_COLUMN_WIDTH }}>
         <DueLabel dueDate={task.dueDate} status={task.status} />
       </span>
-    </div>
+    </OutlineCell>
   )
 }
 

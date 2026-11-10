@@ -279,14 +279,15 @@ async function settledBox(locator: Locator) {
 
 /**
  * The viewport x range where a drag can press and release without the chart auto-scrolling: right
- * of the outline pane, left of a vertical scrollbar, and AUTO_SCROLL_EDGE_PX inside both ends of
+ * of the outline pane (if shown), left of a vertical scrollbar, and AUTO_SCROLL_EDGE_PX inside both ends of
  * the visible timeline. Inside those edge zones the chart scrolls once per animation frame, so how
  * far a drag lands there depends on the frame rate (a busy machine drops frames), not on the mouse.
  */
 async function quietBand(page: Page): Promise<{ left: number; right: number }> {
-  const paneWidth = Number(
-    await page.getByRole('separator', { name: 'Resize task list' }).getAttribute('aria-valuenow'),
-  )
+  // A hidden outline has no splitter (and no pane): the edge zone starts at the scroller's edge.
+  const splitter = page.getByRole('separator', { name: 'Resize task list' })
+  const paneWidth =
+    (await splitter.count()) === 0 ? 0 : Number(await splitter.getAttribute('aria-valuenow'))
   const scroller = await chart(page).evaluate((element) => ({
     left: element.getBoundingClientRect().left,
     width: element.clientWidth,
