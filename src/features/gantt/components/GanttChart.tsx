@@ -54,7 +54,7 @@ import {
 import { ViewBarActions } from '@/features/projects/viewBar'
 import { useHotkeys } from '@/lib/keyboard'
 import { notify } from '@/lib/notify'
-import { usePaneWidth } from '../ganttPrefs'
+import { useOutlineCollapsed, usePaneWidth } from '../ganttPrefs'
 import { HEADER_HEIGHT, LINK_ROW_CHUNK, ROW_HEIGHT, ROW_OVERSCAN } from '../model/constants'
 import { conflictMessages, liveConflicts, type DateOverrides } from '../model/conflicts'
 import {
@@ -267,7 +267,11 @@ export function GanttChart({
   const openMilestoneDialog = useUIStore((s) => s.openMilestoneDialog)
   const milestoneDialog = useUIStore((s) => s.milestoneDialog)
   const [scale, storeScale] = useGanttScale(project.id)
-  const [paneWidth, setPaneWidth, commitPaneWidth] = usePaneWidth()
+  const [storedPaneWidth, setPaneWidth, commitPaneWidth] = usePaneWidth()
+  const [outlineCollapsed, setOutlineCollapsed] = useOutlineCollapsed()
+  // The ONE width every consumer below uses: a hidden outline is a pane of width 0 (the stored
+  // width stays untouched, so showing it again restores it).
+  const paneWidth = outlineCollapsed ? 0 : storedPaneWidth
   const activeReschedule = useRescheduleStore((s) => s.active)
   const helpId = useId()
 
@@ -275,6 +279,10 @@ export function GanttChart({
   const unscheduledToggleRef = useRef<HTMLButtonElement | null>(null)
   const registerUnscheduledToggle = useCallback((element: HTMLButtonElement | null) => {
     unscheduledToggleRef.current = element
+  }, [])
+  const outlineToggleRef = useRef<HTMLButtonElement | null>(null)
+  const registerOutlineToggle = useCallback((element: HTMLButtonElement | null) => {
+    outlineToggleRef.current = element
   }, [])
   const removeButtonRef = useRef<HTMLButtonElement>(null)
   const [scrollPosition] = useState(createScrollPosition)
@@ -549,6 +557,12 @@ export function GanttChart({
   const centerDay = useRef(todayDay + 0.5)
   const pendingCenter = useRef<number | null>(null)
   const growing = useRef(false)
+  /**
+   * Scroll shift (px) to apply in the layout effect after the next render that changes the pane
+   * width through the outline toggle (not for splitter drags): hiding removes W px of pane to
+   * the left of the timeline, so the scroll position drops by W to keep every day where it is.
+   */
+  const outlineShift = useRef(0)
 
   const grow = useEvent((side: 'start' | 'end') => {
     const { geometry: g, rangeEnd: end, scale: s, weekStartsOn: w } = latest.current
@@ -598,6 +612,8 @@ export function GanttChart({
     const visible = Math.max(0, el.clientWidth - paneWidth)
     const previous = prevGeometry.current
     prevGeometry.current = geometry
+    const shift = outlineShift.current
+    outlineShift.current = 0
     let resetWindow = false
     if (!initialized.current) {
       if (visible <= 0) return
@@ -620,6 +636,8 @@ export function GanttChart({
         geometry.dayWidth,
       )
     }
+    // After the origin anchoring above, so a range grown in the same render counts first.
+    if (shift !== 0 && initialized.current) el.scrollLeft = Math.max(0, el.scrollLeft + shift)
     growing.current = false
     syncScroll(resetWindow)
   }, [geometry, dayWidth, timelineWidth, paneWidth, viewport.width, syncScroll])
@@ -1183,6 +1201,29 @@ export function GanttChart({
     )
   })
 
+  /**
+   * Hides / shows the outline pane. A move, resize, draw or link in progress is cancelled first
+   * (the same path as Esc), so no date changes by accident. Focus inside the outline moves to the
+   * button before its cells are removed; the scroll position follows in the layout effect above.
+   */
+  const toggleOutline = useEvent(() => {
+    const hiding = !outlineCollapsed
+    endInteraction(true)
+    const el = scrollerRef.current
+    if (hiding) {
+      const active = document.activeElement
+      const inOutline =
+        active?.closest('[data-row-key]') != null && !active?.closest('[data-handle="lane"]')
+      if (active && inOutline && el?.contains(active)) {
+        outlineToggleRef.current?.focus({ preventScroll: true })
+      }
+      // The timeline needs W px more days to the left of the first visible day.
+      if (el && el.scrollLeft < storedPaneWidth) grow('start')
+    }
+    outlineShift.current = hiding ? -storedPaneWidth : storedPaneWidth
+    setOutlineCollapsed(hiding)
+  })
+
   const dragOriginFor = (row: GanttRow, handle: string): DragOrigin | null => {
     if (row.kind === 'milestone') {
       return handle === 'point' && row.day !== null
@@ -1418,6 +1459,9 @@ export function GanttChart({
           unscheduledOnly={unscheduledOnly}
           onUnscheduledOnlyChange={changeUnscheduledOnly}
           registerUnscheduledToggle={registerUnscheduledToggle}
+          outlineCollapsed={outlineCollapsed}
+          onToggleOutline={toggleOutline}
+          registerOutlineToggle={registerOutlineToggle}
         />
       </ViewBarActions>
 
@@ -1469,11 +1513,13 @@ export function GanttChart({
             }}
           >
             {/* Opaque outline column below the last row (rows paint their own cells). */}
-            <div
-              aria-hidden
-              className="sticky left-0 z-[10] bg-(--gantt-bg)"
-              style={{ width: paneWidth, height: bodyHeight }}
-            />
+            {paneWidth > 0 ? (
+              <div
+                aria-hidden
+                className="sticky left-0 z-[10] bg-(--gantt-bg)"
+                style={{ width: paneWidth, height: bodyHeight }}
+              />
+            ) : null}
             <GridBackground
               style={gridStyle}
               lines={lines}
@@ -1558,12 +1604,14 @@ export function GanttChart({
         </div>
       </div>
 
-      <PaneResizer
-        width={paneWidth}
-        onResize={setPaneWidth}
-        onCommit={commitPaneWidth}
-        scrolled={scrolledX}
-      />
+      {outlineCollapsed ? null : (
+        <PaneResizer
+          width={paneWidth}
+          onResize={setPaneWidth}
+          onCommit={commitPaneWidth}
+          scrolled={scrolledX}
+        />
+      )}
 
       {nothingScheduled ? (
         <div

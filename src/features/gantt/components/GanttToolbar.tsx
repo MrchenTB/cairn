@@ -1,11 +1,20 @@
 /**
- * Gantt controls rendered into the project view bar (via <ViewBarActions>): conflicts chip
+ * Gantt controls rendered into the project view bar (via <ViewBarActions>): the task list
+ * (outline pane) hide / show button, conflicts chip
  * (hidden at zero), the "Unscheduled n" filter toggle (shown while n > 0 or while it is on, so it
  * can always be turned off), dependency mode (Manual / Auto), Today (T) and Day / Week / Month. Memoised: the chart re-renders on every virtual-row change while
  * scrolling, the toolbar only when its own props change (callbacks must be stable).
  */
 import { memo, useState } from 'react'
-import { ArrowRight, CalendarOff, ChevronDown, TriangleAlert, Workflow } from 'lucide-react'
+import {
+  ArrowRight,
+  CalendarOff,
+  ChevronDown,
+  PanelLeftClose,
+  PanelLeftOpen,
+  TriangleAlert,
+  Workflow,
+} from 'lucide-react'
 import type { GanttScale } from '@/app/viewPrefs'
 import { Button } from '@/components/ui/button'
 import {
@@ -63,11 +72,17 @@ export interface GanttToolbarProps {
   onUnscheduledOnlyChange: (on: boolean) => void
   /** Callback ref of the toggle: the chart hands keyboard focus back here when a row leaves. */
   registerUnscheduledToggle: (element: HTMLButtonElement | null) => void
+  /** The outline pane is hidden (the timeline uses the full width). */
+  outlineCollapsed: boolean
+  onToggleOutline: () => void
+  /** Callback ref of the outline button: focus moves here when the pane it was in disappears. */
+  registerOutlineToggle: (element: HTMLButtonElement | null) => void
 }
 
 export const GanttToolbar = memo(function GanttToolbar(props: GanttToolbarProps) {
   return (
     <>
+      <OutlineToggle {...props} />
       <ConflictsChip {...props} />
       <UnscheduledToggle {...props} />
       <ScheduleModeMenu mode={props.scheduleMode} onChange={props.onScheduleModeChange} />
@@ -85,6 +100,29 @@ export const GanttToolbar = memo(function GanttToolbar(props: GanttToolbarProps)
     </>
   )
 })
+
+/** Icon only, so it keeps its place in narrow view bars; the name states what a press does. */
+function OutlineToggle({
+  outlineCollapsed,
+  onToggleOutline,
+  registerOutlineToggle,
+}: GanttToolbarProps) {
+  const label = outlineCollapsed ? 'Show task list' : 'Hide task list'
+  const Icon = outlineCollapsed ? PanelLeftOpen : PanelLeftClose
+  return (
+    <Tooltip content={label}>
+      <Button
+        ref={registerOutlineToggle}
+        variant="ghost"
+        size="icon"
+        aria-label={label}
+        onClick={onToggleOutline}
+      >
+        <Icon strokeWidth={1.75} aria-hidden />
+      </Button>
+    </Tooltip>
+  )
+}
 
 function UnscheduledToggle({
   unscheduledCount,

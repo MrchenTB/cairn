@@ -16,6 +16,7 @@ import { getWorkspaceActions, useWorkspaceStore } from '@/data/store'
 import { addDays, todayInTimeZone } from '@/domain/dates'
 import type { Task } from '@/domain/types'
 import { TimelinePage } from './TimelinePage'
+import { reloadGanttPrefsForTests } from '@/features/gantt/ganttPrefs'
 import { reloadTimelinePrefsForTests } from './timelinePrefs'
 
 function renderTimeline() {
@@ -79,6 +80,7 @@ beforeEach(async () => {
   sessionStorage.clear()
   reloadViewPrefsForTests()
   reloadTimelinePrefsForTests()
+  reloadGanttPrefsForTests()
   useWorkspaceStore.getState().actions.reset()
   useUIStore.setState({ milestoneDialog: null, projectDialog: null })
   must(await getWorkspaceActions().load())
@@ -164,6 +166,21 @@ describe('TimelinePage rows', () => {
     expect(screen.queryByRole('heading', { name: 'Nothing scheduled yet' })).toBeNull()
     expect(chart().querySelector(`[data-project-bar="${s.launch.id}"]`)).not.toBeNull()
     expect(chart().querySelector(`[data-project-bar="${s.ideas.id}"]`)).toBeNull()
+  })
+
+  it('keeps its outline pane even when the Gantt outline is hidden (that setting is Gantt only)', async () => {
+    localStorage.setItem('cairn:gantt-outline-collapsed', 'true')
+    reloadGanttPrefsForTests()
+    const s = await seed()
+    renderTimeline()
+    expect(screen.getByRole('separator', { name: 'Resize project list' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /task list$/ })).toBeNull()
+    expect(within(chart()).getByRole('link', { name: /Launch/ })).toBeInTheDocument()
+    expect(rowKeys()).toContain(`project:${s.launch.id}`)
+    expect(screen.getByRole('separator', { name: 'Resize project list' })).toHaveAttribute(
+      'aria-valuenow',
+      '300',
+    )
   })
 
   it('shows progress subtly on the bar and in words', async () => {

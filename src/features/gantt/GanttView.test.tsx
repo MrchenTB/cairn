@@ -4,7 +4,7 @@
  * dependency, the conflicts chip with "Resolve all…", the Auto preview and the empty states.
  */
 import { useState } from 'react'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
@@ -18,6 +18,7 @@ import type { ScheduleMode, Task } from '@/domain/types'
 import { ViewBarSlotProvider } from '@/features/projects/viewBar'
 import { notify } from '@/lib/notify'
 import { GanttView } from './GanttView'
+import { reloadGanttPrefsForTests } from './ganttPrefs'
 import { RescheduleDialogHost } from './RescheduleDialog'
 
 function Harness() {
@@ -103,6 +104,7 @@ const barOf = (taskId: string) =>
 beforeEach(() => {
   localStorage.clear()
   reloadViewPrefsForTests()
+  reloadGanttPrefsForTests()
   useWorkspaceStore.getState().actions.reset()
   useUIStore.setState({ newTask: null })
   // jsdom has no layout: give the scroll container a desktop-sized viewport.
@@ -694,5 +696,195 @@ describe('GanttView: Unscheduled filter', () => {
     // Filtering again starts from an empty temporary set (Design's match is visible again).
     await user.click(toggle(2))
     expect(rowKeys()).toContain(`task:${s.parent.id}`)
+  })
+})
+
+describe('outline pane toggle', () => {
+  const hideButton = () => screen.getByRole('button', { name: 'Hide task list' })
+  const showButton = () => screen.getByRole('button', { name: 'Show task list' })
+  const splitter = () => screen.queryByRole('separator', { name: 'Resize task list' })
+  const outlineButton = (name: string | RegExp) => within(chart()).queryByRole('button', { name })
+  const rowKeys = () =>
+    Array.from(chart().querySelectorAll('[data-row-key]')).map((row) =>
+      row.getAttribute('data-row-key'),
+    )
+  const PANE_KEY = 'cairn:gantt-pane-width'
+  const OUTLINE_KEY = 'cairn:gantt-outline-collapsed'
+  /** The sticky outline cell of a row (the lane's sibling) and the row's own width. */
+  const cellOf = (key: string) => {
+    const row = chart().querySelector<HTMLElement>(`[data-row-key="${key}"]`) as HTMLElement
+    return {
+      row,
+      cell: row.querySelector<HTMLElement>(':scope > div:not([data-handle="lane"])'),
+      lane: row.querySelector<HTMLElement>(':scope > [data-handle="lane"]') as HTMLElement,
+    }
+  }
+
+  it('is shown by default, with the splitter and a "Hide task list" button', async () => {
+    const s = await seed()
+    renderGantt(s.project.id)
+    expect(hideButton()).toBeInTheDocument()
+    expect(splitter()).toBeInTheDocument()
+    expect(outlineButton('Wireframes')).toBeInTheDocument()
+    expect(localStorage.getItem(OUTLINE_KEY)).toBeNull()
+  })
+
+  it('names the button and its tooltip after what a press does', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    await user.hover(hideButton())
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Hide task list')
+    await user.click(hideButton())
+    await user.unhover(showButton())
+    await user.hover(showButton())
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Show task list')
+    expect(screen.queryByRole('button', { name: 'Hide task list' })).not.toBeInTheDocument()
+  })
+
+  it('hiding removes the outline cells, the header corner and the splitter; bars stay', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    expect(screen.getByText('Due')).toBeInTheDocument()
+    await user.click(hideButton())
+    expect(showButton()).toBeInTheDocument()
+    expect(splitter()).not.toBeInTheDocument()
+    expect(screen.queryByText('Due')).not.toBeInTheDocument()
+    // No focusable button of the outline is left: neither task names, phase headers nor chevrons.
+    expect(outlineButton('Wireframes')).not.toBeInTheDocument()
+    expect(outlineButton(/^Design, /)).not.toBeInTheDocument()
+    expect(outlineButton(/subtask of Parent/)).not.toBeInTheDocument()
+    expect(cellOf(`task:${s.wire.id}`).cell).toBeNull()
+    expect(cellOf(`group:${s.design.id}`).cell).toBeNull()
+    expect(cellOf(`milestone:${s.milestone.id}`).cell).toBeNull()
+    // The bars, the row width and the milestone are all still there, from the left edge.
+    expect(barOf(s.wire.id)).toBeInTheDocument()
+    const { row, lane } = cellOf(`task:${s.wire.id}`)
+    expect(row.style.width).toBe(lane.style.width)
+    expect(localStorage.getItem(OUTLINE_KEY)).toBe('true')
+  })
+
+  it('showing again restores the stored width, which hiding never touched', async () => {
+    localStorage.setItem(PANE_KEY, '340')
+    reloadGanttPrefsForTests()
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    expect(splitter()).toHaveAttribute('aria-valuenow', '340')
+    await user.click(hideButton())
+    expect(localStorage.getItem(PANE_KEY)).toBe('340')
+    await user.click(showButton())
+    expect(splitter()).toHaveAttribute('aria-valuenow', '340')
+    expect(cellOf(`task:${s.wire.id}`).cell?.style.width).toBe('340px')
+    expect(localStorage.getItem(PANE_KEY)).toBe('340')
+    expect(localStorage.getItem(OUTLINE_KEY)).toBe('false')
+  })
+
+  it('stays hidden after a reload', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    await user.click(hideButton())
+    cleanup()
+    reloadGanttPrefsForTests()
+    renderGantt(s.project.id)
+    expect(showButton()).toBeInTheDocument()
+    expect(splitter()).not.toBeInTheDocument()
+    expect(outlineButton('Wireframes')).not.toBeInTheDocument()
+  })
+
+  it.each(['"yes"', '1', '{}', 'nonsense'])('shows the pane for a stored %s', async (raw) => {
+    localStorage.setItem(OUTLINE_KEY, raw)
+    reloadGanttPrefsForTests()
+    const s = await seed()
+    renderGantt(s.project.id)
+    expect(hideButton()).toBeInTheDocument()
+    expect(splitter()).toBeInTheDocument()
+  })
+
+  it('keeps the scroll position of the days: hiding and showing returns to the same offset', async () => {
+    localStorage.setItem(PANE_KEY, '340')
+    reloadGanttPrefsForTests()
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    const before = chart().scrollLeft
+    expect(before).toBeGreaterThan(340)
+    await user.click(hideButton())
+    expect(chart().scrollLeft).toBe(before - 340)
+    await user.click(showButton())
+    expect(chart().scrollLeft).toBe(before)
+  })
+
+  it('the filter and the phase collapse keep working; the toggle never changes the collapsed prefs', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    await user.click(screen.getByRole('button', { name: 'Design, 6 tasks' }))
+    const saved = localStorage.getItem('cairn:gantt-collapsed')
+    expect(saved).not.toBeNull()
+    await user.click(hideButton())
+    // Still collapsed while hidden, and hiding did not write the prefs.
+    expect(rowKeys()).not.toContain(`task:${s.wire.id}`)
+    expect(localStorage.getItem('cairn:gantt-collapsed')).toBe(saved)
+    // The Unscheduled filter works in the toolbar.
+    await user.click(screen.getByRole('button', { name: /^Show only unscheduled tasks, / }))
+    expect(rowKeys()).toContain(`task:${s.idea.id}`)
+    expect(rowKeys()).not.toContain(`task:${s.brief.id}`)
+    await user.click(screen.getByRole('button', { name: /^Show only unscheduled tasks, / }))
+    await user.click(showButton())
+    expect(localStorage.getItem('cairn:gantt-collapsed')).toBe(saved)
+    expect(rowKeys()).not.toContain(`task:${s.wire.id}`)
+    expect(outlineButton('Design, 6 tasks')).toBeInTheDocument()
+  })
+
+  it('a bar still opens the Task Modal while the pane is hidden', async () => {
+    const s = await seed()
+    const { router, user } = renderGantt(s.project.id)
+    await user.click(hideButton())
+    const scroller = chart()
+    fireEvent.pointerDown(barOf(s.wire.id), { button: 0, pointerId: 1, clientX: 500, clientY: 100 })
+    fireEvent.pointerMove(scroller, { pointerId: 1, clientX: 501, clientY: 101 })
+    fireEvent.pointerUp(scroller, { pointerId: 1, clientX: 501, clientY: 101 })
+    expect(router.state.location.search).toBe(`?task=${s.wire.id}`)
+  })
+
+  it('dragging a bar while hidden samples days from the left edge of the chart', async () => {
+    const s = await seed()
+    const { user } = renderGantt(s.project.id)
+    await user.click(hideButton())
+    const scroller = chart()
+    const bar = barOf(s.wire.id)
+    // Week scale = 16px per day; +3 days = 48px. No pane offset enters the maths.
+    fireEvent.pointerDown(bar, { button: 0, pointerId: 1, clientX: 500, clientY: 100 })
+    fireEvent.pointerMove(scroller, { pointerId: 1, clientX: 530, clientY: 100 })
+    fireEvent.pointerMove(scroller, { pointerId: 1, clientX: 548, clientY: 100 })
+    fireEvent.pointerUp(scroller, { pointerId: 1, clientX: 548, clientY: 100 })
+    await waitFor(() =>
+      expect(storeTask(s.wire.id)).toMatchObject({ startDate: at(5), dueDate: at(8) }),
+    )
+  })
+
+  it('cancels a drag in progress when the pane is toggled: no date changes', async () => {
+    const s = await seed()
+    renderGantt(s.project.id)
+    const scroller = chart()
+    const before = { ...storeTask(s.wire.id) }
+    fireEvent.pointerDown(barOf(s.wire.id), { button: 0, pointerId: 1, clientX: 500, clientY: 100 })
+    fireEvent.pointerMove(scroller, { pointerId: 1, clientX: 530, clientY: 100 })
+    fireEvent.pointerMove(scroller, { pointerId: 1, clientX: 548, clientY: 100 })
+    fireEvent.click(hideButton())
+    fireEvent.pointerUp(scroller, { pointerId: 1, clientX: 548, clientY: 100 })
+    await act(async () => {})
+    expect(showButton()).toBeInTheDocument()
+    expect(storeTask(s.wire.id)).toMatchObject({
+      startDate: before.startDate,
+      dueDate: before.dueDate,
+    })
+  })
+
+  it('moves focus from the outline to the button when the outline goes away', async () => {
+    const s = await seed()
+    renderGantt(s.project.id)
+    const name = outlineButton('Wireframes') as HTMLElement
+    act(() => name.focus())
+    expect(name).toHaveFocus()
+    fireEvent.click(hideButton())
+    expect(showButton()).toHaveFocus()
   })
 })

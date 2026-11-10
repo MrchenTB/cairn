@@ -211,6 +211,8 @@ function LeftCell({
   projectColor,
   onPhaseColor,
 }: GanttRowViewProps) {
+  // A hidden outline (width 0): no cell, so no focusable buttons stay behind in it.
+  if (paneWidth <= 0) return null
   if (row.kind === 'group') {
     const { label, phase } = row
     const count = row.taskCount

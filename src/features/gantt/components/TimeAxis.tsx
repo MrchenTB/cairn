@@ -65,14 +65,17 @@ export const TimeHeader = memo(function TimeHeader({
       className="sticky top-0 z-20 flex border-b border-default bg-(--gantt-header-bg)"
       style={{ width: paneWidth + timelineWidth, height: HEADER_HEIGHT }}
     >
-      <div
-        className="sticky left-0 z-[2] flex shrink-0 flex-col justify-end border-r border-default bg-(--gantt-header-bg) pr-3 pl-3"
-        style={{ width: paneWidth }}
-      >
-        <div className="flex h-6 items-center justify-between text-meta font-medium text-fg-tertiary">
-          {paneHeader}
+      {/* A hidden outline (width 0, Gantt only) has no corner at all. */}
+      {paneWidth > 0 ? (
+        <div
+          className="sticky left-0 z-[2] flex shrink-0 flex-col justify-end border-r border-default bg-(--gantt-header-bg) pr-3 pl-3"
+          style={{ width: paneWidth }}
+        >
+          <div className="flex h-6 items-center justify-between text-meta font-medium text-fg-tertiary">
+            {paneHeader}
+          </div>
         </div>
-      </div>
+      ) : null}
       <div aria-hidden className="relative shrink-0 select-none" style={{ width: timelineWidth }}>
         {tiers.top.map((cell) => {
           const visibleDays = cell.endDay - Math.max(cell.startDay, firstVisibleDay) + 1
