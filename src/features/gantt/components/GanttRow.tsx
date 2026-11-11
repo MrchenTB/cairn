@@ -161,14 +161,26 @@ const cellSelected =
   'bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))] shadow-[inset_2px_0_0_var(--accent)] group-hover/row:bg-[linear-gradient(var(--gantt-row-selected),var(--gantt-row-selected))]'
 
 /**
+ * Gantt outline row divider (UX-03, D42): a 1px `--border-subtle` hairline along the bottom of the
+ * clipping box, drawn over the cell's background (hover and selection tints included) and under
+ * nothing that takes the pointer. The box is the visible pane width, so the line follows a hide /
+ * show motion and goes with the cell when the outline is hidden. On a selected row it starts after
+ * the 2px accent edge, which stays whole.
+ */
+const outlineDivider =
+  "after:pointer-events-none after:absolute after:right-0 after:bottom-0 after:h-px after:bg-(--border-subtle) after:content-['']"
+
+/**
  * Shell of an outline cell. With `fullWidth` (Gantt) it is always the same two boxes, so nothing
  * remounts when a hide / show motion starts or ends: a sticky clipping box of `paneWidth` and the
- * content at `fullWidth`, shifted left by what the pane lacks.
+ * content at `fullWidth`, shifted left by what the pane lacks. Only the Gantt's cells (with
+ * `fullWidth`) carry the row divider; the Timeline's rows are unchanged.
  */
 function OutlineCell({
   paneWidth,
   fullWidth,
   inert,
+  selected = false,
   className,
   style,
   children,
@@ -176,6 +188,8 @@ function OutlineCell({
   paneWidth: number
   fullWidth: number | undefined
   inert: boolean | undefined
+  /** The row is selected: the divider leaves the 2px accent edge alone. */
+  selected?: boolean
   className?: string
   style?: CSSProperties
   children: ReactNode
@@ -189,7 +203,12 @@ function OutlineCell({
   }
   return (
     <div
-      className="sticky left-0 z-[11] h-full shrink-0 overflow-hidden"
+      data-outline-divider=""
+      className={cn(
+        'sticky left-0 z-[11] h-full shrink-0 overflow-hidden',
+        outlineDivider,
+        selected ? 'after:left-0.5' : 'after:left-0',
+      )}
       style={{ width: paneWidth }}
       inert={inert}
     >
@@ -336,6 +355,7 @@ function LeftCell({
         paneWidth={paneWidth}
         fullWidth={paneFullWidth}
         inert={paneInert}
+        selected={selected}
         className={cn('gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
         style={{ paddingLeft: 12 + indent }}
       >
@@ -367,6 +387,7 @@ function LeftCell({
       paneWidth={paneWidth}
       fullWidth={paneFullWidth}
       inert={paneInert}
+      selected={selected}
       className={cn('gap-1.5 pr-3', selected ? cellSelected : cellSurface)}
       style={{ paddingLeft: 12 + indent + row.depth * SUBTASK_INDENT }}
     >
