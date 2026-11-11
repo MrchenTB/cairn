@@ -257,3 +257,13 @@
 - **自動捲動**：以 `focus({ preventScroll: true })` 加自訂的 `revealListItem`：只捲動剛好讓該列露出所需的距離，上緣扣掉 sticky 欄位標頭，列在階段內時再扣掉該階段的 sticky 標題（原生 `scrollIntoView` 不考慮這兩者）。不用平滑捲動，按住方向鍵也不會延遲累積。
 - **焦點恢復**：記住目前的停點（焦點在列內其他控制項時，記住該列的停點），焦點進入從 List 打開的 dialog、選單或 popover 時保留記憶，焦點移到其他地方就忘掉。停點從 DOM 消失時（刪除、移到別的階段、收合、同步更新），在每次渲染後檢查：若焦點掉到 `<body>`，移到同一個 key 重新渲染的元素，否則移到補位的項目（原本的下一項），最後一項被刪就移到新的最後一項（`restoreIndex`）。Task Modal 關閉時若開啟它的任務已不存在，`returnFocusAfterClose` 會落到 `#main`，List 收到這個焦點時也照上述規則移回清單。從 ⋯ 選單的「Delete task…」刪除時，確認對話框關閉後原本的 ⋯ 按鈕已隨列消失，焦點會直接掉到 `<body>`、List 也不會再渲染；被移除的焦點元素會觸發沒有 `relatedTarget` 的 `focusout`，List 在下一個 animation frame 檢查焦點是否在 `<body>`，是的話照同樣規則移回。
 - **取捨**：不做 roving tabindex 或 grid 鍵盤框架，Tab 停點與原本完全相同（每列的標題原本就是可 Tab 的按鈕），代價是 Tab 仍會經過每列的控制項。方向鍵只從停點本身生效，焦點在狀態、優先度、日期或 ⋯ 按鈕上時不換列，以免與這些控制項原有的鍵盤行為衝突。不新增偏好設定、不動資料庫、沒有 migration。
+
+## D42 — Gantt 的 outline 每列底部加一條低對比分隔線，只在 Gantt
+
+- **決定**：Gantt 左側 outline 的每一列（階段標題、No phase 標題、任務、子任務、里程碑）底部有一條 1px、顏色為 `--border-subtle` 的水平線，與 List 的 `rowDivider` 同一個 token，深色模式跟著 token 變。右側時間軸的列、長條、日期格線、跨專案的 Timeline 頁與 List 都不變。列高仍是 32px，不加任何 padding 或 margin，文字、圖示、狀態與 Due 的位置不變。
+- **畫法**：outline 儲存格的外層裁切盒（sticky、寬度等於目前可見的 `paneWidth`、`overflow: hidden`）帶一個絕對定位的 `::after`（`bottom: 0`、`left/right: 0`、`height: 1px`、`pointer-events: none`），並標上 `data-outline-divider` 供測試使用。不用 `box-shadow`：選取狀態已經用 `inset` 陰影畫左側 2px 的 accent，兩個陰影 class 會互相覆蓋；也不能畫在外層盒本身，因為內層內容的背景不透明，會把它蓋住。`::after` 是外層盒的最後一個子層，所以畫在內容的背景之上（hover 與選取的底色都在背景層），但不接收滑鼠事件。列內的按鈕都比 32px 矮且垂直置中，碰不到底部的線，焦點環（`insetFocus`）不會被蓋到。
+- **選取列**：線從 2px 開始（`left: 2px`），讓左側 accent 保持完整的 32px 高。
+- **只在 Gantt**：只有外層裁切盒有這條線，它只存在於 `OutlineCell` 的 Gantt 分支（有 `paneFullWidth` 時）。Timeline 頁共用 `GanttRowView` 但不傳 `paneFullWidth`，所以完全不變，不需要新增 prop。
+- **隱藏／顯示與調整寬度**：外層盒就是可見的窗格寬度，所以 200ms 動畫中線條每一格都跟著寬度收合或展開，不需要另外計算；隱藏後 `LeftCell` 不渲染，線條也一起消失。拖曳窗格分隔線改變寬度時同理。
+- **階段標題**：階段標題本身有 `bg-muted` 底色，上一列的線與標題的底色交界在同一條邊上，看起來是一條邊，不是兩條。標題的線與其他列相同，不加粗也不加深。
+- **取捨**：最後一列下方也有一條線（與 List 相同），之後的空白區不畫。不做斑馬紋，也不在時間軸上加列線，以免與日期格線和長條競爭。不動資料庫、沒有 migration。
